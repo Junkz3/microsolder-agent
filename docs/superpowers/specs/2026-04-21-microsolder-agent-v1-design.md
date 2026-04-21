@@ -1545,7 +1545,64 @@ class ManagedAgentOrchestrator(SubAgentOrchestrator):
 - **Instanciée une fois** par `api.main.lifespan` — le dict `agent_ids` est chargé depuis Postgres `managed_agents` au boot (§3.2.3). Si une ligne manque (nouveau rôle ajouté), le boot échoue avec message clair.
 - **Stateless entre appels** — pas de state inter-sessions dans l'instance. Safe pour l'appel concurrent depuis `asyncio.gather`.
 - **Chaque méthode suit le même squelette** : `_begin_subagent_call` → logique métier (création session Anthropic, streaming, forcing tool) → `_complete_subagent_call` OU `_fail_subagent_call`. La table `subagent_calls` est mise à jour à chaque transition pour que l'UI Traces voie l'état en temps réel.
-- **Pas de retry logic ici** — les retries (§5.11) sont gérés par le client Anthropic (HTTP level) ou par le pipeline (niveau phase). L'orchestrator reste simple.
+
+**Trois niveaux de retry distincts** — aucun ne masque les autres :
+
+| Niveau | Déclencheur | Responsable |
+|---|---|---|
+| 1. Retry HTTP SDK | 5xx, rate limit (Retry-After), network errors transitoires | `anthropic` SDK (retries intégrés) |
+| 2. **Retry applicatif tool output** (nouveau — cf. ci-dessous) | Tool forcé a répondu 200 OK mais l'output ne valide pas le schema Pydantic attendu | `_call_with_tool_validation()` dans l'orchestrator |
+| 3. Retry pipeline (phase) | Échec terminal d'un sub-agent après retries 1 et 2 épuisés → partial pack handling | Logique de §5.11 |
+
+**Méthode protégée `_call_with_tool_validation`** :
+
+```python
+async def _call_with_tool_validation(
+    self,
+    *,
+    role: str,
+    tool_name: str,
+    expected_schema: type[BaseModel],       # ex. RegistrySubmission
+    agent: ManagedAgentRef,
+    session_inputs: dict,
+    max_attempts: int = 2,
+    call_row: SubagentCallRow,
+) -> BaseModel:
+    """Lance une session Anthropic sur `agent` avec tool forcé `tool_name`,
+    attend un output qui valide `expected_schema`. Si l'output renvoyé
+    par le tool forcé ne parse pas, retry avec un message système
+    additionnel explicitant l'erreur. Max `max_attempts` tentatives.
+    """
+    last_error: str | None = None
+    for attempt in range(1, max_attempts + 1):
+        system_suffix = ""
+        if attempt > 1:
+            system_suffix = (
+                f"\n\nPREVIOUS ATTEMPT FAILED: your tool output did not match "
+                f"the expected schema. Error: {last_error}. "
+                f"Retry with correct structure as per the {tool_name} tool definition."
+            )
+            await events.emit("subagent.retry", {
+                "role": role, "attempt": attempt, "last_error": last_error,
+                "subagent_call_id": call_row.id,
+            })
+
+        raw_output = await self._run_forced_tool_session(
+            agent=agent, tool_name=tool_name,
+            inputs=session_inputs, system_suffix=system_suffix,
+        )
+        try:
+            return expected_schema.model_validate(raw_output)
+        except ValidationError as exc:
+            last_error = str(exc)
+
+    raise PipelinePhaseError(
+        f"{role} failed to produce a valid {tool_name} output after {max_attempts} attempts. "
+        f"Last error: {last_error}"
+    )
+```
+
+**Raison d'être** : en API beta, l'écart « shape attendue vs shape reçue » survient plus souvent qu'avec les modèles GA. Un retry ciblé avec feedback explicite corrige ~80 % des cas sans escalader en failure de phase. Chaque retry est loggué en `events` sous le type `subagent.retry` avec l'erreur reçue — métrique de fiabilité consultable dans l'onglet Traces.
 
 ### 6.4 Pattern `dispatch_subagent` — intercepté par le backend, pas exécuté côté Anthropic
 
@@ -1643,7 +1700,26 @@ Script rejouable en sécurité ; un rôle déjà créé est skip. Si le system p
 
 - `managed_memory_stores` row + création Anthropic au premier chargement d'un device (cf. §2.3 flow A).
 - Attachée à toutes les futures sessions diagnostic de ce device.
-- Jamais supprimée sauf si le device est supprimé de `devices` (cascade via la FK).
+- Jamais supprimée sauf si le device est supprimé de `devices`.
+
+**Cleanup explicite à la suppression d'un device** — handler FastAPI best-effort :
+
+```python
+async def delete_device(device_id: UUID) -> None:
+    memory_store_id = await db.get_memory_store_id(device_id)
+    if memory_store_id:
+        try:
+            await anthropic_client.beta.memory_stores.delete(memory_store_id)
+        except anthropic.APIError as exc:
+            logger.warning(
+                "Failed to delete Anthropic memory store %s for device %s: %s. "
+                "Proceeding with local deletion anyway.",
+                memory_store_id, device_id, exc,
+            )
+    await db.delete_device(device_id)  # cascade Postgres sur managed_memory_stores, sessions, etc.
+```
+
+Best-effort côté Anthropic : si l'appel `memory_stores.delete` échoue, on log et on **continue** la suppression DB. Évite qu'un orphelin Anthropic bloque les futures actions locales. Pas de trigger DB, pas de GC périodique — le cleanup est explicit et synchrone au moment de la suppression utilisateur.
 
 ### 6.7 Observabilité — `subagent_calls` + events en temps réel
 
@@ -1686,5 +1762,764 @@ ORCHESTRATION_MODE: Literal["managed"] = "managed"  # "local" réservé pour une
 ```
 
 Si une valeur autre que `"managed"` est lue au boot, exception claire : « LocalOrchestrator not implemented in this version — see section 6.8 of the design spec ».
+
+---
+
+## 7. Diagnostic agent & tools `mb_*`
+
+### 7.1 Le rôle du diagnostic agent
+
+Le **diagnostic agent** est le managed agent Anthropic de rôle `diagnostic` que l'utilisateur manipule dans l'UI (panel LLM droit, section PCB, section Schematic). Il est :
+
+- **Face visible** du système vis-à-vis de l'utilisateur — chaque message, chaque highlight board, chaque citation de rule passe par lui
+- **Consommateur** des deux familles de tools :
+  - Les **12 tools boardview** (définis par Boardviewer spec §9, cf. §2.7) pour piloter la vue physique
+  - Les **7 tools `mb_*`** (définis ci-dessous) pour interroger la Memory Bank
+  - Plus un lot de **tools schematic** (`open_schematic_page`, `highlight_schematic_net`, ...) à spécifier séparément
+- **Distinct des sub-agents du pipeline** (§5) — leur rôle est la **génération** de connaissance offline ; le rôle du diagnostic agent est la **conversation temps réel** qui exploite cette connaissance.
+
+Un managed agent **unique** de rôle `diagnostic` existe, partagé entre tous les devices. Il reçoit un **memory store différent par session** (celui du device ouvert), ce qui le rend contextuel sans dupliquer 3 agents identiques côté Anthropic.
+
+### 7.2 Les 7 tools `mb_*` — signatures et retours
+
+Chaque tool est exposé côté Anthropic avec un `input_schema` JSON Schema. Côté backend, les retours sont des modèles Pydantic qui contraignent strictement la shape.
+
+Convention commune : **tous** les tools prennent un paramètre implicite `device_id` injecté par le backend avant dispatch (l'agent n'a pas à le passer ; il est déterminé par la session en cours). Seuls les paramètres métier figurent dans l'`input_schema` exposé à l'agent.
+
+#### 7.2.0 Décision architecturale — tools natifs vs MCP
+
+Les 7 tools `mb_*` sont définis **en natif** dans le backend Python (JSON Schema + handler dans `api/memory_bank/tools.py`), exposés à l'agent diagnostic via le paramètre `tools=[...]` de l'appel API Anthropic (ou via `agents.create(tools=...)` pour les managed agents). Ils ne sont **pas** exposés via un serveur MCP (Model Context Protocol).
+
+**Rationale** :
+
+- **Coupling élevé avec le backend** — chaque tool touche Postgres, le dossier `memory/` on-disk, le validator boardview. MCP ajouterait une couche de sérialisation JSON-RPC sans apporter de valeur à ce coupling interne.
+- **Consommateur unique** — le diagnostic agent interne. MCP est conçu pour la réutilisabilité cross-clients (Claude Desktop, Cursor, autres éditeurs), ce qui n'est pas le cas ici.
+- **Latence critique** — le contrat anti-hallucination exige un feedback en **moins de 50 ms** (lookup registry cached). MCP via stdio ou HTTP ajoute ~20–50 ms par appel, ce qui double le latency budget.
+- **Pipeline interne** — les sub-agents du §5 tournent dans le même process backend, pas besoin de protocole externe.
+
+**MCP reste pertinent en roadmap post-hackathon** pour exposer le boardviewer comme serveur standalone réutilisable par des clients tiers (Claude Desktop, Cursor, autres LLM hosts) — hors scope v1.
+
+#### 7.2.1 `mb_get_component(refdes)`
+
+Récupère un composant depuis le registry + dictionary du device courant.
+
+```json
+{
+  "name": "mb_get_component",
+  "description": "Retrieve a component by refdes from the knowledge pack of the current device. Returns full info (role, pins, nets, test_points_nearby) if found, or {error, closest_matches} if not.",
+  "input_schema": {
+    "type": "object",
+    "properties": {"refdes": {"type": "string", "description": "Reference designator, e.g. U7, C29, R123."}},
+    "required": ["refdes"]
+  }
+}
+```
+
+**Retour** — discriminé sur `found` :
+
+```python
+class ComponentFound(BaseModel):
+    found: Literal[True] = True
+    canonical_name: str
+    aliases: list[str]
+    kind: str
+    role: str
+    nets_connected: list[str]
+    pins: list[ComponentPin]
+    test_points_nearby: list[str]
+    package: str | None
+    location_hint: str | None
+    confidence: float
+
+class ComponentNotFound(BaseModel):
+    found: Literal[False] = False
+    error: Literal["not_found"] = "not_found"
+    queried_refdes: str
+    closest_matches: list[str]       # top 5 refdes proches (§7.3)
+    hint: str                         # ex. "Did you mean U17? — same prefix letter"
+
+ComponentLookupResult = ComponentFound | ComponentNotFound
+```
+
+#### 7.2.2 `mb_get_net(net_name)`
+
+Récupère un signal / net depuis le registry + architecture.
+
+```json
+{
+  "name": "mb_get_net",
+  "description": "Retrieve a net / signal by name (exact or alias). Returns voltage, kind, test_point, consumers, source components. Error + closest_matches if not found.",
+  "input_schema": {
+    "type": "object",
+    "properties": {"net_name": {"type": "string", "description": "Net name, e.g. 3V3_RAIL, VDD_CORE, USB_DP1."}},
+    "required": ["net_name"]
+  }
+}
+```
+
+**Retour** :
+
+```python
+class NetFound(BaseModel):
+    found: Literal[True] = True
+    canonical_name: str
+    aliases: list[str]
+    kind: str                         # 'power_rail', 'signal', 'reference'
+    nominal_voltage: float | None
+    tolerance_pct: float | None
+    test_point: str | None
+    source_components: list[str]      # refdes qui pilotent ce net (ex. PMIC pour 3V3)
+    consumer_components: list[str]    # refdes qui consomment ce net
+
+class NetNotFound(BaseModel):
+    found: Literal[False] = False
+    error: Literal["not_found"] = "not_found"
+    queried_net_name: str
+    closest_matches: list[str]
+```
+
+#### 7.2.3 `mb_get_test_point(tp_id)`
+
+Récupère un test point nommé (ex. `TP18`).
+
+```json
+{
+  "name": "mb_get_test_point",
+  "description": "Retrieve a test point by id (TPxx). Returns the net it exposes and expected voltage. Error + closest_matches if not found.",
+  "input_schema": {
+    "type": "object",
+    "properties": {"tp_id": {"type": "string", "description": "Test point id, e.g. TP18."}},
+    "required": ["tp_id"]
+  }
+}
+```
+
+**Retour** :
+
+```python
+class TestPointFound(BaseModel):
+    found: Literal[True] = True
+    tp_id: str
+    net_canonical_name: str
+    expected_voltage: float | None
+    tolerance_pct: float | None
+    nearby_components: list[str]
+
+class TestPointNotFound(BaseModel):
+    found: Literal[False] = False
+    error: Literal["not_found"] = "not_found"
+    queried_tp_id: str
+    closest_matches: list[str]
+```
+
+#### 7.2.4 `mb_get_rules_for_symptoms(symptoms, max_results=5)`
+
+Requête les rules du device matchant une liste de symptômes.
+
+```json
+{
+  "name": "mb_get_rules_for_symptoms",
+  "description": "Retrieve diagnostic rules that match the given symptoms. Rules come from rules.json (core + learned). Returns up to max_results rules ranked by relevance × confidence. Each rule includes diagnostic_steps and likely_causes.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "symptoms":   {"type": "array", "items": {"type": "string"}, "minItems": 1},
+      "max_results": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}
+    },
+    "required": ["symptoms"]
+  }
+}
+```
+
+**Retour** :
+
+```python
+class RuleMatch(BaseModel):
+    rule_id: str
+    origin: Literal["core", "learned"]
+    symptoms_matched: list[str]
+    likely_causes: list[Cause]
+    diagnostic_steps: list[DiagnosticStep]
+    confidence: float
+    needs_validation: bool
+    sources: list[str]
+
+class RulesQueryResult(BaseModel):
+    device_id: str
+    query_symptoms: list[str]
+    matches: list[RuleMatch]         # empty list if no match (pas d'erreur, juste vide)
+    total_available_rules: int       # info meta : taille du corpus
+```
+
+Note : ce tool **ne retourne pas** `{error, closest_matches}` — il retourne un résultat vide si aucun match. L'absence de rules n'est pas une erreur ; l'agent doit gérer le cas (poser des questions de clarification, proposer une exploration).
+
+#### 7.2.5 `mb_get_rework(identifier)`
+
+Récupère les procédures de rework (remplacement, reflow, reballing) pour un composant ou une opération nommée.
+
+```json
+{
+  "name": "mb_get_rework",
+  "description": "Retrieve rework procedures for a component (by refdes) or a named operation (by rework_id). Returns tooling needed, time estimate, risk level, steps. Error + closest_matches if not found.",
+  "input_schema": {
+    "type": "object",
+    "properties": {"identifier": {"type": "string", "description": "Either a refdes (U7, C29) or a rework procedure id (rw-bga-reball-bcm2711)."}},
+    "required": ["identifier"]
+  }
+}
+```
+
+**Retour** :
+
+```python
+class ReworkFound(BaseModel):
+    found: Literal[True] = True
+    rework_id: str
+    target_refdes: str | None
+    tooling_needed: list[str]        # ex. ['hot air', '0402 tweezers', 'flux']
+    time_estimate_min: int
+    risk_level: Literal["low", "medium", "high"]
+    steps: list[str]
+    sources: list[str]
+
+class ReworkNotFound(BaseModel):
+    found: Literal[False] = False
+    error: Literal["not_found"] = "not_found"
+    queried_identifier: str
+    closest_matches: list[str]
+```
+
+#### 7.2.6 `mb_find_similar_cases(symptoms, top_k=3)`
+
+Requête les cases résolus historiques matchant des symptômes (similarité sur les listes de symptômes + filtre device).
+
+```json
+{
+  "name": "mb_find_similar_cases",
+  "description": "Find similar resolved cases in the current device history. Ranked by symptom overlap × recency. Returns top_k cases with resolution summary.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "symptoms": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+      "top_k":    {"type": "integer", "minimum": 1, "maximum": 10, "default": 3}
+    },
+    "required": ["symptoms"]
+  }
+}
+```
+
+**Retour** :
+
+```python
+class SimilarCase(BaseModel):
+    case_id: str
+    title: str
+    symptoms: list[str]
+    overlap_score: float              # [0,1], fraction des symptômes matchés
+    resolution_summary: str           # 1-2 phrases : cause + action
+    cause_refdes: str | None
+    resolved_at: datetime
+
+class SimilarCasesResult(BaseModel):
+    device_id: str
+    query_symptoms: list[str]
+    cases: list[SimilarCase]         # empty list if no match
+    total_cases_in_history: int
+```
+
+Même logique que `mb_get_rules_for_symptoms` — liste vide ≠ erreur.
+
+#### 7.2.7 `mb_save_case(case)`
+
+Persiste un case résolu (ou abandonné) en DB + disque. Appelé par l'agent à la **fin** d'une session diagnostic, quand la résolution est établie (ou l'abandon acté).
+
+```json
+{
+  "name": "mb_save_case",
+  "description": "Save a resolved (or abandoned) diagnostic case. Writes to Postgres `cases` table and to memory/{vendor}/{model}/cases/case-NNN-*.{md,json}. Triggers the learning cycle (pattern aggregation).",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title":    {"type": "string", "maxLength": 120},
+      "symptoms": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+      "resolution": {
+        "type": "object",
+        "properties": {
+          "cause_refdes":     {"type": "string"},
+          "cause_mechanism":  {"type": "string"},
+          "action":           {"type": "string"},
+          "outcome":          {"type": "string"},
+          "wasted_time_min":  {"type": "integer"}
+        }
+      },
+      "status":   {"type": "string", "enum": ["resolved", "dead_end", "abandoned"]}
+    },
+    "required": ["title", "symptoms", "status"]
+  }
+}
+```
+
+**Retour** :
+
+```python
+class CaseSaved(BaseModel):
+    ok: Literal[True] = True
+    case_id: str                      # id généré côté backend
+    disk_path: str                    # chemin du .md écrit
+    learning_cycle_triggered: bool    # cf. §8
+```
+
+Si le refdes de `cause_refdes` n'existe pas dans le registry (validation `mb_get_component`), le case est **refusé** avec `{ok: False, error: "invalid_cause_refdes", closest_matches: [...]}`. L'agent doit corriger avant retry.
+
+### 7.3 Contrat anti-hallucination — `{error, closest_matches}` jamais d'invention
+
+**Règle** : tout tool `mb_*` qui ne trouve pas la donnée demandée retourne une **shape d'erreur structurée**, jamais une réponse textuelle vague, jamais des valeurs inventées. La shape type :
+
+```json
+{
+  "found": false,
+  "error": "not_found",
+  "queried_refdes": "U999",
+  "closest_matches": ["U99", "U9", "U19"],
+  "hint": "No refdes 'U999' in registry. Closest by prefix: U99."
+}
+```
+
+**Algorithme de `closest_matches`** (côté backend, dans `api/memory_bank/closest_match.py`) :
+
+1. **Filtre par prefix letter** (`U*`, `C*`, `R*`, …) — restreint le corpus aux refdes du même type
+2. **Distance de Levenshtein** sur la partie numérique (`U7 ↔ U17 = 1`, `U7 ↔ U70 = 1`, `U7 ↔ C29 = N/A car filtré`)
+3. **Score composite** : `score = 1 / (1 + levenshtein) + 0.1 × same_kind` (bonus si kind concorde)
+4. **Top 5** retournés, triés score descendant
+5. Si aucun match raisonnable (score < 0.25 pour tous) : `closest_matches: []` avec `hint` suggérant d'élargir la recherche ou de vérifier le device
+
+**Conséquence pour l'agent** : il reçoit un feedback actionable en moins de 50 ms (lookup en mémoire sur le registry cached), peut rapidement corriger son hypothèse et relancer. Pas de spirale d'invention pour « combler » un trou.
+
+### 7.4 System prompt — injection en 3 couches
+
+Le prompt système du diagnostic agent est structuré en **3 couches de cache distinctes**, alignées sur la stratégie §5.10 mais avec des TTL et des contenus propres à la conversation.
+
+#### Couche 1 — STATIQUE (cache 1 h)
+
+Contenu identique à chaque session sur un même device. Ordre d'insertion :
+
+1. **Persona** — « Tu es un assistant de diagnostic microsoudure, calme, méthodique. Tu pilotes visuellement un board électronique et guides l'utilisateur pas à pas. Tu ne devines jamais ; tu vérifies. »
+2. **Règles dures (rappel)** — les 5 règles du §1.2, avec focus sur la règle #5.
+3. **Contrat des tools** — synthèse : « Pour mentionner un refdes, tu DOIS d'abord valider via `mb_get_component`. Pour highlighter, tu utilises les 12 tools boardview — chacun est doublement validé en backend. Si un tool te retourne `{error, closest_matches}`, corrige ou demande clarification, jamais invente. **Note : un tableau `matches: []` ou `cases: []` vide dans la réponse d'un tool de recherche n'est PAS une erreur et ne demande PAS de retry. Continue avec les infos disponibles ou demande à l'utilisateur plus de symptômes.** »
+4. **`architecture.md` du device courant** — inclus intégralement. Donne à l'agent le plan d'ensemble (power tree, blocs, rails) avant toute conversation.
+
+Hit cache attendu : **~95 %** après le 1ᵉʳ message utilisateur de la session (TTL 1 h renouvelé à chaque hit).
+
+#### Couche 2 — DYNAMIQUE session (cache 5 min)
+
+Contenu calculé au début de la session, rafraîchi si le contexte change significativement :
+
+1. **Liste compacte des refdes** — flatlist `["U7", "U8", "C29", ...]` (quelques centaines d'entrées pour Pi 4, ~1 k pour Framework) — permet à l'agent d'« avoir en tête » les refdes disponibles sans tool call
+2. **Liste des nets/signaux** canonical names
+3. **Liste des test points** avec voltage nominal
+4. **3–5 rules top-ranked** basées sur les symptômes du premier message utilisateur — pré-fetch géré par le backend :
+   1. Backend reçoit le 1ᵉʳ `user.message` de la session
+   2. Extraction rapide des symptômes via **Haiku 4.5** (prompt court « list the symptoms in this sentence, JSON array ») OU via un matcher regex / keyword list si la sentence match un pattern simple (optimisation coût — Haiku n'est appelé qu'en fallback du matcher regex)
+   3. Si ≥ 1 symptôme extrait → `mb_get_rules_for_symptoms(symptoms, max_results=5)` → les rules sont injectées dans la couche 2
+   4. Si 0 symptôme (ex. « Hello », « can you help me? ») → couche 2 sans rules pré-fetchées ; l'agent fera le tool call lui-même après que l'utilisateur aura précisé
+5. **Résumé du memory store** — automatiquement fourni par Anthropic Managed Agents (cf. §2.2), donc pas à re-injecter nous-mêmes
+
+Hit cache attendu : **~60–70 %** au fil de la session.
+
+#### Couche 3 — À LA DEMANDE (non pré-injectée)
+
+Disponible via les tool calls `mb_*`. L'agent appelle quand il a besoin :
+
+- Détails complets d'un composant (`mb_get_component` → pins, package, location_hint)
+- Net détaillé (`mb_get_net` → consumers, source)
+- Rules d'une symptomatique précise (`mb_get_rules_for_symptoms`)
+- Cases similaires (`mb_find_similar_cases`)
+- Rework (`mb_get_rework`)
+
+**Raison du split** : injecter tout le registry + dictionary + rules en cache 1 h ferait exploser le prompt statique (>100 k tokens pour Framework). On garde juste l'essentiel en statique (architecture narrative + listes flat en dynamique), et l'agent enrichit son contexte via tool calls quand il creuse.
+
+### 7.5 State machine — 4 phases avec seuils de confidence
+
+L'agent navigue dans une state machine **implicite** (portée par le prompt système + son propre raisonnement, pas par du code applicatif rigide). Les transitions de phase sont signalées explicitement via un tool `set_diagnostic_phase` (cf. §7.5.3) — pas par parsing texte.
+
+#### 7.5.1 Les 4 phases et leurs seuils
+
+| Phase | Seuil de confidence | Actions autorisées | Transition vers phase suivante |
+|---|---|---|---|
+| **1. OBSERVATION** | — (tout permis) | Poser des questions ouvertes, demander mesures, highlight/focus sur composants candidats, `mb_get_rules_for_symptoms` en shotgun | Au moins 2 symptômes clairs collectés ET ≥1 rule match avec `confidence ≥ hypothesis_propose` |
+| **2. HYPOTHESIS** | ≥ `hypothesis_propose` pour proposer, ≥ `hypothesis_rank_high` pour présenter en tête de liste | Proposer des hypothèses, afficher les `likely_causes` des rules, ranker par probabilité, solliciter confirmation utilisateur | Une hypothèse atteint `≥ act_measure` après 1–2 mesures confirmantes |
+| **3. ACT** | ≥ `act_measure` pour demander une mesure spécifique | Demander mesure ciblée, valider/invalider l'hypothèse, éventuellement `focus_component` + pan | Confidence de l'hypothèse atteint `≥ resolution_recommend` après les mesures |
+| **4. RESOLUTION** | ≥ `resolution_recommend` pour recommander un rework | Présenter le rework via `mb_get_rework`, expliquer les risques, attendre confirmation, enregistrer via `mb_save_case` | Case résolu ou abandonné → session terminée |
+
+**Exception de sécurité** : l'agent peut **toujours** recommander « consulter un pro » ou « remplacer la carte plutôt que rework » si aucune hypothèse n'atteint `resolution_recommend` après plusieurs mesures. Il n'y a pas de forcing — mieux vaut une session abandonnée qu'un rework risqué sur hypothèse faible.
+
+#### 7.5.2 Seuils en configuration — `DiagnosticThresholds`
+
+Exposés dans `api/config.py` pour permettre A/B testing en J+3/J+4 sans ré-éditer le prompt :
+
+```python
+from pydantic import BaseModel
+
+class DiagnosticThresholds(BaseModel):
+    hypothesis_propose: float    = 0.50
+    hypothesis_rank_high: float  = 0.70
+    act_measure: float           = 0.65
+    resolution_recommend: float  = 0.75
+
+DIAGNOSTIC_THRESHOLDS: DiagnosticThresholds = DiagnosticThresholds()
+```
+
+Le prompt système contient un **template** qui reçoit ces valeurs au runtime via `.format()` :
+
+```
+...
+You escalate through 4 phases with these confidence thresholds:
+- HYPOTHESIS: propose at ≥ {hypothesis_propose}, rank-high at ≥ {hypothesis_rank_high}
+- ACT: specific measurement at ≥ {act_measure}
+- RESOLUTION: rework recommendation at ≥ {resolution_recommend}
+...
+```
+
+#### 7.5.3 Tool `set_diagnostic_phase` — signalement explicite, pas de regex sur la narration
+
+Pour éviter un parsing fragile de la réponse texte, les changements de phase passent par un **tool UI de contrôle** catégorisé avec les 12 tools boardview (même pattern de dispatch, intercepté côté backend) :
+
+```json
+{
+  "name": "set_diagnostic_phase",
+  "description": "Signal a transition between the 4 diagnostic phases. Call this whenever your confidence clears a threshold or you decide to switch phase. Always pair with a short textual reason.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "phase":  {"type": "string", "enum": ["OBSERVATION", "HYPOTHESIS", "ACT", "RESOLUTION"]},
+      "reason": {"type": "string", "description": "Short justification for the transition (1 sentence)."}
+    },
+    "required": ["phase", "reason"]
+  }
+}
+```
+
+Flow d'un appel :
+
+```
+Agent émet custom_tool_use set_diagnostic_phase(phase="HYPOTHESIS", reason="User confirmed 3V3 dead + no boot, 2 rules matched ≥ 0.50.")
+    ↓
+Backend intercepte (api/tools/diagnostic_ui.py)
+    ↓
+UPDATE sessions.metadata SET current_phase = 'HYPOTHESIS'
+Emit WS event diagnostic.phase_changed { phase, reason }
+    ↓
+UI panel LLM met à jour le badge d'en-tête
+    ↓
+Retour à l'agent : user.custom_tool_result {"ok": true}
+```
+
+Ce tool appartient à la **famille « UI control pour le panel diagnostic »**, distincte des `mb_*` (data) et des 12 tools boardview (vue physique). Il est propre, testable, et évite toute reconnaissance heuristique sur le texte de l'agent.
+
+### 7.6 Double validation flow (boardview + mb_*) — rappel §2.7
+
+Pour toute action UI boardview qui prend un refdes, le flow est **exactement** celui de §2.7.3 :
+
+```
+Agent émet custom_tool_use highlight_component("U7")
+    ↓
+Backend api/tools/boardview.py intercepte
+    ↓
+L1 — api/board/validator.py::is_valid_refdes("U7")
+      (contre le board file parsé — source Boardviewer)
+    ↓ si ko : retourne {ok: false, suggestions: [...]}
+    ↓ si ok :
+L2 — api/memory_bank/tools.py::mb_get_component("U7")
+      (contre registry.json — source knowledge pack)
+    ↓ si ko : retourne {error: "not_found", closest_matches: [...]}
+    ↓ si ok :
+Emit message WS `boardview.highlight` suivant protocole Boardviewer spec §10
+Frontend rend
+    ↓
+Retour à l'agent : user.custom_tool_result {"ok": true, ...}
+```
+
+**Les deux couches sont indépendantes** : un refdes peut exister dans le board file mais pas dans le registry (composant physiquement soudé mais non documenté), ou l'inverse (documenté mais pas dans le board file courant, ex. composant optionnel selon révision PCB). Les deux échecs sont des signaux différents et envoient des messages distincts à l'agent.
+
+### 7.7 Cycle de session diagnostic
+
+**Démarrage** :
+
+1. Utilisateur ouvre un device depuis Home → frontend envoie `connect` sur `/ws/session/{device_id}`
+2. Backend crée la session Anthropic (role `diagnostic`, memory store = celui du device)
+3. Backend compose et injecte le system prompt 3 couches (§7.4)
+4. Événement `session.started` émis, UI affiche panel chat prêt
+
+**Durant la session** :
+
+- Messages utilisateur → `user.message` vers Anthropic
+- Agent réponses streamées token par token vers le frontend
+- Tool calls interceptés et dispatchés (§7.2 pour `mb_*`, §7.6 pour boardview)
+- Chaque event mirroré dans `events` Postgres
+
+**Fin de session — 3 déclencheurs** :
+
+| Déclencheur | Mécanique |
+|---|---|
+| Agent appelle `mb_save_case(status="resolved"\|"dead_end"\|"abandoned")` | Case écrit en DB + disque, session terminée |
+| Utilisateur clique « End session » dans l'UI | UI envoie `end_session` au backend, backend ferme la session Anthropic, Memory Store reçoit automatiquement les learnings de la session (gestion Managed Agents) |
+| Timeout inactivité | Deux paliers configurables — cf. ci-dessous |
+
+**Timeouts d'inactivité** :
+
+```python
+# api/config.py
+SESSION_SOFT_TIMEOUT_MINUTES: int = 45    # UI warning
+SESSION_HARD_TIMEOUT_MINUTES: int = 60    # backend force close
+```
+
+- **Soft (45 min)** — aucune activité depuis 45 min → le backend émet un event WS `session.inactivity_warning` → UI affiche « Session inactive, will close in 15 min. Move something to keep it open. » L'utilisateur peut cliquer « keep session » pour reset le compteur.
+- **Hard (60 min)** — aucune activité depuis 60 min → backend ferme la session Anthropic, `sessions.status = 'abandoned'`, Memory Store reçoit les learnings (Managed Agents auto).
+
+**Rationale** : 30 min était trop court en usage réel atelier (le technicien part chercher un composant, fait une chauffe de 10 min sur un bloc, dessoude patiemment). Une session qui dort sans messages ne consomme **zéro token** — pas de raison d'être agressif sur le timeout.
+
+**Après la fin** :
+
+- Anthropic déclenche la sauvegarde automatique dans le memory store (feature Managed Agents)
+- Backend déclenche le **cycle apprenant** (§8) : update `evidence.json`, détection de pattern, synthèse éventuelle d'une rule `learned`
+- UI retourne au Home ou affiche un résumé de session (compteurs, case créé, rules proposées)
+
+---
+
+## 8. Cycle apprenant — case → learned rule
+
+### 8.1 Vue d'ensemble
+
+Le cycle apprenant transforme les **cases résolus** en **rules réutilisables**. Il est **hybride stat + LLM** par design : la détection de pattern, l'agrégation des statistiques et l'évolution de la confidence sont du **code pur déterministe** (reproductible, testable, zéro coût API) ; seule la **synthèse de la rule** (étape 4) invoque un LLM, au moment précis où la décision vaut l'investissement.
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ Trigger : fin de session diagnostic (mb_save_case ou end_session) │
+└──────────────────────────────┬─────────────────────────────────────┘
+                               │
+       Étape 1 (code pur) ─────▼──────
+       Persistance du case          Postgres cases + disque
+                                    memory/{...}/cases/case-NNN-*.{md,json}
+                               │
+       Étape 2 (code pur) ─────▼──────
+       Update evidence.json         Pattern aggregation
+                                    (observed_causes, resolution_rate,
+                                     total_cases, dead_ends)
+                               │
+       Étape 3 (code pur) ─────▼──────
+       Test seuil de trigger        total_cases ≥ MIN_CASES
+                                    AND top_cause.rate ≥ MIN_RATE
+                                    AND pattern.promoted_to_rule_id is None
+                               │
+                      seuil franchi ?
+                         │         │
+                       non        oui
+                         │         │
+                         │         ▼
+                         │  Étape 4 (LLM) ────
+                         │  rule_synthesizer (Opus 4.7)
+                         │  tool forcé submit_learned_rule
+                         │         │
+                         │         ▼
+                         │  Rule [LEARNED] ajoutée à rules.json
+                         │  confidence initiale 0.55
+                         │  needs_validation: true
+                         │  pattern.promoted_to_rule_id = rule.id
+                         │         │
+                         └─────────┤
+                                   │
+       Étape 5 (code pur) ─────────▼────── (à chaque session future)
+       Feedback loop                Ajustement confidence ± 0.05 / ± 0.10
+                                    Désactivation auto si < 0.30
+```
+
+**Répartition coût** : 90 % du cycle est du code pur ; les 10 % LLM (étape 4) ne se déclenchent qu'au **franchissement du seuil**, soit typiquement **quelques fois par semaine** en usage actif. L'impact budgétaire est négligeable (~0.10–0.20 $ par rule synthétisée, §8.5).
+
+### 8.2 Étape 1 — Persistance du case
+
+Déjà couverte en §7.7 (via `mb_save_case`). Rappel rapide :
+
+- Ligne dans Postgres `cases` (§3.2.8)
+- Fichiers `memory/{vendor}/{model}/cases/case-NNN-*.{md,json}` (§4.9)
+
+L'id `NNN` est séquentiel par device (`SELECT COUNT(*) FROM cases WHERE device_id = ? FOR UPDATE` + `+1`). Si deux cases sont créés concurremment sur un même device (rare), le FOR UPDATE sérialise proprement.
+
+### 8.3 Étape 2 — Update `evidence.json` (pattern aggregation)
+
+Algorithme pur Python, idempotent, exécuté **après** l'écriture du case. Lit et réécrit `memory/{vendor}/{model}/evidence.json` (fichier sous git, donc les évolutions sont tracées naturellement).
+
+```python
+def update_evidence(device_id: str, case: Case) -> None:
+    """Met à jour evidence.json avec le case qui vient d'être résolu."""
+    pack_path = memory_bank.path_for(device_id)
+    ev = evidence.load(pack_path / "evidence.json")  # modèle Pydantic
+
+    pattern_key = frozenset(case.symptoms)
+    pattern = ev.find_pattern(key=pattern_key) or ev.create_pattern(key=pattern_key)
+
+    pattern.total_cases += 1
+
+    if case.status == "resolved" and case.resolution.cause_refdes:
+        ref = case.resolution.cause_refdes
+        pattern.observed_causes[ref] = pattern.observed_causes.get(ref, 0) + 1
+    elif case.status == "dead_end":
+        pattern.dead_ends += 1
+
+    # Recompute resolution_rate per cause (rate = observed / total)
+    pattern.resolution_rate = {
+        ref: count / pattern.total_cases
+        for ref, count in pattern.observed_causes.items()
+    }
+    pattern.last_update = utcnow()
+
+    evidence.save(pack_path / "evidence.json", ev)
+```
+
+Shape du fichier rappelée (§4.6) — aucune structure nouvelle introduite ici, juste le code d'update.
+
+### 8.4 Étape 3 — Seuil de déclenchement du `rule_synthesizer`
+
+Test de trigger déterministe, exécuté après chaque update d'`evidence.json`. Trois conditions cumulatives :
+
+```python
+def should_synthesize_rule(pattern: Pattern) -> bool:
+    if pattern.total_cases < LEARNING_PATTERN_MIN_CASES:
+        return False
+    top_cause_ref, top_count = pattern.top_cause()
+    top_rate = top_count / pattern.total_cases
+    if top_rate < LEARNING_PATTERN_MIN_RESOLUTION_RATE:
+        return False
+    if pattern.promoted_to_rule_id is not None:
+        return False    # déjà promu, évite les doublons
+    return True
+```
+
+Configuration dans `api/config.py` :
+
+```python
+LEARNING_PATTERN_MIN_CASES: int            = 3      # minimum de cases pour considérer le pattern
+LEARNING_PATTERN_MIN_RESOLUTION_RATE: float = 0.60   # ratio top_cause / total_cases
+```
+
+**Pourquoi 3 cas / 60 %** :
+- 3 cas est le minimum statistiquement défendable pour parler de « pattern » ; moins = anecdote.
+- 60 % garantit que la cause dominante est vraiment dominante (pas un coup de chance sur 2/3 avec répartition équilibrée).
+- Les deux valeurs sont tunables en J+3/J+4 si les premiers retours suggèrent un ajustement (trop strict → pas de learned rule émergente, trop laxe → rules prématurées).
+
+Si `should_synthesize_rule` renvoie `True` → Étape 4 se déclenche de façon **asynchrone** (ne bloque pas la réponse UI au mb_save_case). Un event `learning.synthesis_triggered` est émis pour que l'UI Memory Bank affiche un badge « learning a new rule… » en arrière-plan.
+
+### 8.5 Étape 4 — Sub-agent `rule_synthesizer` (Opus 4.7)
+
+| Champ | Valeur |
+|---|---|
+| `role` | `rule_synthesizer` |
+| Modèle | `claude-opus-4-7` |
+| Tool forcé | `submit_learned_rule(rule_json)` |
+| Inputs | `pattern` complet (JSON) + les ≥ 3 cases markdown concernés + `registry.json` du device (cached) |
+
+**System prompt résumé** :
+
+> Tu synthétises une rule diagnostique [LEARNED] à partir d'un pattern observé dans plusieurs cases résolus. La rule doit :
+> 1. Lister les symptômes du pattern (reprendre la liste clé)
+> 2. Ranker les `likely_causes` par fréquence observée
+> 3. Proposer 1–3 `diagnostic_steps` concrets inspirés des actions des cases
+> 4. Citer en `sources` les `case_id` concernés
+> 5. Inclure `confidence: 0.55`, `needs_validation: true`, `origin: "learned"`
+>
+> Tu utilises uniquement les `canonical_name` du registry. Tu soumets via `submit_learned_rule` — aucun texte libre.
+
+**Output** — conforme au schema rules §4.5 avec les champs learned spécifiques :
+
+```json
+{
+  "id": "rule-pi4-learned-007",
+  "origin": "learned",
+  "symptoms": ["3V3 rail dead", "device doesn't boot"],
+  "likely_causes": [{"refdes": "C29", "probability": 0.78, "mechanism": "short-to-ground"}],
+  "diagnostic_steps": [
+    {"action": "measure 3V3_RAIL at TP18", "expected": 3.3, "unit": "V"},
+    {"action": "if 0V, measure resistance TP18 to GND", "pass_threshold": "> 100 ohm"}
+  ],
+  "confidence": 0.55,
+  "needs_validation": true,
+  "sources": ["case:001", "case:007", "case:012"]
+}
+```
+
+**Action finale de l'étape 4** :
+1. Append la rule à `memory/{vendor}/{model}/rules.json`
+2. Update `pattern.promoted_to_rule_id = rule.id` dans `evidence.json`
+3. Event `learning.rule_synthesized` émis au frontend (notif toast « New learned rule available for [device] »)
+
+**Coût estimé** : ~20–40 k input (3 cases markdown + pattern + registry cached à ~70 %) + ~2–3 k output → **~0.10–0.20 $ par rule**.
+
+### 8.6 Étape 5 — Feedback loop (évolution de confidence)
+
+**Quand** : à la fin de chaque session diagnostic future où une rule `[LEARNED]` a été **invoquée** (retournée par `mb_get_rules_for_symptoms` et visible à l'agent).
+
+**Tracking** : le backend loggue, pour chaque session, la liste des `rule_ids` retournés à l'agent. Stocké dans `sessions.metadata.invoked_rule_ids: list[str]`. Mis à jour à chaque appel `mb_get_rules_for_symptoms` au cours de la session.
+
+**Algorithme post-session** :
+
+```python
+def apply_confidence_feedback(session: Session, case: Case | None) -> None:
+    """Ajuste la confidence des learned rules invoquées durant la session."""
+    for rule_id in session.metadata.invoked_rule_ids:
+        rule = rules.load_by_id(session.device_id, rule_id)
+        if rule.origin != "learned":
+            continue    # les rules core ne subissent pas d'évolution
+
+        delta = 0.0
+        if case and case.status == "resolved":
+            top_cause = rule.likely_causes[0].refdes
+            if case.resolution.cause_refdes == top_cause:
+                delta = +0.05   # rule a aidé à résoudre sur la cause qu'elle prévoyait
+            else:
+                delta = -0.05   # rule a proposé une mauvaise piste (mais session résolue quand même)
+        elif case and case.status == "dead_end":
+            delta = -0.10       # rule a activement induit en erreur
+
+        rule.confidence = clamp(rule.confidence + delta, 0.0, 1.0)
+        if rule.confidence < LEARNING_DISABLE_THRESHOLD:
+            rule.disabled = True
+
+        rules.save(session.device_id, rule)
+```
+
+Configuration :
+
+```python
+LEARNING_CONFIDENCE_DELTA_SUCCESS: float = 0.05
+LEARNING_CONFIDENCE_DELTA_WRONG_CAUSE: float = -0.05
+LEARNING_CONFIDENCE_DELTA_DEAD_END: float = -0.10
+LEARNING_DISABLE_THRESHOLD: float = 0.30
+```
+
+**Symétrie des deltas** : les gains sont modestes (+0.05), les pénalités plus sévères (-0.10 pour dead_end) — une rule learned qui induit en erreur doit être désactivée vite. Typiquement il faut ~9 succès consécutifs pour qu'une rule passe de 0.55 à 1.00, mais **3 dead_ends successifs** suffisent à la désactiver (0.55 → 0.45 → 0.35 → 0.25 < 0.30).
+
+### 8.7 Désactivation et réactivation de learned rules
+
+**Désactivation automatique** : `confidence < LEARNING_DISABLE_THRESHOLD` → `rule.disabled = True` dans `rules.json`. Les rules disabled sont **exclues** des résultats de `mb_get_rules_for_symptoms` par défaut (filtré côté backend).
+
+**Réactivation manuelle** : l'utilisateur peut réactiver une rule depuis l'UI Memory Bank > Knowledge > Rules (bouton « Re-enable »). Action simple côté backend : `rule.disabled = False` et reset `confidence = LEARNING_DISABLE_THRESHOLD + 0.05` (soit 0.35) pour relancer un cycle de feedback. Log event `learning.rule_manually_reenabled`.
+
+**Suppression manuelle** : possible aussi, via bouton « Delete rule ». Supprime la rule de `rules.json`, log event `learning.rule_deleted`. Le pattern associé dans `evidence.json` se voit remis à `promoted_to_rule_id: null` pour permettre une éventuelle re-synthèse ultérieure si le pattern continue à grossir.
+
+**Aucune désactivation automatique des rules `core`** — elles viennent du schematic ou du deep research, pas du feedback utilisateur. Une rule core erronée se corrige en régénérant le knowledge pack, pas via le cycle apprenant.
+
+### 8.8 Scénario démo bout en bout — *« I've seen this 3 times »*
+
+Le cycle apprenant est une des **3 narratives clés** de la vidéo démo (avec deep research fallback et pilotage visuel). Storyboard en 4 sessions pré-enregistrées + 1 session live :
+
+| # | Narratif | Setup DB |
+|---|---|---|
+| 1 | Pre-recorded : session Pi 4 « 3V3 dead, device doesn't boot ». Agent propose U7 en 1ᵉʳ (rule core), user mesure TP17 → 5V OK, PMIC bon. Agent propose C29 en 2ᵉ (rule core probability 0.35), user mesure résistance TP18-GND → 4 Ω = short. Remplace C29. Resolved. | `cases` row, `evidence.json` updated : pattern `{3V3 rail dead, doesn't boot}`, `observed_causes.C29 = 1`, `total_cases = 1` |
+| 2 | Pre-recorded : autre Pi 4, même symptômes → même chemin (U7 OK, C29 short), même résolution | `observed_causes.C29 = 2`, `total_cases = 2` — pas encore de trigger (< 3) |
+| 3 | Pre-recorded : 3ᵉ Pi 4, même diag rapide (user connaît déjà, arrive avec l'hypothèse). Resolved. | `observed_causes.C29 = 3`, `total_cases = 3`, `rate = 1.0 ≥ 0.60` → **trigger** ! `rule_synthesizer` produit `rule-pi4-learned-001` avec `confidence: 0.55` |
+| 4 | **LIVE pendant la démo** : user ouvre une 4ᵉ Pi 4, tape « Pi 4 won't boot, 3V3 rail seems dead » | L'agent répond en temps réel : *« I've seen this 3 times on Pi 4, likely C29 again. Want me to highlight it on the board and measure TP18 first to confirm? »* (invoque la rule learned en 1ᵉʳ rank car confidence 0.55 > top core rule C29 à 0.35 × un facteur d'historique + recency) |
+
+Le point narratif clé : **le même setup n'aurait pas donné cette réponse il y a 10 minutes**, avant que la 3ᵉ session ne promote la rule. L'outil apprend **pendant qu'on l'utilise**, et le narratif vidéo peut le matérialiser par un split-screen (« session 3 closes » ↔ « rule synthesized toast » ↔ « session 4 opens with learned rule as top suggestion »).
+
+**Préparation J-1 démo** : les sessions 1, 2, 3 sont enregistrées avec vrais tokens API (pour avoir les rules réellement promues dans `rules.json`), puis seeded en DB. La session 4 est live, mais l'état `evidence.json` + `rules.json` est déjà dans l'état post-session-3. Aucune simulation : la rule learned qui sert la démo live est le **vrai artefact** produit par le pipeline.
 
 ---
