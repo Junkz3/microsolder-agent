@@ -72,12 +72,24 @@ def test_suggest_similar_caps_at_k():
 
 
 def test_suggest_similar_deterministic_order():
-    """When multiple candidates have the same distance, ordering must be stable."""
+    """When multiple candidates tie on distance, alphabetical order wins.
+
+    Both R1 and C1 are distance 2 from `X2` (two substitutions each).
+    With lexicographic tiebreak, C1 must come before R1 ; the result is
+    stable across calls regardless of the order parts are stored in.
+    """
     board = _board()
-    # Both R1 and C1 are distance 2 from an unknown like "X2" :
-    # edit(R1, X2) = substitute R→X + substitute 1→2 = 2
-    # edit(C1, X2) = substitute C→X + substitute 1→2 = 2
-    # Whatever order the function returns, it must be deterministic across runs.
     first = suggest_similar(board, "X2", k=2)
     second = suggest_similar(board, "X2", k=2)
     assert first == second
+    assert first == ["C1", "R1"]  # alphabetical tiebreak pins the order
+
+
+def test_suggest_similar_handles_whitespace():
+    """Whitespace-only queries return []. Padded queries match stripped form."""
+    board = _board()
+    assert suggest_similar(board, "  ", k=3) == []
+    assert suggest_similar(board, "\t", k=3) == []
+    # `" R1 "` should match `R1` at distance 0 after strip — first result.
+    padded = suggest_similar(board, " R1 ", k=1)
+    assert padded == ["R1"]

@@ -43,9 +43,12 @@ def suggest_similar(board: Board, refdes: str, k: int = 3) -> list[str]:
     Order is ascending distance ; ties broken by alphabetical order on the
     refdes string so calls are deterministic across runs.
 
-    Empty input returns an empty list — there is no sensible "close match"
-    to the empty string.
+    The input is stripped of leading/trailing whitespace before comparison.
+    An empty or whitespace-only string returns an empty list — there is no
+    sensible "close match" to whitespace. This also means a padded query
+    like `" R1 "` correctly matches `R1` at distance 0 after strip.
     """
+    refdes = refdes.strip()
     if not refdes:
         return []
     candidates = [p.refdes for p in board.parts]
