@@ -37,3 +37,11 @@ def test_malformed_header_raises(tmp_path: Path):
     f.write_text("str_length: 0\nvar_data: not-a-number 2 4 1\n")
     with pytest.raises(MalformedHeaderError):
         BRDParser().parse_file(f)
+
+
+def test_parses_var_data_without_space_after_colon(tmp_path: Path):
+    """Real-world .brd files sometimes omit the space between 'var_data:' and the first int."""
+    f = tmp_path / "tight.brd"
+    f.write_text("str_length: 0\nvar_data:4 0 0 0\nFormat:\n0 0\n10 0\n10 10\n0 10\n")
+    board = BRDParser().parse_file(f)
+    assert len(board.outline) == 4
