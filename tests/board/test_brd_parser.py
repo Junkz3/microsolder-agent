@@ -209,3 +209,71 @@ def test_derives_nets_from_pins_with_power_ground_flags():
     for n in board.nets:
         for i in n.pin_refs:
             assert 0 <= i < len(board.pins)
+
+
+def test_power_regex_matches_realistic_rpi4_rail_names():
+    """`_POWER_RE` must classify the main Pi 4 schematic rails as power."""
+    from api.board.parser.brd import _POWER_RE
+
+    should_match = [
+        "+3V3",
+        "5V",
+        "1V8",
+        "+12V",
+        "3V3_RUN",
+        "1V8_AUDIO",
+        "5V_EXT",
+        "VCC",
+        "VCCIO",
+        "VCC_IO",
+        "VCCIO_HDMI",
+        "VDD",
+        "VDDIO",
+        "VDD_CORE",
+        "VDD_SDRAM_P",
+        "VDDIO_HDMI",
+        "V_CORE",
+        "V_USB",
+        "V_CPU_CORE",
+    ]
+    for name in should_match:
+        assert _POWER_RE.match(name), f"expected power match for {name!r}"
+
+
+def test_power_regex_rejects_signal_and_non_power_names():
+    """`_POWER_RE` must not flag signal nets as power."""
+    from api.board.parser.brd import _POWER_RE
+
+    should_not_match = [
+        "GND",
+        "UART0_TX",
+        "SDA1",
+        "GPIO_0",
+        "HDMI0_DAT",
+        "DDR_CLK",
+        "VICTOR",
+        "VOUT",
+        "VBAT",
+        "V3V3",
+        "",
+    ]
+    for name in should_not_match:
+        assert not _POWER_RE.match(name), f"unexpected power match for {name!r}"
+
+
+def test_ground_regex_rejects_power_and_signal_names():
+    """`_GROUND_RE` must not flag non-ground names."""
+    from api.board.parser.brd import _GROUND_RE
+
+    should_not_match = [
+        "+3V3",
+        "5V",
+        "VCC",
+        "VDD",
+        "VCCIO",
+        "UART0_TX",
+        "GND_AREA",  # near miss — must still fail, exact names only
+        "",
+    ]
+    for name in should_not_match:
+        assert not _GROUND_RE.match(name), f"unexpected ground match for {name!r}"

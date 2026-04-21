@@ -342,10 +342,20 @@ def _backfill_empty_nets(pins: list[Pin], nails: list[Nail]) -> list[Pin]:
     return patched
 
 
-# Power net heuristic : matches "+3V3", "5V", "1V8", "V3V3", "VCC", "VDD",
-# "V_CORE", etc. Case-insensitive. Matches are deliberately permissive so
-# the UI can colour power rails without a config file.
-_POWER_RE = re.compile(r"^(\+?\d+V\d*|VCC|VDD|V_[A-Z0-9_]+)$", re.IGNORECASE)
+# Power net heuristic — case-insensitive.
+# Covered families :
+#   1. Voltage magnitudes : "+3V3", "5V", "1V8", "+12V", with optional
+#      qualifier suffix : "3V3_RUN", "1V8_AUDIO", "5V_EXT".
+#   2. VCC family : "VCC", "VCCIO", "VCC_IO", "VCC3", "VCCIO_HDMI".
+#   3. VDD family : "VDD", "VDDIO", "VDD_CORE", "VDDIO_HDMI", "VDD_SDRAM_P".
+#   4. V_ prefix : "V_CORE", "V_USB", "V_CPU_CORE".
+# Intentional misses : "VBAT", "VICTOR", "VOUT" (signal-like names).
+# Extend on evidence, not speculation — false positives colour signal
+# traces like power and are harder to diagnose than false negatives.
+_POWER_RE = re.compile(
+    r"^(\+?\d+V\d*(_[A-Z0-9_]+)?|VCC[A-Z0-9_]*|VDD[A-Z0-9_]*|V_[A-Z0-9_]+)$",
+    re.IGNORECASE,
+)
 
 # Ground net heuristic : the five classic names in EE schematics.
 # Case-insensitive. Extend only when a real board shows up with a new spelling.
