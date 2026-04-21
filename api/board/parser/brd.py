@@ -11,6 +11,7 @@ field layout summary used here.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from api.board.model import Board, Layer, Nail, Net, Part, Pin, Point
@@ -64,10 +65,7 @@ class BRDParser(BoardParser):
         pins, parts = _parse_pins_and_patch_parts(lines, header.num_pins, parts_raw, parts)
         nails = _parse_nails(lines, header.num_nails)
         pins = _backfill_empty_nets(pins, nails)
-
-        # Placeholder populated by the next task :
-        #   nets    — Task 9 (derived from pins)
-        nets: list[Net] = []
+        nets = _derive_nets(pins)
 
         return Board(
             board_id=board_id,
@@ -342,3 +340,43 @@ def _backfill_empty_nets(pins: list[Pin], nails: list[Nail]) -> list[Pin]:
         else:
             patched.append(pin)
     return patched
+
+
+# Power net heuristic : matches "+3V3", "5V", "1V8", "V3V3", "VCC", "VDD",
+# "V_CORE", etc. Case-insensitive. Matches are deliberately permissive so
+# the UI can colour power rails without a config file.
+_POWER_RE = re.compile(r"^(\+?\d+V\d*|VCC|VDD|V_[A-Z0-9_]+)$", re.IGNORECASE)
+
+# Ground net heuristic : the five classic names in EE schematics.
+# Case-insensitive. Extend only when a real board shows up with a new spelling.
+_GROUND_RE = re.compile(r"^(GND|VSS|AGND|DGND|PGND)$", re.IGNORECASE)
+
+
+def _derive_nets(pins: list[Pin]) -> list[Net]:
+    """Group pins by net name ; flag power / ground by regex heuristic.
+
+    Pins with `pin.net is None` are skipped. The returned list is sorted
+    alphabetically by net name for deterministic test output and for
+    stable serialization order on the wire.
+
+    is_power / is_ground flags are heuristic — the `.brd` format does not
+    carry net-type metadata. Callers that need stricter classification
+    (e.g. PMIC output rail detection) should layer their own logic on top.
+    """
+    by_name: dict[str, list[int]] = {}
+    for i, pin in enumerate(pins):
+        if pin.net is None:
+            continue
+        by_name.setdefault(pin.net, []).append(i)
+
+    out: list[Net] = []
+    for name, refs in sorted(by_name.items()):
+        out.append(
+            Net(
+                name=name,
+                pin_refs=refs,
+                is_power=bool(_POWER_RE.match(name)),
+                is_ground=bool(_GROUND_RE.match(name)),
+            )
+        )
+    return out

@@ -191,3 +191,21 @@ def test_pin_net_not_overwritten_when_already_set(tmp_path: Path):
     board = BRDParser().parse_file(f)
     # Explicit net wins over nail-based backfill.
     assert board.pins[0].net == "EXPLICIT_NET"
+
+
+def test_derives_nets_from_pins_with_power_ground_flags():
+    board = BRDParser().parse_file(FIXTURE_DIR / "minimal.brd")
+    net_names = {n.name for n in board.nets}
+    assert net_names == {"+3V3", "GND"}
+    vcc = board.net_by_name("+3V3")
+    gnd = board.net_by_name("GND")
+    assert vcc is not None
+    assert gnd is not None
+    assert vcc.is_power is True
+    assert vcc.is_ground is False
+    assert gnd.is_power is False
+    assert gnd.is_ground is True
+    # pin_refs must point into board.pins
+    for n in board.nets:
+        for i in n.pin_refs:
+            assert 0 <= i < len(board.pins)
