@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from api.board.model import Layer
 from api.board.parser.base import (
     MalformedHeaderError,
     ObfuscatedFileError,
@@ -45,3 +46,15 @@ def test_parses_var_data_without_space_after_colon(tmp_path: Path):
     f.write_text("str_length: 0\nvar_data:4 0 0 0\nFormat:\n0 0\n10 0\n10 10\n0 10\n")
     board = BRDParser().parse_file(f)
     assert len(board.outline) == 4
+
+
+def test_parses_parts_block_with_layer_bits():
+    board = BRDParser().parse_file(FIXTURE_DIR / "minimal.brd")
+    assert len(board.parts) == 2
+    r1 = board.part_by_refdes("R1")
+    c1 = board.part_by_refdes("C1")
+    assert r1 is not None
+    assert r1.layer == Layer.TOP
+    assert r1.is_smd is True
+    assert c1.layer == Layer.BOTTOM
+    assert c1.is_smd is False  # type_layer 10 has bit 0x2 (bottom) without bit 0x4 (SMD)

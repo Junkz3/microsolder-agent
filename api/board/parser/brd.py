@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from api.board.model import Board, Nail, Net, Part, Pin, Point
+from api.board.model import Board, Layer, Nail, Net, Part, Pin, Point
 from api.board.parser.base import (
     BoardParser,
     InvalidBoardFile,
@@ -50,14 +50,24 @@ class BRDParser(BoardParser):
         outline = _parse_outline(lines, header.num_format)
 
         # Placeholders populated by later tasks :
-        #   parts   — Task 6 (Parts block)
         #   pins    — Task 7 (Pins block + part linkage + bbox)
         #   nails   — Task 8 (Nails block + dangling-net backfill)
         #   nets    — Task 9 (derived from pins)
-        parts: list[Part] = []
+        # Note : bbox will be patched in Task 7 once pin coordinates are known.
+        parts_raw = _parse_parts(lines, header.num_parts)
+        parts = [
+            Part(
+                refdes=r,
+                layer=_layer_from_bits(t),
+                is_smd=_is_smd_from_bits(t),
+                bbox=(Point(x=0, y=0), Point(x=0, y=0)),
+                pin_refs=[],
+            )
+            for r, t, _ in parts_raw
+        ]
         pins: list[Pin] = []
-        nets: list[Net] = []
         nails: list[Nail] = []
+        nets: list[Net] = []
 
         return Board(
             board_id=board_id,
@@ -118,3 +128,45 @@ def _parse_outline(lines: list[str], n: int) -> list[Point]:
     if len(pts) != n:
         raise MalformedHeaderError("Format")
     return pts
+
+
+def _parse_parts(lines: list[str], n: int) -> list[tuple[str, int, int]]:
+    """Parse the Parts: / Pins1: block. Returns [(refdes, type_layer, end_of_pins), ...]."""
+    if n == 0:
+        return []
+    try:
+        idx = next(i for i, ln in enumerate(lines) if ln in ("Parts:", "Pins1:"))
+    except StopIteration as exc:
+        raise MalformedHeaderError("Parts") from exc
+
+    out: list[tuple[str, int, int]] = []
+    for raw in lines[idx + 1 : idx + 1 + n]:
+        toks = raw.split()
+        if len(toks) < 3:
+            raise MalformedHeaderError("Parts")
+        try:
+            name = toks[0]
+            type_layer = int(toks[1])
+            end_of_pins = int(toks[2])
+        except ValueError as exc:
+            raise MalformedHeaderError("Parts") from exc
+        out.append((name, type_layer, end_of_pins))
+    if len(out) != n:
+        raise MalformedHeaderError("Parts")
+    return out
+
+
+def _layer_from_bits(type_layer: int) -> Layer:
+    """Single-bit scheme : bit 0x2 set → bottom layer, else top.
+
+    Validated against the fixture : 5 (0b0101) → top, 10 (0b1010) → bottom.
+    """
+    return Layer.BOTTOM if (type_layer & 0x2) else Layer.TOP
+
+
+def _is_smd_from_bits(type_layer: int) -> bool:
+    """Bit 0x4 set → SMD, else through-hole.
+
+    Validated : 5 → SMD, 10 → through-hole.
+    """
+    return bool(type_layer & 0x4)
