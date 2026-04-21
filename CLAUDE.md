@@ -1,6 +1,6 @@
-# CLAUDE.md — microsolder-agent
+# CLAUDE.md
 
-Context file for Claude Code sessions on this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project overview
 
@@ -27,26 +27,112 @@ the Anthropic × Cerebral Valley "Built with Opus 4.7" hackathon, April 21–26 
 
 ## Stack
 
-- **Backend:** Python 3.11+, FastAPI, uvicorn, Pydantic, WebSocket (native),
-  pdfplumber, pytest
-- **Agent:** Anthropic Python SDK — `claude-opus-4-7` for reasoning,
+- **Backend:** Python 3.11+, FastAPI (~0.136), uvicorn, Pydantic v2,
+  WebSocket (native), pdfplumber, pytest + pytest-asyncio
+- **Agent:** `anthropic ~= 0.96.0` — `claude-opus-4-7` for reasoning,
   `claude-haiku-4-5` for fast validation/formatting
-- **Frontend:** Vanilla HTML + CSS + JS (no build step), Tailwind CSS via
-  CDN, Alpine.js via CDN, PDF.js via CDN
+- **Frontend:** Vanilla HTML + CSS + JS (no build step), D3.js v7 via CDN,
+  Inter + JetBrains Mono fonts. No Tailwind, no Alpine, no bundler.
+
+## Commands
+
+All tasks go through `make` (see `Makefile`):
+
+```bash
+make install   # create .venv and install deps (incl. [dev])
+make run       # uvicorn api.main:app --reload on :8000
+make test      # pytest tests/ -v
+make lint      # ruff check api/ tests/
+make format    # ruff format api/ tests/
+make clean     # drop __pycache__, .pytest_cache, .ruff_cache, egg-info
+```
+
+Single test / subset:
+
+```bash
+.venv/bin/pytest tests/board/test_brd_parser.py -v
+.venv/bin/pytest tests/board/test_brd_parser.py::test_parse_minimal_board -v
+.venv/bin/pytest -k "validator and not slow"
+```
+
+The API key is loaded from `.env` (copy `.env.example`). Tests do not require
+`ANTHROPIC_API_KEY` — `api/config.py` defaults it to empty and only the
+pipeline code paths raise if it's missing at runtime.
 
 ## Layout
 
 ```
-api/           FastAPI backend
-  agent/       Claude orchestration, tool loop
-  board/       Boardview parsing, component lookup
-  session/     Per-session state, journal
-  vision/      Image/PDF rendering helpers
-  tools/       Tool-use handlers exposed to the agent
-  telemetry/   Structured logs, metrics
-web/           Vanilla frontend served from FastAPI
-tests/         Pytest suite
+api/
+  main.py          FastAPI app: /health, /ws placeholder, mounts web/, includes pipeline router
+  config.py        Pydantic-settings Settings loaded from .env (get_settings() is process-cached)
+  logging_setup.py Single stdout handler, idempotent
+  pipeline/        V2 knowledge factory — Scout → Registry → Writers(×3 parallel) → Auditor
+  board/           Boardview domain: model (Board/Part/Pin/Net), parser registry, validator
+  agent/           Stub — diagnostic conversation (Managed Agents) lands here, Phase C
+  session/         Stub — per-session state / journal
+  vision/          Stub — image / PDF rendering helpers
+  tools/           Stub — mb_* custom tools exposed to the diagnostic agent
+  telemetry/       Stub — structured logs / metrics
+web/               Static frontend served by FastAPI (index.html is the whole app)
+tests/             pytest suite; mirror api/ layout (tests/board/, tests/pipeline/, …)
+memory/            Generated knowledge packs, one directory per device_slug (canonical store)
+docs/superpowers/  specs/ and plans/ — read these before structural changes
 ```
+
+## Architecture — the two paths
+
+There are **two distinct LLM paths**, by design:
+
+1. **Pipeline (V2 knowledge factory)** — `api/pipeline/`. Direct
+   `messages.create` calls with forced tool use (`tool_choice={"type":"tool"}`)
+   and Pydantic validation via `api/pipeline/tool_call.py::call_with_forced_tool`.
+   Batch / one-shot / structured output. No session state. Used to build
+   per-device knowledge packs.
+
+2. **Diagnostic conversation** — `api/agent/` (Phase C, not yet landed).
+   **Anthropic Managed Agents**: persistent agent + memory store per device +
+   session event stream + custom `mb_*` tools. Fallback `DIAGNOSTIC_MODE=direct`
+   env var pivots to `messages.create` if the MA beta blocks us.
+
+The split is deliberate — the pipeline doesn't benefit from session primitives
+(see `docs/superpowers/plans/2026-04-22-v1-hackathon-shipping-plan.md` for the
+rationale). Do not migrate pipeline to Managed Agents.
+
+### The 4-phase pipeline (`api/pipeline/`)
+
+`orchestrator.generate_knowledge_pack(device_label)` runs these sequentially
+and writes each artefact to `memory/{device_slug}/` as the canonical store:
+
+| Phase | Module        | Input           | Output (on disk)                   |
+|-------|---------------|-----------------|------------------------------------|
+| 1 Scout        | `scout.py`    | device_label | `raw_research_dump.md` (free Markdown via native `web_search` tool, handles `pause_turn` resumptions) |
+| 2 Registry     | `registry.py` | raw dump     | `registry.json` (canonical vocabulary — refdes, signals) |
+| 3 Writers ×3   | `writers.py`  | raw + registry | `knowledge_graph.json`, `rules.json`, `dictionary.json` — Cartographe / Clinicien / Lexicographe run in parallel, share a **cache-controlled prefix**: writer 1 launches first, then `asyncio.sleep(cache_warmup_seconds)` lets Anthropic materialize the cache entry before writers 2+3 arrive |
+| 4 Auditor      | `auditor.py`  | all 4 above  | `audit_verdict.json` — APPROVED / NEEDS_REVISION / REJECTED. On NEEDS_REVISION the orchestrator loops back to the flagged writers (`_apply_revisions`) up to `pipeline_max_revise_rounds` times. REJECTED raises. |
+
+**Source of truth for data shapes:** `api/pipeline/schemas.py`. These Pydantic
+classes do double duty as runtime validators *and* JSON Schema sources for the
+forced-tool `input_schema`. Never duplicate a shape — import from there.
+
+**HTTP surface** (`api/pipeline/__init__.py`):
+- `POST /pipeline/generate` — run the full pipeline, blocks ~30–120s
+- `GET  /pipeline/packs` — list generated packs
+- `GET  /pipeline/packs/{device_slug}` — pack metadata
+
+### Board parsing (`api/board/`)
+
+- `model.py` — Pydantic v2 `Board` with private refdes/net indexes built in
+  `model_post_init`. Access via `board.part_by_refdes()` / `board.net_by_name()`.
+- `parser/base.py` — abstract `BoardParser` with **extension-based registry**.
+  Concrete parsers use the `@register` decorator and declare `extensions = (...)`.
+  Dispatch via `parser_for(path)`. Adding a new format = one new file in
+  `parser/`, no changes to base.
+- `parser/brd.py` — clean-room OpenBoardView `.brd` (Test_Link) parser. Refuses
+  OBV-signature obfuscated files (`ObfuscatedFileError`).
+- `validator.py` — anti-hallucination guardrail (pure functions, no I/O). Every
+  refdes the agent plans to surface passes `is_valid_refdes` / `resolve_part`
+  / `resolve_net` / `resolve_pin` first. `suggest_similar` gives Levenshtein
+  neighbours for the "did you mean" recovery path.
 
 ## Development principles
 
@@ -89,21 +175,31 @@ tests/         Pytest suite
 
 ## Models
 
-- `ANTHROPIC_MODEL_MAIN` → `claude-opus-4-7` (agent reasoning, tool planning)
+- `ANTHROPIC_MODEL_MAIN` → `claude-opus-4-7` (agent reasoning, tool planning,
+  every sub-agent of the pipeline)
 - `ANTHROPIC_MODEL_FAST` → `claude-haiku-4-5` (validation, formatting,
-  cheap classification)
+  cheap classification — reserved, not wired everywhere yet)
 
 Both are loaded from `.env` via `api/config.py`.
+
+## Specs and plans — read before structural work
+
+- `docs/superpowers/specs/2026-04-21-microsolder-agent-v1-design.md` — full v1
+  design. §2.3 Flow A documents the diagnostic-conversation path; §4 documents
+  the on-disk knowledge-pack store.
+- `docs/superpowers/specs/2026-04-21-boardview-design.md` — boardview / parser
+  spec. §7 has the `.brd` Test_Link field layout the parser is built against.
+- `docs/superpowers/plans/2026-04-22-v1-hackathon-shipping-plan.md` — current
+  shipping plan (Phases A→D through 2026-04-26). This is the source of truth
+  for what ships this week and what is explicitly out of scope.
 
 ## Hackathon prize-track context (background, not a rule)
 
 Cerebral Valley announced a **$5 000 "best use of Managed Agents"** track on
-top of the main hackathon prize. This is CONTEXT, not scope : do not warp
+top of the main hackathon prize. This is CONTEXT, not scope: do not warp
 architectural choices to chase it. We use Managed Agents where they genuinely
 fit — the **diagnostic conversation** path (persistent agent + memory store
 per device + session event stream + custom tool use, cf. spec §2.3 Flow A). The
 **pipeline** path stays on `messages.create` direct because it's batch and
-doesn't benefit from session primitives. See
-`docs/superpowers/plans/2026-04-22-v1-hackathon-shipping-plan.md` for the full
-split rationale. Never mention prizes in commit messages, plans, or code —
-keep the work technically-motivated.
+doesn't benefit from session primitives. Never mention prizes in commit
+messages, plans, or code — keep the work technically-motivated.
