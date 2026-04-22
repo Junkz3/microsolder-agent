@@ -7,7 +7,7 @@ from typing import Any
 
 from api.board.validator import is_valid_refdes, resolve_net, resolve_part, resolve_pin, suggest_similar
 from api.session.state import SessionState
-from api.tools.ws_events import Annotate as AnnotateEvent, DrawArrow, Filter, Flip, Focus, Highlight, HighlightNet, Measure, ResetView, ShowPin
+from api.tools.ws_events import Annotate as AnnotateEvent, DimUnrelated, DrawArrow, Filter, Flip, Focus, Highlight, HighlightNet, LayerVisibility, Measure, ResetView, ShowPin
 
 
 def _no_board(session: SessionState) -> dict[str, Any] | None:
@@ -189,3 +189,22 @@ def show_pin(session: SessionState, *, refdes: str, pin: int) -> dict[str, Any]:
         return {"ok": False, "reason": "unknown-pin", "suggestions": []}
     event = ShowPin(refdes=refdes, pin=pin, pos=(p.pos.x, p.pos.y))
     return {"ok": True, "summary": f"{refdes}.{pin} at ({p.pos.x}, {p.pos.y}).", "event": event}
+
+
+def dim_unrelated(session: SessionState) -> dict[str, Any]:
+    err = _no_board(session)
+    if err:
+        return err
+    session.dim_unrelated = True
+    return {"ok": True, "summary": "Dimmed unrelated components.", "event": DimUnrelated()}
+
+
+def layer_visibility(session: SessionState, *, layer: str, visible: bool) -> dict[str, Any]:
+    err = _no_board(session)
+    if err:
+        return err
+    if layer not in ("top", "bottom"):
+        return {"ok": False, "reason": "invalid-layer", "suggestions": ["top", "bottom"]}
+    session.layer_visibility[layer] = visible  # type: ignore[index]
+    event = LayerVisibility(layer=layer, visible=visible)  # type: ignore[arg-type]
+    return {"ok": True, "summary": f"Layer {layer} visible={visible}.", "event": event}
