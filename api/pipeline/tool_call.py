@@ -49,6 +49,10 @@ async def call_with_forced_tool(
                 + f"\n\nRetry — emit a valid {forced_tool_name} payload."
             )
 
+        # NOTE — Anthropic rejects `thinking` when `tool_choice` forces a tool
+        # (HTTP 400: "Thinking may not be enabled when tool_choice forces tool
+        # use."). Forced structured output is deterministic by design; thinking
+        # wouldn't help anyway.
         response = await client.messages.create(
             model=model,
             max_tokens=16000,
@@ -56,8 +60,6 @@ async def call_with_forced_tool(
             messages=messages,
             tools=tools,
             tool_choice={"type": "tool", "name": forced_tool_name},
-            thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
         )
 
         tool_use = next(
