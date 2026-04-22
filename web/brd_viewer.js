@@ -97,6 +97,7 @@ let dirty = false;
 let animFrame = null;
 let activeSide = LAYER_TOP;   // LAYER_TOP or LAYER_BOTTOM
 let cursorMils = null;        // {x, y} or null
+let showAnnotations = true;   // silkscreen labels / logos (0-pin footprints)
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -202,12 +203,13 @@ function draw() {
     ctx.stroke();
   }
 
-  // ---- parts ----
+  // ---- parts (skip 0-pin footprints — those are silkscreen annotations
+  //                drawn separately below as labels) ----
   const parts = state.partsSorted || board.parts || [];
   ctx.lineWidth = 1;
   for (const part of parts) {
+    if (!part.pin_refs || part.pin_refs.length === 0) continue;
     // layer filter: skip parts that don't belong to the active side
-    // BOTH (3) always drawn; TOP (1) only on TOP; BOTTOM (2) only on BOTTOM
     if (part.layer !== LAYER_BOTH) {
       if (activeSide === LAYER_TOP    && part.layer !== LAYER_TOP)    continue;
       if (activeSide === LAYER_BOTTOM && part.layer !== LAYER_BOTTOM) continue;
@@ -274,6 +276,52 @@ function draw() {
       ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
       ctx.fill();
       if (vp.zoom >= 1.5) ctx.stroke();
+    }
+  }
+
+  // ---- silkscreen annotations (0-pin footprints: logos, labels, badges) ----
+  // Rendered as text at the footprint centre, respecting rotation. Matches
+  // what is physically printed on the PCB silkscreen layer.
+  if (showAnnotations) {
+    ctx.fillStyle = cssVar('--text-3') || '#6e7d96';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const part of parts) {
+      if (part.pin_refs && part.pin_refs.length > 0) continue;  // only 0-pin
+      if (part.layer !== LAYER_BOTH) {
+        if (activeSide === LAYER_TOP    && part.layer !== LAYER_TOP)    continue;
+        if (activeSide === LAYER_BOTTOM && part.layer !== LAYER_BOTTOM) continue;
+      }
+      const bbox = part.bbox;
+      if (!bbox || bbox.length < 2) continue;
+
+      const label = (part.value || part.refdes || '').replace(/^LABEL_|^LOGO_/, '');
+      if (!label) continue;
+
+      const cxMils = (bbox[0].x + bbox[1].x) / 2;
+      const cyMils = (bbox[0].y + bbox[1].y) / 2;
+      const wMils = Math.abs(bbox[1].x - bbox[0].x);
+      const hMils = Math.abs(bbox[1].y - bbox[0].y);
+      const center = milsToScreen(cxMils, cyMils, boardW);
+
+      // Fit text to the LONG axis of the bbox (the KiCad footprint rotation
+      // is already implicit in the bbox proportions — portrait bboxes want
+      // rotated text to match the side they're printed along).
+      const landscape = wMils >= hMils;
+      const longPx  = (landscape ? wMils : hMils) * vp.zoom;
+      const shortPx = (landscape ? hMils : wMils) * vp.zoom;
+      if (longPx < 14) continue;  // too small to render readably
+
+      // Font size: fit to the short axis, clamped by the long axis / char count
+      let fontSize = Math.min(shortPx * 0.7, (longPx * 1.5) / Math.max(label.length, 1));
+      fontSize = Math.max(8, Math.min(fontSize, 48));
+      ctx.font = `500 ${fontSize}px 'JetBrains Mono', ui-monospace, monospace`;
+
+      ctx.save();
+      ctx.translate(center.x, center.y);
+      if (!landscape) ctx.rotate(-Math.PI / 2);
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
     }
   }
 }
@@ -409,6 +457,11 @@ function mountCanvas(containerEl, board) {
       <button class="brd-seg-btn active" data-side="top">Top</button>
       <button class="brd-seg-btn" data-side="bottom">Bottom</button>
     </div>
+    <button class="brd-btn" id="brd-annot-btn" title="Afficher / masquer les annotations sérigraphie" aria-pressed="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 6h12M6 18h12M10 6v12M14 6v12"/>
+      </svg>
+    </button>
     <button class="brd-btn" id="brd-fit-btn" title="Ajuster à la vue">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/>
@@ -437,6 +490,16 @@ function mountCanvas(containerEl, board) {
 
   // Fit button
   toolbar.querySelector('#brd-fit-btn').addEventListener('click', fitToBoard);
+
+  // Annotations toggle
+  const annotBtn = toolbar.querySelector('#brd-annot-btn');
+  annotBtn.addEventListener('click', () => {
+    showAnnotations = !showAnnotations;
+    annotBtn.setAttribute('aria-pressed', String(showAnnotations));
+    annotBtn.classList.toggle('active', showAnnotations);
+    requestRedraw();
+  });
+  annotBtn.classList.add('active');  // default ON
 
   // ResizeObserver — keeps canvas sharp on window resize
   const ro = new ResizeObserver(() => {
