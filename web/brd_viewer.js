@@ -441,15 +441,21 @@ export async function initBoardview(containerEl) {
     return;
   }
 
+  // Preserve the original filename (extension drives parser dispatch in
+  // the backend — .kicad_pcb must not become .brd here or content-sniffing
+  // will route to the wrong parser).
+  const filename = BRD_URL.split('/').pop() || 'upload.brd';
   const form = new FormData();
-  form.append('file', blob, 'mnt-reform-motherboard.brd');
+  form.append('file', blob, filename);
 
   let board;
   try {
     const res  = await fetch(PARSE_URL, { method: 'POST', body: form });
     const data = await res.json();
     if (!res.ok) {
-      renderError(containerEl, data);
+      // FastAPI wraps HTTPException body in a top-level `detail` key, so the
+      // structured error is at data.detail (shape: {detail, message, ...}).
+      renderError(containerEl, data.detail || data);
       return;
     }
     board = data;
