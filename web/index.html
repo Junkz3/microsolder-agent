@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="styles/stub.css">
 <link rel="stylesheet" href="styles/modal.css">
 <link rel="stylesheet" href="styles/brd.css">
+<link rel="stylesheet" href="styles/memory_bank.css">
 </head>
 <body>
 
@@ -71,8 +72,78 @@
 <section class="stub hidden" data-section-stub="schematic">
   <div class="stub-card"><h2>Schematic</h2><p>Viewer PDF + nets — à faire en V2.</p></div>
 </section>
-<section class="stub hidden" data-section-stub="memory-bank">
-  <div class="stub-card"><h2>Memory Bank</h2><p>3 onglets Timeline / Knowledge / Stats — à faire en V2.</p></div>
+<!-- ============ MEMORY BANK ============ -->
+<section class="memory-bank hidden" id="memoryBank">
+  <header class="mb-head">
+    <div class="mb-title-row">
+      <h1 id="mbDeviceLabel">Memory Bank</h1>
+      <p class="mb-sub">Knowledge pack déterministe produit par le pipeline V2. Parcours le registre, le graphe de connaissances, les règles de diagnostic, les fiches composants et le verdict d'audit.</p>
+      <div class="mb-pack-picker">
+        <label for="mbPackSelect">Pack</label>
+        <select id="mbPackSelect"></select>
+      </div>
+    </div>
+    <div class="mb-verdict-row" id="mbVerdictRow"></div>
+    <div class="mb-search">
+      <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="mbSearch" type="text" placeholder="Filtrer dans le pack (refdes, symptôme, mécanisme…)" autocomplete="off" spellcheck="false" />
+      <span class="hint">ESC efface</span>
+    </div>
+  </header>
+
+  <div class="mb-body" id="mbBody">
+    <section class="mb-block" data-block="registry">
+      <div class="mb-block-head">
+        <span class="mb-tag">registry.json</span>
+        <h2>Vocabulaire canonique</h2>
+        <span class="mb-block-count" id="mbBlockRegistryCount">—</span>
+      </div>
+      <div class="mb-block-body" id="mbBlockRegistry"></div>
+    </section>
+
+    <section class="mb-block" data-block="graph">
+      <div class="mb-block-head">
+        <span class="mb-tag">knowledge_graph.json</span>
+        <h2>Graphe de connaissances</h2>
+        <span class="mb-block-count" id="mbBlockGraphCount">—</span>
+      </div>
+      <div class="mb-block-body" id="mbBlockGraph"></div>
+    </section>
+
+    <section class="mb-block" data-block="rules">
+      <div class="mb-block-head">
+        <span class="mb-tag">rules.json</span>
+        <h2>Règles de diagnostic</h2>
+        <span class="mb-block-count" id="mbBlockRulesCount">—</span>
+      </div>
+      <div class="mb-block-body" id="mbBlockRules"></div>
+    </section>
+
+    <section class="mb-block" data-block="dictionary">
+      <div class="mb-block-head">
+        <span class="mb-tag">dictionary.json</span>
+        <h2>Fiches composants</h2>
+        <span class="mb-block-count" id="mbBlockDictionaryCount">—</span>
+      </div>
+      <div class="mb-block-body" id="mbBlockDictionary"></div>
+    </section>
+
+    <section class="mb-block" data-block="audit" id="mbBlockAuditWrapper">
+      <div class="mb-block-head">
+        <span class="mb-tag">audit_verdict.json</span>
+        <h2>Verdict d'audit</h2>
+        <span class="mb-block-count" id="mbBlockAuditCount">—</span>
+      </div>
+      <div class="mb-block-body" id="mbBlockAudit"></div>
+    </section>
+  </div>
+
+  <div class="mb-empty hidden" id="mbEmpty">
+    <div class="mb-empty-card">
+      <h3>Aucun pack disponible</h3>
+      <p>Aucun pack de connaissances n'est disponible. Lance le pipeline pour en générer un.</p>
+    </div>
+  </div>
 </section>
 <section class="stub hidden" data-section-stub="agent">
   <div class="stub-card"><h2>Agent</h2><p>Config / Historique / Traces / Coûts — à faire en V2.</p></div>

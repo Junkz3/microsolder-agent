@@ -6,6 +6,7 @@
 import { APP_VERSION, currentSection, navigate, wireRouter } from './router.js';
 import { loadHomePacks, renderHome, initNewRepairModal } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
+import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
 
 
 /* ---------- INIT ---------- */
@@ -14,6 +15,7 @@ import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.
   document.getElementById("appVersion").textContent = APP_VERSION;
   wireRouter();
   initNewRepairModal();
+  initMemoryBank();
 
   const hash = window.location.hash;
   const params = new URLSearchParams(window.location.search);
@@ -33,7 +35,15 @@ import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.
     }
   } else if (initial === "home") {
     renderHome(await loadHomePacks());
+  } else if (initial === "memory-bank") {
+    loadMemoryBank();
   }
+
+  // Lazy-load the Memory Bank whenever the user navigates to it. The router
+  // doesn't own side-effects, so we hook into hashchange here.
+  window.addEventListener("hashchange", () => {
+    if (currentSection() === "memory-bank") loadMemoryBank();
+  });
 })();
 
 /* Wire section-agnostic top-bar controls at the top level so they stay

@@ -160,6 +160,7 @@ export function navigate(section) {
   // Hide all known section DOMs, show the target.
   document.getElementById("homeSection").classList.toggle("hidden", section !== "home");
   document.getElementById("canvas").classList.toggle("hidden", section !== "graphe");
+  document.getElementById("memoryBank").classList.toggle("hidden", section !== "memory-bank");
   document.querySelectorAll("[data-section-stub]").forEach(el => {
     el.classList.toggle("hidden", el.dataset.sectionStub !== section);
   });
