@@ -1,0 +1,25 @@
+/* =========== MODAL (nouvelle réparation) =========== */
+.modal-backdrop{position:fixed;inset:0;background:rgba(7,16,31,.65);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-backdrop.open{opacity:1;pointer-events:auto}
+.modal{width:min(560px,100%);max-height:calc(100vh - 48px);background:linear-gradient(180deg,rgba(20,32,48,.98),rgba(15,26,46,.98));border:1px solid var(--border);border-radius:10px;box-shadow:0 24px 64px rgba(0,0,0,.55),0 0 0 1px rgba(56,189,248,.05);backdrop-filter:blur(14px);display:flex;flex-direction:column;overflow:hidden;transform:translateY(10px) scale(.985);transition:transform .28s cubic-bezier(.2,.8,.2,1)}
+.modal-backdrop.open .modal{transform:translateY(0) scale(1)}
+.modal-head{padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;position:relative}
+.modal-head .type-row{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:.4px;text-transform:uppercase}
+.modal-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.2px}
+.modal-body{padding:16px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+.modal-field{display:flex;flex-direction:column;gap:5px}
+.modal-label{font-family:var(--mono);font-size:10px;color:var(--text-3);font-weight:500;letter-spacing:.5px;text-transform:uppercase}
+.modal-input,.modal-textarea{background:var(--bg-deep);border:1px solid var(--border);color:var(--text);padding:9px 11px;border-radius:6px;font-family:inherit;font-size:13px;outline:none;transition:border-color .15s,box-shadow .15s}
+.modal-input{font-family:var(--mono);font-size:12.5px}
+.modal-textarea{resize:vertical;min-height:92px;line-height:1.5}
+.modal-input:focus,.modal-textarea:focus{border-color:oklch(0.65 0.14 210);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+.modal-input:disabled,.modal-textarea:disabled{opacity:.5;cursor:not-allowed}
+.modal-input::placeholder,.modal-textarea::placeholder{color:var(--text-3)}
+.modal-hint{font-family:var(--mono);font-size:10.5px;color:var(--text-3);line-height:1.45}
+.modal-error{padding:10px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:6px;color:var(--amber);font-size:12px;line-height:1.5;font-family:var(--mono)}
+.modal-error strong{color:var(--amber);font-weight:600;margin-right:6px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;padding-top:4px}
+.modal-actions .btn{flex:0 0 auto;padding:8px 14px;min-width:96px}
+.modal-submit[aria-busy="true"]{cursor:progress}
+.modal-spinner{display:inline-block;width:12px;height:12px;border:1.8px solid currentColor;border-top-color:transparent;border-radius:50%;animation:modal-spin .7s linear infinite;vertical-align:-1px}
+@keyframes modal-spin{to{transform:rotate(360deg)}}

@@ -1,0 +1,70 @@
+/* ============ TOP BAR ============ */
+.topbar{position:fixed;top:0;left:0;right:0;height:48px;background:linear-gradient(180deg,var(--bg-2),var(--bg));border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:18px;z-index:20}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600}
+.brand-mark{width:22px;height:22px;border-radius:5px;background:radial-gradient(circle at 30% 30%,var(--cyan) 0%,transparent 55%),linear-gradient(135deg,#0f2540,#0a1930);border:1px solid #2a4368;box-shadow:0 0 10px rgba(56,189,248,.25),inset 0 0 6px rgba(56,189,248,.3)}
+.brand .sub{color:var(--text-3);font-weight:400;margin-left:6px}
+.crumbs{display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:12px}
+.crumbs .sep{opacity:.5}.crumbs .active{color:var(--text)}
+.topbar .spacer{flex:1}
+.mode-pill{display:flex;align-items:center;gap:8px;padding:5px 10px 5px 8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:6px;color:var(--amber);font-size:11px;font-family:var(--mono);letter-spacing:.3px}
+.mode-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.top-btn{background:var(--panel);border:1px solid var(--border);color:var(--text-2);padding:6px 10px;border-radius:6px;font-size:12px;font-family:inherit;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:all .15s}
+.top-btn:hover{color:var(--text);border-color:#2e4468;background:var(--panel-2)}
+
+/* ============ LEFT RAIL ============ */
+.rail{position:fixed;top:48px;bottom:0;left:0;width:52px;background:var(--bg-2);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;z-index:15}
+.rail-btn{width:36px;height:36px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--text-3);background:transparent;border:1px solid transparent;cursor:pointer;transition:all .15s;position:relative}
+.rail-btn:hover{color:var(--text);background:var(--panel)}
+.rail-btn.active{color:var(--cyan);background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.25)}
+.rail-btn.active::before{content:"";position:absolute;left:-10px;top:8px;bottom:8px;width:2px;background:var(--cyan);border-radius:2px;box-shadow:0 0 6px var(--cyan)}
+.rail-sep{width:22px;height:1px;background:var(--border);margin:8px 0}
+
+/* ============ METABAR ============ */
+.metabar{position:fixed;top:48px;left:52px;right:0;height:44px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 16px;z-index:10;font-size:12px}
+.metabar .device{display:flex;align-items:center;gap:8px;font-family:var(--mono);color:var(--text-2)}
+.tag{padding:3px 7px;border-radius:4px;background:var(--panel);border:1px solid var(--border);color:var(--text);font-size:11px}
+.warn{color:var(--amber);font-size:11.5px;display:flex;align-items:center;gap:6px}
+.filters{display:flex;gap:6px;margin-left:auto;align-items:center}
+.filter-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:16px;background:var(--panel);border:1px solid var(--border);font-size:11.5px;color:var(--text-2);cursor:pointer;user-select:none;transition:all .15s}
+.filter-chip:hover{color:var(--text)}
+.filter-chip.off{opacity:.45;text-decoration:line-through}
+.filter-chip .swatch{width:9px;height:9px;border-radius:50%}
+.filter-chip[data-kind="symptom"] .swatch{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.filter-chip[data-kind="component"] .swatch{background:var(--cyan);box-shadow:0 0 6px var(--cyan);border-radius:2px}
+.filter-chip[data-kind="net"] .swatch{background:var(--emerald);box-shadow:0 0 6px var(--emerald);clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%);border-radius:0}
+.filter-chip[data-kind="action"] .swatch{background:var(--violet);box-shadow:0 0 6px var(--violet);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border-radius:0}
+.search{display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;width:220px}
+.search input{background:transparent;border:0;outline:0;color:var(--text);font-family:inherit;font-size:12px;width:100%}
+.search input::placeholder{color:var(--text-3)}
+.search kbd{font-family:var(--mono);font-size:10px;color:var(--text-3);padding:1px 5px;border-radius:3px;background:var(--bg-2);border:1px solid var(--border)}
+
+/* =========== STATUS BAR ============ */
+.statusbar{position:fixed;left:0;right:0;bottom:0;height:28px;background:var(--bg-2);border-top:1px solid var(--border);display:flex;align-items:center;font-family:var(--mono);font-size:10.5px;color:var(--text-3);padding:0 12px;z-index:20}
+.statusbar .group{display:flex;align-items:center;gap:6px;padding:0 10px}
+.statusbar .group + .group{border-left:1px solid var(--border)}
+.statusbar .spacer{flex:1}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--emerald);box-shadow:0 0 6px var(--emerald)}
+
+.icon{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.icon-sm{width:12px;height:12px}
+
+/* =========== CHROME — dynamic state (topbar crumbs, mode pill, metabar) =========== */
+.mode-pill.cyan{background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.3);color:var(--cyan)}
+.mode-pill.cyan .dot{background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+.mode-pill.violet{background:rgba(192,132,252,.08);border-color:rgba(192,132,252,.3);color:var(--violet)}
+.mode-pill.violet .dot{background:var(--violet);box-shadow:0 0 8px var(--violet)}
+.mode-pill.emerald{background:rgba(52,211,153,.08);border-color:rgba(52,211,153,.3);color:var(--emerald)}
+.mode-pill.emerald .dot{background:var(--emerald);box-shadow:0 0 8px var(--emerald)}
+
+.warn.ok{color:var(--emerald)}
+.warn.info{color:var(--cyan)}
+.warn.muted{color:var(--text-3)}
+
+/* metabar is Graphe-specific — hide it on every other section and pull content up */
+body.no-metabar .metabar{display:none}
+body.no-metabar .canvas{top:48px}
+body.no-metabar .home{top:48px}
+body.no-metabar .stub{top:48px}
+body.no-metabar .inspector{top:60px}
+body.no-metabar .tweaks{top:60px}
