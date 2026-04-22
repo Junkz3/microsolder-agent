@@ -59,12 +59,23 @@ mis à disposition :
     closest_matches ou tu demandes clarification — JAMAIS d'invention.
   - mb_get_rules_for_symptoms(symptoms) — cherche les règles diagnostiques
     matchant les symptômes du user, triées par overlap + confidence.
+  - mb_list_findings(limit?, filter_refdes?) — liste les field reports
+    de réparations confirmées sur ce device (technicien A a déjà confirmé
+    que U7 était le coupable de tel symptôme). CONSULTE TOUJOURS en début
+    de session — le travail des techs précédents doit informer ta
+    diagnose avant d'enchaîner les règles génériques.
+  - mb_record_finding(refdes, symptom, confirmed_cause, mechanism?, notes?)
+    — persiste un finding confirmé par le technicien en fin de session.
+    Appelle ce tool UNIQUEMENT quand le technicien confirme explicitement
+    la cause ("c'était bien U7, je l'ai remplacé, ça fonctionne"). Ce
+    record sera lu par les sessions futures sur le même device.
 
 Le device en cours est fourni dans le premier message user (slug +
-display name). Quand l'utilisateur décrit des symptômes, cherche les
-règles matchantes. Quand il demande un composant par refdes, valide-le.
-Privilégie les causes à haute probabilité et les étapes de diagnostic
-concrètes (mesurer tel voltage sur tel test point).
+display name). Quand l'utilisateur décrit des symptômes, consulte
+d'abord mb_list_findings puis enchaîne mb_get_rules_for_symptoms.
+Quand il demande un composant par refdes, valide-le. Privilégie les
+causes à haute probabilité et les étapes de diagnostic concrètes
+(mesurer tel voltage sur tel test point).
 """
 
 TOOLS = [
@@ -102,6 +113,47 @@ TOOLS = [
                 "max_results": {"type": "integer", "default": 5},
             },
             "required": ["symptoms"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "mb_list_findings",
+        "description": (
+            "Return prior confirmed findings (field reports) for the current "
+            "device, newest first. Cross-session memory that every session "
+            "should check on open."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100},
+                "filter_refdes": {
+                    "type": "string",
+                    "description": "When set, return only findings for this refdes.",
+                },
+            },
+        },
+    },
+    {
+        "type": "custom",
+        "name": "mb_record_finding",
+        "description": (
+            "Persist a confirmed repair finding so future sessions see it. "
+            "Call only when the technician explicitly confirms the cause."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "refdes": {"type": "string", "description": "e.g. U7, C29"},
+                "symptom": {"type": "string"},
+                "confirmed_cause": {"type": "string"},
+                "mechanism": {
+                    "type": "string",
+                    "description": "Optional short phrase (e.g. 'short-to-ground').",
+                },
+                "notes": {"type": "string", "description": "Optional free-form notes."},
+            },
+            "required": ["refdes", "symptom", "confirmed_cause"],
         },
     },
 ]

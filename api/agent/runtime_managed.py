@@ -28,7 +28,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from api.agent.managed_ids import get_agent, load_managed_ids
 from api.agent.memory_stores import ensure_memory_store
-from api.agent.tools import mb_get_component, mb_get_rules_for_symptoms
+from api.agent.tools import (
+    mb_get_component,
+    mb_get_rules_for_symptoms,
+    mb_list_findings,
+    mb_record_finding,
+)
 from api.config import get_settings
 
 TierLiteral = Literal["fast", "normal", "deep"]
@@ -37,7 +42,14 @@ DEFAULT_TIER: TierLiteral = "fast"
 logger = logging.getLogger("microsolder.agent.managed")
 
 
-def _dispatch_tool(name: str, payload: dict, device_slug: str, memory_root: Path) -> dict:
+async def _dispatch_tool(
+    name: str,
+    payload: dict,
+    device_slug: str,
+    memory_root: Path,
+    client: AsyncAnthropic,
+    session_id: str | None = None,
+) -> dict:
     """Run one of the `mb_*` custom tools locally and return the raw result."""
     if name == "mb_get_component":
         return mb_get_component(
@@ -51,6 +63,25 @@ def _dispatch_tool(name: str, payload: dict, device_slug: str, memory_root: Path
             symptoms=payload.get("symptoms", []),
             memory_root=memory_root,
             max_results=payload.get("max_results", 5),
+        )
+    if name == "mb_list_findings":
+        return mb_list_findings(
+            device_slug=device_slug,
+            memory_root=memory_root,
+            limit=payload.get("limit", 20),
+            filter_refdes=payload.get("filter_refdes"),
+        )
+    if name == "mb_record_finding":
+        return await mb_record_finding(
+            client=client,
+            device_slug=device_slug,
+            refdes=payload.get("refdes", ""),
+            symptom=payload.get("symptom", ""),
+            confirmed_cause=payload.get("confirmed_cause", ""),
+            memory_root=memory_root,
+            mechanism=payload.get("mechanism"),
+            notes=payload.get("notes"),
+            session_id=session_id,
         )
     return {"error": f"unknown tool: {name}"}
 
@@ -259,7 +290,9 @@ async def _forward_session_to_ws(
                         continue
                     name = getattr(tool_event, "name", "")
                     payload = getattr(tool_event, "input", {}) or {}
-                    result = _dispatch_tool(name, payload, device_slug, memory_root)
+                    result = await _dispatch_tool(
+                        name, payload, device_slug, memory_root, client, session_id
+                    )
                     await client.beta.sessions.events.send(
                         session_id,
                         events=[

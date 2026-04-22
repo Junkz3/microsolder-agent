@@ -16,7 +16,12 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.agent.tools import mb_get_component, mb_get_rules_for_symptoms
+from api.agent.tools import (
+    mb_get_component,
+    mb_get_rules_for_symptoms,
+    mb_list_findings,
+    mb_record_finding,
+)
 from api.config import get_settings
 
 logger = logging.getLogger("microsolder.agent.direct")
@@ -32,10 +37,14 @@ closest_matches ou tu demandes clarification — JAMAIS d'invention.
 
 Device courant : {device_slug}.
 
-Quand l'utilisateur décrit des symptômes, appelle mb_get_rules_for_symptoms.
-Quand il demande un composant, valide avec mb_get_component. Privilégie les
-causes à haute probabilité et les étapes de diagnostic concrètes (mesurer
-tel voltage sur tel test point).
+Quand l'utilisateur décrit des symptômes, consulte d'abord
+mb_list_findings (historique cross-session de ce device — technicien A a
+peut-être déjà confirmé la cause), puis enchaîne mb_get_rules_for_symptoms
+si besoin. Quand il demande un composant, valide avec mb_get_component.
+Quand l'utilisateur confirme explicitement la cause finale d'une
+réparation, appelle mb_record_finding — ça sera lu par les sessions
+futures. Privilégie les causes à haute probabilité et les étapes de
+diagnostic concrètes (mesurer tel voltage sur tel test point).
 """
 
 TOOLS = [
@@ -73,10 +82,49 @@ TOOLS = [
             "required": ["symptoms"],
         },
     },
+    {
+        "name": "mb_list_findings",
+        "description": (
+            "Return prior confirmed findings (field reports) for the current "
+            "device, newest first. Cross-session memory — check on open."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100},
+                "filter_refdes": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "mb_record_finding",
+        "description": (
+            "Persist a confirmed repair finding so future sessions see it. "
+            "Only when the technician explicitly confirms the cause."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "refdes": {"type": "string"},
+                "symptom": {"type": "string"},
+                "confirmed_cause": {"type": "string"},
+                "mechanism": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["refdes", "symptom", "confirmed_cause"],
+        },
+    },
 ]
 
 
-def _dispatch_tool(name: str, payload: dict, device_slug: str, memory_root: Path) -> dict:
+async def _dispatch_tool(
+    name: str,
+    payload: dict,
+    device_slug: str,
+    memory_root: Path,
+    client: AsyncAnthropic,
+    session_id: str | None = None,
+) -> dict:
     if name == "mb_get_component":
         return mb_get_component(
             device_slug=device_slug,
@@ -89,6 +137,25 @@ def _dispatch_tool(name: str, payload: dict, device_slug: str, memory_root: Path
             symptoms=payload.get("symptoms", []),
             memory_root=memory_root,
             max_results=payload.get("max_results", 5),
+        )
+    if name == "mb_list_findings":
+        return mb_list_findings(
+            device_slug=device_slug,
+            memory_root=memory_root,
+            limit=payload.get("limit", 20),
+            filter_refdes=payload.get("filter_refdes"),
+        )
+    if name == "mb_record_finding":
+        return await mb_record_finding(
+            client=client,
+            device_slug=device_slug,
+            refdes=payload.get("refdes", ""),
+            symptom=payload.get("symptom", ""),
+            confirmed_cause=payload.get("confirmed_cause", ""),
+            memory_root=memory_root,
+            mechanism=payload.get("mechanism"),
+            notes=payload.get("notes"),
+            session_id=session_id,
         )
     return {"error": f"unknown tool: {name}"}
 
@@ -163,7 +230,9 @@ async def run_diagnostic_session_direct(
                     await ws.send_json(
                         {"type": "tool_use", "name": block.name, "input": block.input}
                     )
-                    result = _dispatch_tool(block.name, block.input, device_slug, memory_root)
+                    result = await _dispatch_tool(
+                        block.name, block.input, device_slug, memory_root, client
+                    )
                     tool_results.append(
                         {
                             "type": "tool_result",

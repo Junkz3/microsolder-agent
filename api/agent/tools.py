@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Two `mb_*` tools — minimal v1 for the hackathon diagnostic agent.
+"""`mb_*` custom tools for the hackathon diagnostic agent.
 
 Deliberately simple: prefix-letter closest-matches (no Levenshtein at this
 layer — the boardview validator keeps the distance-based version for refdes
 typos on a parsed board). Reads straight from disk on every call; caching is
 a Phase-D concern.
+
+mb_record_finding and mb_list_findings power cross-session memory: every
+confirmed repair becomes a field report on disk, and the next session on the
+same device can surface prior learnings without depending on the MA memory
+store research preview.
 """
 
 from __future__ import annotations
@@ -12,6 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+
+from api.agent.field_reports import list_field_reports, record_field_report
 
 
 def _load_pack(slug: str, memory_root: Path) -> dict[str, Any]:
@@ -94,4 +101,57 @@ def mb_get_rules_for_symptoms(
         "query_symptoms": symptoms,
         "matches": matches[: max(max_results, 0)],
         "total_available_rules": len(pack["rules"].get("rules", [])),
+    }
+
+
+async def mb_record_finding(
+    *,
+    client,  # AsyncAnthropic | None — typed loose to keep this import-light
+    device_slug: str,
+    refdes: str,
+    symptom: str,
+    confirmed_cause: str,
+    memory_root: Path,
+    mechanism: str | None = None,
+    notes: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist a confirmed repair finding for cross-session learning.
+
+    JSON-first write to `memory/{slug}/field_reports/*.md`. When the MA
+    memory_stores flag is on, the same content is mirrored to the device's
+    memory store so native `memory_search` can surface it too.
+    """
+    return await record_field_report(
+        client=client,
+        device_slug=device_slug,
+        refdes=refdes,
+        symptom=symptom,
+        confirmed_cause=confirmed_cause,
+        mechanism=mechanism,
+        notes=notes,
+        session_id=session_id,
+        memory_root=memory_root,
+    )
+
+
+def mb_list_findings(
+    *,
+    device_slug: str,
+    memory_root: Path,
+    limit: int = 20,
+    filter_refdes: str | None = None,
+) -> dict[str, Any]:
+    """Return prior confirmed findings for this device, newest first."""
+    reports = list_field_reports(
+        device_slug=device_slug,
+        memory_root=memory_root,
+        limit=limit,
+        filter_refdes=filter_refdes,
+    )
+    return {
+        "device_slug": device_slug,
+        "count": len(reports),
+        "filter_refdes": filter_refdes,
+        "reports": reports,
     }
