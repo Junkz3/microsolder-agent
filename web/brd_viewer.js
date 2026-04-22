@@ -17,7 +17,17 @@ function resolveBoardUrl() {
 const BRD_URL  = resolveBoardUrl();
 const PARSE_URL = '/api/board/parse';
 
-const state = { board: null, partsSorted: null, partBodyBboxes: null };
+const state = {
+  board: null,
+  partsSorted: null,
+  partBodyBboxes: null,
+  pinsByNet: null,        // Map<netName, number[]>  pin indices grouped by net
+  selectedPinIdx: null,   // currently highlighted pin (index into board.pins)
+  hoveredPinIdx: null,    // pin under the cursor (for click-affordance outline)
+};
+
+const RATNEST_MAX_PINS = 50;  // skip drawing fly-lines for huge nets (GND has ~500)
+const PIN_HIT_TOLERANCE_PX = 4;  // extra margin around the pad rect for easier clicks at low zoom
 
 // whitequark/kicad-boardview (for BRD2 / Test_Link) uses module.GetBoundingBox()
 // which includes silkscreen + reference text + value text, so PART bboxes from
@@ -64,6 +74,52 @@ function computeAllBodyBboxes(board) {
     out.set(p.refdes, computeBodyBbox(p, pinsById));
   }
   return out;
+}
+
+// Index pins by net name so we can highlight / trace a whole net from one click.
+function computePinsByNet(board) {
+  const out = new Map();
+  const pins = board.pins || [];
+  for (let i = 0; i < pins.length; i++) {
+    const net = pins[i].net;
+    if (!net) continue;
+    if (!out.has(net)) out.set(net, []);
+    out.get(net).push(i);
+  }
+  return out;
+}
+
+// Hit-test: given screen-px coords, return the index of the pin under the cursor.
+// Considers each pin's actual pad bbox (size × zoom), with a small tolerance margin
+// so very small pads remain clickable at low zoom. Among overlapping hits (dense
+// clusters) pick the smallest pad — it's visually on top in our draw order.
+// Only pins on the active side (plus BOTH) are considered.
+function hitTestPin(sx, sy, tolerancePx = PIN_HIT_TOLERANCE_PX) {
+  if (!state.board) return null;
+  const pins = state.board.pins || [];
+  const bb = outlineBbox(state.board);
+  const boardW = bb.x1 + bb.x0;
+  let bestIdx = null;
+  let bestArea = Infinity;
+  for (let i = 0; i < pins.length; i++) {
+    const pin = pins[i];
+    if (pin.layer !== LAYER_BOTH) {
+      if (activeSide === LAYER_TOP    && pin.layer !== LAYER_TOP)    continue;
+      if (activeSide === LAYER_BOTTOM && pin.layer !== LAYER_BOTTOM) continue;
+    }
+    const p = milsToScreen(pin.pos.x, pin.pos.y, boardW);
+    const sizeMils = pin.pad_size || [30, 30];
+    const halfW = Math.max(sizeMils[0] * vp.zoom / 2, 2) + tolerancePx;
+    const halfH = Math.max(sizeMils[1] * vp.zoom / 2, 2) + tolerancePx;
+    if (sx >= p.x - halfW && sx <= p.x + halfW && sy >= p.y - halfH && sy <= p.y + halfH) {
+      const area = halfW * halfH;
+      if (area < bestArea) {
+        bestArea = area;
+        bestIdx = i;
+      }
+    }
+  }
+  return bestIdx;
 }
 
 // Sort parts by descending bbox area so big packages (SoM connectors, BGA SoCs)
@@ -237,10 +293,21 @@ function draw() {
   // Rects are axis-aligned (part rotation not applied to the pad rect yet —
   // accepted imprecision for rotated packages at MVP scope).
   const pins = board.pins || [];
-  const pinFill   = 'rgba(169, 182, 204, 0.9)';   // --text-2 at slight transparency
-  const pinStroke = 'rgba(230, 237, 247, 1)';     // --text, sharp edge
+  const pinFillDefault   = 'rgba(169, 182, 204, 0.9)';   // --text-2 at slight transparency
+  const pinStrokeDefault = 'rgba(230, 237, 247, 1)';     // --text, sharp edge
+  const pinFillDim       = 'rgba(169, 182, 204, 0.22)';
+  const pinStrokeDim     = 'rgba(169, 182, 204, 0.35)';
+  const pinFillNet       = 'rgba(52, 211, 153, 0.95)';   // --emerald
+  const pinStrokeNet     = 'rgba(160, 240, 200, 1)';
+
+  // Determine the selected net (if any) from state.selectedPinIdx
+  const selectedPin = state.selectedPinIdx != null ? pins[state.selectedPinIdx] : null;
+  const selectedNet = selectedPin && selectedPin.net ? selectedPin.net : null;
+  const netPinSet = selectedNet ? new Set(state.pinsByNet?.get(selectedNet) || []) : null;
+
   ctx.lineWidth = 1;
-  for (const pin of pins) {
+  for (let i = 0; i < pins.length; i++) {
+    const pin = pins[i];
     if (pin.layer !== LAYER_BOTH) {
       if (activeSide === LAYER_TOP    && pin.layer !== LAYER_TOP)    continue;
       if (activeSide === LAYER_BOTTOM && pin.layer !== LAYER_BOTTOM) continue;
@@ -256,27 +323,91 @@ function draw() {
     const w = Math.max(sw, 2);
     const h = Math.max(sh, 2);
 
-    ctx.fillStyle   = pinFill;
-    ctx.strokeStyle = pinStroke;
+    // Net-highlight coloring
+    if (netPinSet) {
+      if (netPinSet.has(i)) {
+        ctx.fillStyle = pinFillNet;
+        ctx.strokeStyle = pinStrokeNet;
+      } else {
+        ctx.fillStyle = pinFillDim;
+        ctx.strokeStyle = pinStrokeDim;
+      }
+    } else {
+      ctx.fillStyle   = pinFillDefault;
+      ctx.strokeStyle = pinStrokeDefault;
+    }
+
+    // Apply this pin's own pad rotation — each pad carries its own orientation
+    // independent of the footprint's placement rotation. On multi-row packages
+    // (QFP / BGA) the pads on the sides are rotated 90° relative to the
+    // top/bottom pads, so using the footprint rotation for every pin is wrong.
+    // KiCad reports CCW-positive angles in an X-right/Y-up math frame; canvas
+    // is CW-positive in an X-right/Y-down frame — invert the sign.
+    const rotDeg = pin.pad_rotation_deg || 0;
+    const rotRad = -rotDeg * Math.PI / 180;
 
     const shape = pin.pad_shape || 'circle';
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    if (rotDeg) ctx.rotate(rotRad);
+
     if (shape === 'rect' || shape === 'roundrect' || shape === 'trapezoid') {
-      ctx.fillRect(s.x - w / 2, s.y - h / 2, w, h);
-      if (vp.zoom >= 1.5) ctx.strokeRect(s.x - w / 2, s.y - h / 2, w, h);
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+      if (vp.zoom >= 1.5) ctx.strokeRect(-w / 2, -h / 2, w, h);
     } else if (shape === 'oval') {
-      // Oval = ellipse at pad center
       ctx.beginPath();
-      ctx.ellipse(s.x, s.y, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
       ctx.fill();
       if (vp.zoom >= 1.5) ctx.stroke();
     } else {
-      // circle / custom / fallback
+      // circle / custom / fallback (rotation-invariant)
       const r = Math.max(w, h) / 2;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.fill();
       if (vp.zoom >= 1.5) ctx.stroke();
     }
+
+    // Hover affordance — same shape as the pad, inflated by a 3 px gap.
+    if (i === state.hoveredPinIdx && i !== state.selectedPinIdx) {
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';   // --cyan
+      ctx.lineWidth = 1.5;
+      const gap = 3;
+      if (shape === 'rect' || shape === 'roundrect' || shape === 'trapezoid') {
+        ctx.strokeRect(-w / 2 - gap, -h / 2 - gap, w + gap * 2, h + gap * 2);
+      } else if (shape === 'oval') {
+        ctx.beginPath();
+        ctx.ellipse(0, 0, w / 2 + gap, h / 2 + gap, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        const ringR = Math.max(w, h) / 2 + gap;
+        ctx.beginPath();
+        ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1;
+    }
+
+    ctx.restore();
+  }
+
+  // ---- ratnest fly-lines (selected net only, skip huge nets like GND) ----
+  if (selectedNet && netPinSet && netPinSet.size <= RATNEST_MAX_PINS && state.selectedPinIdx != null) {
+    const anchor = pins[state.selectedPinIdx];
+    const anchorScr = milsToScreen(anchor.pos.x, anchor.pos.y, boardW);
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';   // --emerald ~55% alpha
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    for (const pinIdx of netPinSet) {
+      if (pinIdx === state.selectedPinIdx) continue;
+      const other = pins[pinIdx];
+      const scr = milsToScreen(other.pos.x, other.pos.y, boardW);
+      ctx.moveTo(anchorScr.x, anchorScr.y);
+      ctx.lineTo(scr.x, scr.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   // ---- silkscreen annotations (0-pin footprints: logos, labels, badges) ----
@@ -348,11 +479,31 @@ function updateCursorBadge(badge) {
   }
 }
 
+function updateNetReadout(toolbar) {
+  const el = toolbar.querySelector('.brd-net');
+  if (!el) return;
+  if (state.selectedPinIdx == null || !state.board) {
+    el.textContent = '';
+    el.style.display = 'none';
+    return;
+  }
+  const pin = state.board.pins[state.selectedPinIdx];
+  const net = pin && pin.net;
+  if (!net) {
+    el.textContent = `${pin.part_refdes}.${pin.index} · no-net`;
+  } else {
+    const count = state.pinsByNet?.get(net)?.length || 1;
+    el.textContent = `${net} · ${count} pins`;
+  }
+  el.style.display = '';
+}
+
 // --- interaction handlers ---
 function attachInteraction(containerEl, toolbar, badge) {
   let dragging   = false;
   let dragStartX = 0, dragStartY = 0;
   let panStartX  = 0, panStartY  = 0;
+  let dragMoved  = false;        // did the cursor move meaningfully since mousedown?
 
   canvas.addEventListener('wheel', (ev) => {
     ev.preventDefault();
@@ -373,6 +524,7 @@ function attachInteraction(containerEl, toolbar, badge) {
   canvas.addEventListener('mousedown', (ev) => {
     if (ev.button !== 0) return;
     dragging   = true;
+    dragMoved  = false;
     dragStartX = ev.clientX;
     dragStartY = ev.clientY;
     panStartX  = vp.panX;
@@ -382,31 +534,75 @@ function attachInteraction(containerEl, toolbar, badge) {
 
   window.addEventListener('mousemove', (ev) => {
     if (dragging) {
-      vp.panX = panStartX + (ev.clientX - dragStartX);
-      vp.panY = panStartY + (ev.clientY - dragStartY);
+      const dx = ev.clientX - dragStartX;
+      const dy = ev.clientY - dragStartY;
+      if (!dragMoved && (dx * dx + dy * dy) > 16) dragMoved = true;  // >4px threshold
+      vp.panX = panStartX + dx;
+      vp.panY = panStartY + dy;
       requestRedraw();
     }
-    // cursor readout — only when mouse is over the canvas
+    // cursor readout + pin-hover — only when mouse is over the canvas
     const rect = canvas.getBoundingClientRect();
-    if (ev.clientX >= rect.left && ev.clientX <= rect.right &&
-        ev.clientY >= rect.top  && ev.clientY <= rect.bottom) {
+    const inside = ev.clientX >= rect.left && ev.clientX <= rect.right &&
+                   ev.clientY >= rect.top  && ev.clientY <= rect.bottom;
+    if (inside) {
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
       cursorMils = screenToMils(sx, sy);
+      // Skip hit-test while actively dragging — otherwise pinpoint flicker
+      if (!dragging) {
+        const hover = hitTestPin(sx, sy);
+        if (hover !== state.hoveredPinIdx) {
+          state.hoveredPinIdx = hover;
+          canvas.style.cursor = hover != null ? 'pointer' : 'grab';
+          requestRedraw();
+        }
+      }
     } else {
       cursorMils = null;
+      if (state.hoveredPinIdx != null) {
+        state.hoveredPinIdx = null;
+        requestRedraw();
+      }
     }
     updateCursorBadge(badge);
   });
 
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (ev) => {
     if (!dragging) return;
     dragging = false;
     canvas.style.cursor = 'grab';
+    // A click (no meaningful drag) selects a pin or clears the selection
+    if (!dragMoved) {
+      const rect = canvas.getBoundingClientRect();
+      if (ev.clientX >= rect.left && ev.clientX <= rect.right &&
+          ev.clientY >= rect.top  && ev.clientY <= rect.bottom) {
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const hit = hitTestPin(sx, sy);
+        state.selectedPinIdx = hit;  // null clears
+        updateNetReadout(toolbar);
+        requestRedraw();
+      }
+    }
+  });
+
+  // Escape clears selection
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && state.selectedPinIdx != null) {
+      state.selectedPinIdx = null;
+      updateNetReadout(toolbar);
+      requestRedraw();
+    }
   });
 
   canvas.addEventListener('mouseleave', () => {
     cursorMils = null;
+    if (state.hoveredPinIdx != null) {
+      state.hoveredPinIdx = null;
+      canvas.style.cursor = 'grab';
+      requestRedraw();
+    }
     updateCursorBadge(badge);
   });
 }
@@ -467,6 +663,7 @@ function mountCanvas(containerEl, board) {
         <path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/>
       </svg>
     </button>
+    <span class="brd-net" style="display:none;font-family:var(--mono);font-size:11px;color:var(--emerald);padding:0 8px;border-left:1px solid var(--border);margin-left:4px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
     <span class="brd-zoom" style="font-family:var(--mono);font-size:11px;color:var(--text-2);min-width:42px;text-align:right">1.00×</span>`;
   containerEl.appendChild(toolbar);
 
@@ -560,6 +757,8 @@ export async function initBoardview(containerEl) {
   state.board = board;
   state.partBodyBboxes = computeAllBodyBboxes(board);
   state.partsSorted = sortPartsByAreaDesc(board.parts || [], state.partBodyBboxes);
+  state.pinsByNet = computePinsByNet(board);
+  state.selectedPinIdx = null;
   mountCanvas(containerEl, board);
 }
 
