@@ -92,6 +92,65 @@ async def list_packs() -> list[PackSummary]:
     )
 
 
+class TaxonomyPackEntry(BaseModel):
+    device_slug: str
+    device_label: str
+    version: str | None
+    form_factor: str | None
+    complete: bool
+
+
+class TaxonomyTree(BaseModel):
+    """Packs grouped by brand > model > version, with fallback bucket for
+    registries missing brand or model (hard rule #5 = null rather than invent).
+    """
+
+    brands: dict[str, dict[str, list[TaxonomyPackEntry]]] = Field(default_factory=dict)
+    uncategorized: list[TaxonomyPackEntry] = Field(default_factory=list)
+
+
+@router.get("/taxonomy", response_model=TaxonomyTree)
+async def get_taxonomy() -> TaxonomyTree:
+    """Scan every pack's registry.json and group by taxonomy.
+
+    A pack lands in `brands[brand][model]` when both `taxonomy.brand` and
+    `taxonomy.model` are present; otherwise it falls to `uncategorized`. The UI
+    uses this to populate the 'New repair' modal's accordion by manufacturer
+    and the home section headers.
+    """
+    settings = get_settings()
+    root = Path(settings.memory_root)
+    tree = TaxonomyTree()
+    if not root.exists():
+        return tree
+
+    for pack_dir in sorted(root.iterdir(), key=lambda p: p.name):
+        if not pack_dir.is_dir():
+            continue
+        registry = _read_optional_json(pack_dir / "registry.json")
+        if registry is None:
+            continue
+
+        taxonomy = registry.get("taxonomy") or {}
+        brand = taxonomy.get("brand")
+        model = taxonomy.get("model")
+
+        entry = TaxonomyPackEntry(
+            device_slug=pack_dir.name,
+            device_label=registry.get("device_label") or pack_dir.name,
+            version=taxonomy.get("version"),
+            form_factor=taxonomy.get("form_factor"),
+            complete=_pack_is_complete(pack_dir),
+        )
+
+        if brand and model:
+            tree.brands.setdefault(brand, {}).setdefault(model, []).append(entry)
+        else:
+            tree.uncategorized.append(entry)
+
+    return tree
+
+
 @router.get("/packs/{device_slug}", response_model=PackSummary)
 async def get_pack(device_slug: str) -> PackSummary:
     settings = get_settings()

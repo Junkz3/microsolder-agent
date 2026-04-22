@@ -167,6 +167,7 @@ async def generate_knowledge_pack(
                 "components": len(registry.components),
                 "signals": len(registry.signals),
             },
+            "taxonomy": registry.taxonomy.model_dump(),
         })
 
         # -------- Phase 3 — Writers (parallel) ----------------------------------

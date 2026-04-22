@@ -12,6 +12,53 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # ======================================================================
+# PHASE 2.5 — Device taxonomy (brand > model > version hierarchy)
+# ======================================================================
+
+
+class DeviceTaxonomy(BaseModel):
+    """Hierarchical classification extracted from the raw dump by the taxonomist.
+
+    Every field is nullable — the extractor MUST output null rather than
+    invent when a source doesn't state the fact (hard rule #5). Populated
+    after the Registry Builder so the writers see the final taxonomy, and
+    used by the UI to group devices by brand > model > version.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    brand: str | None = Field(
+        default=None,
+        description=(
+            "Manufacturer name as spelled in the sources — 'Apple', 'MNT', "
+            "'Raspberry Pi', 'Samsung'. Null when the sources don't name one."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Product line / model name — 'iPhone X', 'Reform', 'Model B', "
+            "'Galaxy S21'. Null when genuinely unspecified."
+        ),
+    )
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Free-form revision or variant: a model-id (A1901), a PCB rev "
+            "(Rev 2.0), a generation (Gen 11), or a year (2021). Null otherwise."
+        ),
+    )
+    form_factor: str | None = Field(
+        default=None,
+        description=(
+            "The physical board being worked on — 'motherboard', 'logic board', "
+            "'mainboard', 'daughterboard', 'charging board'. Use the term the "
+            "community uses most often in the dump."
+        ),
+    )
+
+
+# ======================================================================
 # PHASE 2 — Registry (the canonical glossary)
 # ======================================================================
 
@@ -77,6 +124,14 @@ class Registry(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     device_label: str = Field(
         description="Human-readable device identifier (e.g. 'MNT Reform motherboard')."
+    )
+    taxonomy: DeviceTaxonomy = Field(
+        default_factory=DeviceTaxonomy,
+        description=(
+            "Hierarchical classification (brand > model > version > form_factor). "
+            "Fields are individually nullable — leave null when the sources don't "
+            "state the fact rather than guessing (hard rule #5)."
+        ),
     )
     components: list[RegistryComponent] = Field(default_factory=list)
     signals: list[RegistrySignal] = Field(default_factory=list)
