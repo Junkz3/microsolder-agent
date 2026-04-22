@@ -34,3 +34,12 @@ def test_upload_error_envelope():
     e = UploadError(reason="obfuscated", message="refused")
     dumped = e.model_dump()
     assert dumped["reason"] == "obfuscated"
+
+
+def test_draw_arrow_serializes_alias_over_wire():
+    e = DrawArrow(from_=(0, 0), to=(10, 10), id="arr-1")
+    dumped = e.model_dump()
+    assert "from" in dumped
+    assert "from_" not in dumped
+    assert dumped["from"] == (0, 0)
+    assert dumped["to"] == (10, 10)

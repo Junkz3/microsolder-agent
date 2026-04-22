@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _BVEvent(BaseModel):
@@ -81,6 +81,9 @@ class Filter(_BVEvent):
 
 
 class DrawArrow(_BVEvent):
+    # wire contract: frontend reads ev.from
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     type: Literal["boardview.draw_arrow"] = "boardview.draw_arrow"
     from_: tuple[int, int] = Field(alias="from")
     to: tuple[int, int]
