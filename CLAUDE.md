@@ -262,6 +262,20 @@ in French. Code identifiers, console logs, and comments stay in English.
     pivots) into the same commit, even if they land in the same working
     session. Stage narrowly across domain boundaries, commit cohesively
     within a domain.
+  - **When multiple agents are working in parallel on this repo, always
+    pass paths explicitly to `git commit`:**
+    ```bash
+    git commit -m "msg" -- path/to/file1 path/to/file2
+    ```
+    The `-- path...` form tells Git to commit strictly those files and
+    ignore the rest of the staging area. Without it, `git add X && git
+    commit` will also sweep up anything another agent had already staged
+    in preparation for its own commit — bundling its unrelated work
+    under your misleading commit message (real incident : commit
+    e053002, later corrected in 71dd23a). The staged-but-not-yours files
+    remain staged after your commit, ready for the other agent to
+    commit with its own message. Always prefer this form over `git add
+    ... && git commit` whenever a parallel agent might be active.
   - Never rewrite history (`reset --soft`, `rebase -i`, `commit --amend`)
     once another agent has committed on top of yours — leave the sub-optimal
     commit and split better next time.
