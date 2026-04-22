@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -64,9 +65,9 @@ async def health() -> JSONResponse:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Placeholder WebSocket — echoes back with a `not implemented yet` note.
+    """Legacy echo endpoint — kept so old smoke tests keep passing.
 
-    The real agent loop will live here once `api/agent/` is implemented.
+    The real diagnostic loop lives at `/ws/diagnostic/{device_slug}`.
     """
     await websocket.accept()
     logger.info("WebSocket connection opened")
@@ -87,6 +88,37 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await websocket.send_text(json.dumps(reply))
     except WebSocketDisconnect:
         logger.info("WebSocket connection closed")
+
+
+_VALID_TIERS = {"fast", "normal", "deep"}
+
+
+@app.websocket("/ws/diagnostic/{device_slug}")
+async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
+    """Diagnostic conversation. `DIAGNOSTIC_MODE` env var picks the runtime.
+
+    - `managed` (default): Anthropic Managed Agents persistent session +
+      custom-tool dispatch. Requires a prior `bootstrap_managed_agent.py` run.
+    - `direct`: plain `messages.create` tool-use loop. No bootstrap needed;
+      used when the Managed Agents beta is unavailable.
+
+    Query param `tier` selects the model: `fast` (Haiku), `normal` (Sonnet),
+    `deep` (Opus). Defaults to `fast` for cheap dev traffic. Changing tier in
+    the frontend reconnects the WS — it's an explicit new conversation.
+    """
+    tier = websocket.query_params.get("tier", "fast").lower()
+    if tier not in _VALID_TIERS:
+        tier = "fast"
+
+    mode = os.environ.get("DIAGNOSTIC_MODE", "managed").lower()
+    if mode == "direct":
+        from api.agent.runtime_direct import run_diagnostic_session_direct
+
+        await run_diagnostic_session_direct(websocket, device_slug, tier=tier)
+    else:
+        from api.agent.runtime_managed import run_diagnostic_session_managed
+
+        await run_diagnostic_session_managed(websocket, device_slug, tier=tier)  # type: ignore[arg-type]
 
 
 if WEB_DIR.is_dir():

@@ -1,0 +1,283 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Diagnostic runtime using Anthropic Managed Agents.
+
+Wire flow:
+    browser ⇄ /ws/diagnostic/{slug} ⇄ backend ⇄ MA session event stream
+
+Key SDK contract (see `docs/en/managed-agents/events-and-streaming`):
+  - Open the stream **before** sending the first `user.message`, else we
+    race against events the server has already emitted.
+  - Custom tool handling is two-step. The agent first emits an
+    `agent.custom_tool_use` event with full `{id, name, input}`; then the
+    session pauses with `session.status_idle` + `stop_reason =
+    requires_action`, whose `event_ids` point at the pending tool uses.
+    We cache the tool_use events as they arrive so we can look them up
+    when `requires_action` fires and send back `user.custom_tool_result`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from pathlib import Path
+from typing import Any, Literal
+
+from anthropic import AsyncAnthropic
+from fastapi import WebSocket, WebSocketDisconnect
+
+from api.agent.managed_ids import get_agent, load_managed_ids
+from api.agent.memory_stores import ensure_memory_store
+from api.agent.tools import mb_get_component, mb_get_rules_for_symptoms
+from api.config import get_settings
+
+TierLiteral = Literal["fast", "normal", "deep"]
+DEFAULT_TIER: TierLiteral = "fast"
+
+logger = logging.getLogger("microsolder.agent.managed")
+
+
+def _dispatch_tool(name: str, payload: dict, device_slug: str, memory_root: Path) -> dict:
+    """Run one of the `mb_*` custom tools locally and return the raw result."""
+    if name == "mb_get_component":
+        return mb_get_component(
+            device_slug=device_slug,
+            refdes=payload.get("refdes", ""),
+            memory_root=memory_root,
+        )
+    if name == "mb_get_rules_for_symptoms":
+        return mb_get_rules_for_symptoms(
+            device_slug=device_slug,
+            symptoms=payload.get("symptoms", []),
+            memory_root=memory_root,
+            max_results=payload.get("max_results", 5),
+        )
+    return {"error": f"unknown tool: {name}"}
+
+
+async def run_diagnostic_session_managed(
+    ws: WebSocket,
+    device_slug: str,
+    tier: TierLiteral = DEFAULT_TIER,
+) -> None:
+    """Open a Managed Agents session on the tier-scoped agent and relay it to `ws`.
+
+    `tier` picks which agent (fast=Haiku, normal=Sonnet, deep=Opus) handles the
+    conversation. A new WS connection with a different tier = a fresh MA session
+    on that tier's agent. No in-session swap: by design, tier choice is explicit
+    and the user starts a new conversation when changing it.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        await ws.accept()
+        await ws.send_json({"type": "error", "text": "ANTHROPIC_API_KEY not set"})
+        await ws.close()
+        return
+
+    try:
+        ids = load_managed_ids()
+        agent_info = get_agent(ids, tier)
+    except RuntimeError as exc:
+        await ws.accept()
+        await ws.send_json({"type": "error", "text": str(exc)})
+        await ws.close()
+        return
+
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    memory_root = Path(settings.memory_root)
+    memory_store_id = await ensure_memory_store(client, device_slug)
+
+    # Build session params. `resources` is the current (2026-04-01) surface
+    # for attaching memory stores. If the beta isn't enabled, ensure_memory_store
+    # returned None and we just skip the resources field.
+    session_kwargs: dict[str, Any] = {
+        "agent": {
+            "type": "agent",
+            "id": agent_info["id"],
+            "version": agent_info["version"],
+        },
+        "environment_id": ids["environment_id"],
+        "title": f"diag-{device_slug}-{tier}",
+    }
+    if memory_store_id:
+        session_kwargs["resources"] = [
+            {
+                "type": "memory_store",
+                "memory_store_id": memory_store_id,
+                "access": "read_write",
+                "prompt": (
+                    "Repair history for this specific device. Check before "
+                    "starting diagnosis, write durable learnings at the end."
+                ),
+            }
+        ]
+
+    try:
+        session = await client.beta.sessions.create(**session_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[Diag-MA] session create failed for device=%s", device_slug)
+        await ws.accept()
+        await ws.send_json({"type": "error", "text": f"session create failed: {exc}"})
+        await ws.close()
+        return
+
+    logger.info(
+        "[Diag-MA] session=%s device=%s tier=%s model=%s memory=%s",
+        session.id, device_slug, tier, agent_info["model"], memory_store_id,
+    )
+
+    await ws.accept()
+    await ws.send_json(
+        {
+            "type": "session_ready",
+            "mode": "managed",
+            "session_id": session.id,
+            "memory_store_id": memory_store_id,
+            "device_slug": device_slug,
+            "tier": tier,
+            "model": agent_info["model"],
+        }
+    )
+
+    # Cache: agent.custom_tool_use events by event.id, so we can look up
+    # name+input when `requires_action` arrives and only hands us event_ids.
+    events_by_id: dict[str, Any] = {}
+
+    try:
+        recv_task = asyncio.create_task(
+            _forward_ws_to_session(ws, client, session.id),
+            name="ws->session",
+        )
+        emit_task = asyncio.create_task(
+            _forward_session_to_ws(
+                ws, client, session.id, device_slug, memory_root, events_by_id
+            ),
+            name="session->ws",
+        )
+        done, pending = await asyncio.wait(
+            {recv_task, emit_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        # Surface exceptions from the completed task to the logger.
+        for task in done:
+            if task.exception() is not None:
+                logger.exception(
+                    "[Diag-MA] task %s raised", task.get_name(), exc_info=task.exception()
+                )
+    except WebSocketDisconnect:
+        logger.info("[Diag-MA] WS disconnected for device=%s", device_slug)
+    finally:
+        try:
+            await client.beta.sessions.archive(session.id)
+        except Exception:  # noqa: BLE001 — archive is best-effort
+            pass
+
+
+async def _forward_ws_to_session(
+    ws: WebSocket, client: AsyncAnthropic, session_id: str
+) -> None:
+    """Read user text from the WS, post it as `user.message` to the session."""
+    while True:
+        raw = await ws.receive_text()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {"text": raw}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            continue
+        await client.beta.sessions.events.send(
+            session_id,
+            events=[
+                {
+                    "type": "user.message",
+                    "content": [{"type": "text", "text": text}],
+                }
+            ],
+        )
+
+
+async def _forward_session_to_ws(
+    ws: WebSocket,
+    client: AsyncAnthropic,
+    session_id: str,
+    device_slug: str,
+    memory_root: Path,
+    events_by_id: dict[str, Any],
+) -> None:
+    """Stream session events to the WS and dispatch custom tool calls."""
+    # AsyncAnthropic: `.stream(...)` returns a coroutine resolving to an
+    # `AsyncStream[...]`. We must await first, then use it as an async
+    # context manager — otherwise we get `TypeError: 'coroutine' object
+    # does not support the asynchronous context manager protocol`.
+    stream_ctx = await client.beta.sessions.events.stream(session_id)
+    async with stream_ctx as stream:
+        async for event in stream:
+            etype = getattr(event, "type", None)
+
+            if etype == "agent.message":
+                for block in getattr(event, "content", None) or []:
+                    if getattr(block, "type", None) == "text":
+                        await ws.send_json(
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "text": block.text,
+                            }
+                        )
+
+            elif etype == "agent.thinking":
+                text = getattr(event, "text", "") or ""
+                if text:
+                    await ws.send_json({"type": "thinking", "text": text})
+
+            elif etype == "agent.custom_tool_use":
+                events_by_id[event.id] = event
+                await ws.send_json(
+                    {
+                        "type": "tool_use",
+                        "name": getattr(event, "name", None),
+                        "input": getattr(event, "input", {}) or {},
+                    }
+                )
+
+            elif etype == "session.status_idle":
+                stop = getattr(event, "stop_reason", None)
+                stop_type = getattr(stop, "type", None) if stop is not None else None
+                if stop_type != "requires_action":
+                    # end_turn / retries_exhausted / etc. — just wait for the
+                    # next user turn. The stream stays alive for the session.
+                    continue
+                event_ids = getattr(stop, "event_ids", None) or []
+                for eid in event_ids:
+                    tool_event = events_by_id.get(eid)
+                    if tool_event is None:
+                        logger.warning(
+                            "[Diag-MA] requires_action for unknown event id %s", eid
+                        )
+                        continue
+                    name = getattr(tool_event, "name", "")
+                    payload = getattr(tool_event, "input", {}) or {}
+                    result = _dispatch_tool(name, payload, device_slug, memory_root)
+                    await client.beta.sessions.events.send(
+                        session_id,
+                        events=[
+                            {
+                                "type": "user.custom_tool_result",
+                                "custom_tool_use_id": eid,
+                                "content": [
+                                    {"type": "text", "text": json.dumps(result)}
+                                ],
+                            }
+                        ],
+                    )
+
+            elif etype == "session.status_terminated":
+                await ws.send_json({"type": "session_terminated"})
+                return
+
+            elif etype == "session.error":
+                err = getattr(event, "error", None)
+                msg = getattr(err, "message", None) if err is not None else None
+                await ws.send_json({"type": "error", "text": msg or "session error"})

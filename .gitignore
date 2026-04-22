@@ -70,6 +70,9 @@ dist-frontend/
 secrets/
 credentials.json
 
+# Bootstrap output — tenant-specific Anthropic Managed Agents resource IDs
+managed_ids.json
+
 # --- Editors / IDEs ---
 .vscode/
 .idea/
