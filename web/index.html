@@ -172,6 +172,32 @@
   .btn.primary{background:rgba(56,189,248,.12);color:var(--cyan);border-color:rgba(56,189,248,.35)}
   .btn.primary:hover{background:rgba(56,189,248,.18)}
 
+  /* =========== MODAL (nouvelle réparation) =========== */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(7,16,31,.65);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+  .modal-backdrop.open{opacity:1;pointer-events:auto}
+  .modal{width:min(560px,100%);max-height:calc(100vh - 48px);background:linear-gradient(180deg,rgba(20,32,48,.98),rgba(15,26,46,.98));border:1px solid var(--border);border-radius:10px;box-shadow:0 24px 64px rgba(0,0,0,.55),0 0 0 1px rgba(56,189,248,.05);backdrop-filter:blur(14px);display:flex;flex-direction:column;overflow:hidden;transform:translateY(10px) scale(.985);transition:transform .28s cubic-bezier(.2,.8,.2,1)}
+  .modal-backdrop.open .modal{transform:translateY(0) scale(1)}
+  .modal-head{padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;position:relative}
+  .modal-head .type-row{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:.4px;text-transform:uppercase}
+  .modal-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.2px}
+  .modal-body{padding:16px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+  .modal-field{display:flex;flex-direction:column;gap:5px}
+  .modal-label{font-family:var(--mono);font-size:10px;color:var(--text-3);font-weight:500;letter-spacing:.5px;text-transform:uppercase}
+  .modal-input,.modal-textarea{background:var(--bg-deep);border:1px solid var(--border);color:var(--text);padding:9px 11px;border-radius:6px;font-family:inherit;font-size:13px;outline:none;transition:border-color .15s,box-shadow .15s}
+  .modal-input{font-family:var(--mono);font-size:12.5px}
+  .modal-textarea{resize:vertical;min-height:92px;line-height:1.5}
+  .modal-input:focus,.modal-textarea:focus{border-color:oklch(0.65 0.14 210);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+  .modal-input:disabled,.modal-textarea:disabled{opacity:.5;cursor:not-allowed}
+  .modal-input::placeholder,.modal-textarea::placeholder{color:var(--text-3)}
+  .modal-hint{font-family:var(--mono);font-size:10.5px;color:var(--text-3);line-height:1.45}
+  .modal-error{padding:10px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:6px;color:var(--amber);font-size:12px;line-height:1.5;font-family:var(--mono)}
+  .modal-error strong{color:var(--amber);font-weight:600;margin-right:6px}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;padding-top:4px}
+  .modal-actions .btn{flex:0 0 auto;padding:8px 14px;min-width:96px}
+  .modal-submit[aria-busy="true"]{cursor:progress}
+  .modal-spinner{display:inline-block;width:12px;height:12px;border:1.8px solid currentColor;border-top-color:transparent;border-radius:50%;animation:modal-spin .7s linear infinite;vertical-align:-1px}
+  @keyframes modal-spin{to{transform:rotate(360deg)}}
+
   /* =========== EMPTY STATE =========== */
   .empty-state{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;pointer-events:none}
   .empty-state-card{max-width:480px;padding:26px 30px;background:rgba(20,32,48,.94);border:1px solid var(--border);border-radius:12px;backdrop-filter:blur(12px);text-align:center;pointer-events:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -469,6 +495,46 @@
   <div class="tt-meta"><span id="ttId"></span><span id="ttConf"></span></div>
 </div>
 
+<!-- ============ MODAL — NOUVELLE RÉPARATION ============ -->
+<div class="modal-backdrop" id="newRepairBackdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newRepairTitle" aria-describedby="newRepairSub">
+    <header class="modal-head">
+      <div class="type-row">
+        <span class="type-badge action">Nouvelle session</span>
+        <span id="newRepairSub">· diagnostic microsoudure</span>
+      </div>
+      <h2 id="newRepairTitle">Nouvelle réparation</h2>
+      <button class="close-x" id="newRepairClose" aria-label="Fermer le modal" type="button">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <form class="modal-body" id="newRepairForm" novalidate>
+      <div class="modal-field">
+        <label class="modal-label" for="newRepairDevice">Device</label>
+        <input class="modal-input" id="newRepairDevice" type="text"
+               required minlength="2" maxlength="200"
+               placeholder="ex. MNT Reform motherboard" autocomplete="off" spellcheck="false" />
+        <span class="modal-hint">Nom du board. Si la mémoire n'existe pas, l'agent la construira en arrière-plan.</span>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label" for="newRepairSymptom">Symptôme observé</label>
+        <textarea class="modal-textarea" id="newRepairSymptom"
+                  required minlength="5" maxlength="2000" rows="4"
+                  placeholder="ex. Pas de son au micro après une chute. Le speaker fonctionne, Siri répond mais n'entend rien."></textarea>
+        <span class="modal-hint">Décris ce que le client observe. L'agent partira de là pour son diagnostic.</span>
+      </div>
+      <div class="modal-error" id="newRepairError" hidden></div>
+      <footer class="modal-actions">
+        <button type="button" class="btn" id="newRepairCancel">Annuler</button>
+        <button type="submit" class="btn primary modal-submit" id="newRepairSubmit">
+          <span class="btn-label">Démarrer le diagnostic</span>
+          <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </footer>
+    </form>
+  </div>
+</div>
+
 <!-- ============ TWEAKS ============ -->
 <div class="tweaks" id="tweaksPanel">
   <h5>Tweaks <button class="close-x" id="tweaksClose" style="background:transparent;border:0;color:var(--text-3);cursor:pointer;padding:0">✕</button></h5>
@@ -620,20 +686,154 @@ document.querySelectorAll(".rail-btn[data-section]").forEach(btn => {
   });
 });
 
-document.getElementById("homeNewBtn").addEventListener("click", () => {
-  const label = prompt("Nom du device à générer (ex. 'MNT Reform motherboard') :");
-  if (!label) return;
-  fetch("/pipeline/generate", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({device_label: label}),
-  }).then(res => {
-    if (!res.ok) return res.json().then(e => alert("Erreur: " + JSON.stringify(e)));
-    return res.json().then(r => {
-      alert(`Pack généré: ${r.device_slug}`);
-      window.location.href = `?device=${encodeURIComponent(r.device_slug)}`;
+/* ---------- NEW REPAIR MODAL ---------- */
+const newRepairBackdrop = document.getElementById("newRepairBackdrop");
+const newRepairForm     = document.getElementById("newRepairForm");
+const newRepairDevice   = document.getElementById("newRepairDevice");
+const newRepairSymptom  = document.getElementById("newRepairSymptom");
+const newRepairSubmit   = document.getElementById("newRepairSubmit");
+const newRepairError    = document.getElementById("newRepairError");
+let   newRepairLastFocus = null;
+
+function openNewRepair() {
+  newRepairLastFocus = document.activeElement;
+  newRepairForm.reset();
+  setNewRepairError(null);
+  setNewRepairBusy(false);
+  newRepairBackdrop.classList.add("open");
+  newRepairBackdrop.setAttribute("aria-hidden", "false");
+  // Let the backdrop fade-in paint, then focus first field.
+  requestAnimationFrame(() => newRepairDevice.focus());
+}
+
+function closeNewRepair() {
+  if (!newRepairBackdrop.classList.contains("open")) return;
+  newRepairBackdrop.classList.remove("open");
+  newRepairBackdrop.setAttribute("aria-hidden", "true");
+  setNewRepairBusy(false);
+  if (newRepairLastFocus && typeof newRepairLastFocus.focus === "function") {
+    newRepairLastFocus.focus();
+  }
+}
+
+function setNewRepairError(msg, opts) {
+  if (!msg) {
+    newRepairError.hidden = true;
+    newRepairError.textContent = "";
+    return;
+  }
+  newRepairError.hidden = false;
+  newRepairError.innerHTML = "";
+  if (opts && opts.title) {
+    const s = document.createElement("strong");
+    s.textContent = opts.title;
+    newRepairError.appendChild(s);
+  }
+  newRepairError.appendChild(document.createTextNode(msg));
+}
+
+function setNewRepairBusy(busy) {
+  newRepairSubmit.disabled  = busy;
+  newRepairDevice.disabled  = busy;
+  newRepairSymptom.disabled = busy;
+  newRepairSubmit.setAttribute("aria-busy", busy ? "true" : "false");
+  const label = newRepairSubmit.querySelector(".btn-label");
+  if (label) {
+    label.innerHTML = busy
+      ? '<span class="modal-spinner" aria-hidden="true"></span> Création…'
+      : "Démarrer le diagnostic";
+  }
+}
+
+async function submitNewRepair(ev) {
+  ev.preventDefault();
+  const device_label = newRepairDevice.value.trim();
+  const symptom      = newRepairSymptom.value.trim();
+  if (device_label.length < 2) {
+    setNewRepairError("Le nom du device doit faire au moins 2 caractères.", {title:"Champ incomplet — "});
+    newRepairDevice.focus();
+    return;
+  }
+  if (symptom.length < 5) {
+    setNewRepairError("Décris le symptôme — 5 caractères minimum.", {title:"Champ incomplet — "});
+    newRepairSymptom.focus();
+    return;
+  }
+  setNewRepairError(null);
+  setNewRepairBusy(true);
+  try {
+    const res = await fetch("/repairs", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({device_label, symptom}),
     });
-  });
+    if (!res.ok) {
+      if (res.status === 404) {
+        setNewRepairError(
+          "L'endpoint /repairs n'est pas encore branché côté backend. Réessaie dès que l'intégration est en place.",
+          {title:"Backend indisponible — "}
+        );
+      } else {
+        let detail = "";
+        try { detail = (await res.json()).detail || ""; } catch (_) {}
+        setNewRepairError(`Le backend a répondu ${res.status}. ${detail}`.trim(), {title:"Erreur — "});
+      }
+      setNewRepairBusy(false);
+      return;
+    }
+    const r = await res.json();
+    const slug = encodeURIComponent(r.device_slug || "");
+    const id   = encodeURIComponent(r.id || "");
+    window.location.href = `?device=${slug}&repair=${id}#graphe`;
+  } catch (err) {
+    console.error("newRepair submit failed", err);
+    setNewRepairError(
+      "Impossible de joindre le serveur. Vérifie que le backend tourne.",
+      {title:"Réseau — "}
+    );
+    setNewRepairBusy(false);
+  }
+}
+
+function trapNewRepairFocus(ev) {
+  if (ev.key !== "Tab") return;
+  const focusables = newRepairBackdrop.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+  );
+  if (focusables.length === 0) return;
+  const first = focusables[0];
+  const last  = focusables[focusables.length - 1];
+  if (ev.shiftKey && document.activeElement === first) {
+    ev.preventDefault(); last.focus();
+  } else if (!ev.shiftKey && document.activeElement === last) {
+    ev.preventDefault(); first.focus();
+  }
+}
+
+document.getElementById("homeNewBtn").addEventListener("click", openNewRepair);
+document.getElementById("newRepairClose").addEventListener("click", closeNewRepair);
+document.getElementById("newRepairCancel").addEventListener("click", closeNewRepair);
+newRepairForm.addEventListener("submit", submitNewRepair);
+newRepairBackdrop.addEventListener("click", ev => {
+  if (ev.target === newRepairBackdrop) closeNewRepair();
+});
+
+// Registered BEFORE the global ESC/Cmd+K handler below, so we can intercept
+// those keys while the modal is open without closing the Inspector or stealing focus.
+document.addEventListener("keydown", ev => {
+  if (!newRepairBackdrop.classList.contains("open")) return;
+  if (ev.key === "Escape") {
+    ev.preventDefault(); ev.stopImmediatePropagation(); closeNewRepair(); return;
+  }
+  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
+    ev.preventDefault(); ev.stopImmediatePropagation(); return;
+  }
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    if (!newRepairSubmit.disabled) newRepairForm.requestSubmit();
+    return;
+  }
+  trapNewRepairFocus(ev);
 });
 
 const TYPE_COLORS = { component:"oklch(0.82 0.14 210)", symptom:"oklch(0.82 0.16 75)", net:"oklch(0.78 0.15 155)", action:"oklch(0.78 0.14 295)" };
