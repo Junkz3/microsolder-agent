@@ -8,6 +8,7 @@ Exposes:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.config import get_settings
+from api.pipeline.graph_transform import pack_to_graph_payload
 from api.pipeline.orchestrator import _slugify, generate_knowledge_pack
 from api.pipeline.schemas import PipelineResult
 
@@ -92,6 +94,34 @@ async def get_pack(device_slug: str) -> PackSummary:
     if not pack_dir.exists():
         raise HTTPException(status_code=404, detail=f"No pack for device_slug={slug!r}")
     return _summarize_pack(pack_dir)
+
+
+@router.get("/packs/{device_slug}/graph")
+async def get_pack_graph(device_slug: str) -> dict:
+    """Return the combined graph payload ({nodes, edges}) consumed by web/index.html."""
+    settings = get_settings()
+    slug = _slugify(device_slug)
+    pack_dir = Path(settings.memory_root) / slug
+    if not pack_dir.exists():
+        raise HTTPException(status_code=404, detail=f"No pack for device_slug={slug!r}")
+
+    try:
+        registry = json.loads((pack_dir / "registry.json").read_text())
+        knowledge_graph = json.loads((pack_dir / "knowledge_graph.json").read_text())
+        rules = json.loads((pack_dir / "rules.json").read_text())
+        dictionary = json.loads((pack_dir / "dictionary.json").read_text())
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Pack for {slug!r} is incomplete: {exc.filename}",
+        ) from exc
+
+    return pack_to_graph_payload(
+        registry=registry,
+        knowledge_graph=knowledge_graph,
+        rules=rules,
+        dictionary=dictionary,
+    )
 
 
 __all__ = ["router"]
