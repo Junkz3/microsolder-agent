@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from anthropic import AsyncAnthropic
 
@@ -32,6 +35,12 @@ from api.pipeline.scout import run_scout
 from api.pipeline.writers import run_single_writer_revision, run_writers_parallel
 
 logger = logging.getLogger("microsolder.pipeline.orchestrator")
+
+OnEvent = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+async def _noop_on_event(_event: dict[str, Any]) -> None:
+    """Default on_event callback — swallow the event."""
 
 
 def _slugify(label: str) -> str:
@@ -60,11 +69,22 @@ async def generate_knowledge_pack(
     client: AsyncAnthropic | None = None,
     memory_root: Path | None = None,
     max_revise_rounds: int | None = None,
+    on_event: OnEvent | None = None,
 ) -> PipelineResult:
     """Run the full pipeline for one device.
 
     Returns a `PipelineResult` with the on-disk path and the final audit verdict.
     Raises RuntimeError on REJECTED verdicts or terminal failures.
+
+    When `on_event` is supplied, the orchestrator emits progress events at
+    every phase transition. Event types:
+      - pipeline_started      → {device_slug, device_label, model}
+      - phase_started/finished → {phase: scout|registry|writers|audit, elapsed_s?}
+      - pipeline_finished     → {status, revise_rounds_used, consistency_score}
+      - pipeline_failed       → {status, error} (REJECTED or unexpected exception)
+
+    The callback is awaited between phases but errors inside it are swallowed
+    with a warning — UI delivery must never crash the pipeline.
     """
     settings = get_settings()
     client = client or _get_client()
@@ -72,8 +92,10 @@ async def generate_knowledge_pack(
     max_revise_rounds = (
         max_revise_rounds if max_revise_rounds is not None else settings.pipeline_max_revise_rounds
     )
+    emit = _wrap_on_event(on_event)
 
     model = settings.anthropic_model_main  # claude-opus-4-7
+    slug = _slugify(device_label)
 
     pack_dir = _pack_path(device_label, memory_root)
     pack_dir.mkdir(parents=True, exist_ok=True)
@@ -82,103 +104,185 @@ async def generate_knowledge_pack(
     logger.info("Pipeline start · device=%r · model=%s · pack=%s", device_label, model, pack_dir)
     logger.info("=" * 72)
 
-    # -------- Phase 1 — Scout ------------------------------------------------
-    raw_dump = await run_scout(client=client, model=model, device_label=device_label)
-    (pack_dir / "raw_research_dump.md").write_text(raw_dump, encoding="utf-8")
-    logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
+    await emit({
+        "type": "pipeline_started",
+        "device_slug": slug,
+        "device_label": device_label,
+        "model": model,
+    })
 
-    # -------- Phase 2 — Registry --------------------------------------------
-    registry = await run_registry_builder(
-        client=client, model=model, device_label=device_label, raw_dump=raw_dump
-    )
-    (pack_dir / "registry.json").write_text(registry.model_dump_json(indent=2), encoding="utf-8")
-    logger.info("[Pipeline] Phase 2 complete · registry.json written")
+    try:
+        # -------- Phase 1 — Scout ------------------------------------------------
+        t0 = time.monotonic()
+        await emit({"type": "phase_started", "phase": "scout"})
+        raw_dump = await run_scout(client=client, model=model, device_label=device_label)
+        (pack_dir / "raw_research_dump.md").write_text(raw_dump, encoding="utf-8")
+        logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
+        await emit({"type": "phase_finished", "phase": "scout", "elapsed_s": time.monotonic() - t0})
 
-    # -------- Phase 3 — Writers (parallel) ----------------------------------
-    kg, rules, dictionary = await run_writers_parallel(
-        client=client,
-        model=model,
-        device_label=device_label,
-        raw_dump=raw_dump,
-        registry=registry,
-        cache_warmup_seconds=settings.pipeline_cache_warmup_seconds,
-    )
-    _write_writer_outputs(pack_dir, kg, rules, dictionary)
-    logger.info("[Pipeline] Phase 3 complete · 3 writer files written")
-
-    # -------- Phase 4 — Audit + self-healing loop ---------------------------
-    rounds_used = 0
-    verdict: AuditVerdict
-
-    while True:
-        verdict = await run_auditor(
-            client=client,
-            model=model,
-            device_label=device_label,
-            registry=registry,
-            knowledge_graph=kg,
-            rules=rules,
-            dictionary=dictionary,
+        # -------- Phase 2 — Registry --------------------------------------------
+        t0 = time.monotonic()
+        await emit({"type": "phase_started", "phase": "registry"})
+        registry = await run_registry_builder(
+            client=client, model=model, device_label=device_label, raw_dump=raw_dump
         )
-        (pack_dir / "audit_verdict.json").write_text(
-            verdict.model_dump_json(indent=2), encoding="utf-8"
+        (pack_dir / "registry.json").write_text(
+            registry.model_dump_json(indent=2), encoding="utf-8"
         )
+        logger.info("[Pipeline] Phase 2 complete · registry.json written")
+        await emit({
+            "type": "phase_finished",
+            "phase": "registry",
+            "elapsed_s": time.monotonic() - t0,
+            "counts": {
+                "components": len(registry.components),
+                "signals": len(registry.signals),
+            },
+        })
 
-        if verdict.overall_status == "APPROVED":
-            logger.info("[Pipeline] Phase 4 APPROVED on round=%d", rounds_used)
-            break
-
-        if verdict.overall_status == "REJECTED":
-            logger.error("[Pipeline] Auditor REJECTED the pack — aborting")
-            raise RuntimeError(
-                f"Pipeline failed: auditor rejected the pack. brief={verdict.revision_brief!r}"
-            )
-
-        # NEEDS_REVISION
-        if rounds_used >= max_revise_rounds:
-            logger.warning(
-                "[Pipeline] Max revise rounds reached (%d). Accepting pack with residual issues.",
-                max_revise_rounds,
-            )
-            break
-
-        rounds_used += 1
-        logger.info(
-            "[Pipeline] Revise round=%d · files=%s · brief=%r",
-            rounds_used,
-            verdict.files_to_rewrite,
-            verdict.revision_brief[:200],
-        )
-        kg, rules, dictionary = await _apply_revisions(
+        # -------- Phase 3 — Writers (parallel) ----------------------------------
+        t0 = time.monotonic()
+        await emit({"type": "phase_started", "phase": "writers"})
+        kg, rules, dictionary = await run_writers_parallel(
             client=client,
             model=model,
             device_label=device_label,
             raw_dump=raw_dump,
             registry=registry,
-            verdict=verdict,
-            current_kg=kg,
-            current_rules=rules,
-            current_dictionary=dictionary,
+            cache_warmup_seconds=settings.pipeline_cache_warmup_seconds,
         )
         _write_writer_outputs(pack_dir, kg, rules, dictionary)
+        logger.info("[Pipeline] Phase 3 complete · 3 writer files written")
+        await emit({
+            "type": "phase_finished",
+            "phase": "writers",
+            "elapsed_s": time.monotonic() - t0,
+            "counts": {
+                "nodes": len(kg.nodes),
+                "edges": len(kg.edges),
+                "rules": len(rules.rules),
+                "entries": len(dictionary.entries),
+            },
+        })
 
-    # -------- Done ----------------------------------------------------------
-    logger.info("Pipeline end · pack=%s · rounds=%d", pack_dir, rounds_used)
-    logger.info("=" * 72)
+        # -------- Phase 4 — Audit + self-healing loop ---------------------------
+        t0 = time.monotonic()
+        await emit({"type": "phase_started", "phase": "audit"})
+        rounds_used = 0
+        verdict: AuditVerdict
 
-    # NOTE: token totals are aggregated via the stdout logs of `call_with_forced_tool`
-    # and `run_scout`; wiring them into PipelineResult precisely will require threading
-    # a counter through each call site. V2 returns zeros for now — the logs are the
-    # source of truth for this hackathon run.
-    return PipelineResult(
-        device_slug=_slugify(device_label),
-        disk_path=str(pack_dir),
-        verdict=verdict,
-        revise_rounds_used=rounds_used,
-        tokens_used_total=0,
-        cache_read_tokens_total=0,
-        cache_write_tokens_total=0,
-    )
+        while True:
+            verdict = await run_auditor(
+                client=client,
+                model=model,
+                device_label=device_label,
+                registry=registry,
+                knowledge_graph=kg,
+                rules=rules,
+                dictionary=dictionary,
+            )
+            (pack_dir / "audit_verdict.json").write_text(
+                verdict.model_dump_json(indent=2), encoding="utf-8"
+            )
+
+            if verdict.overall_status == "APPROVED":
+                logger.info("[Pipeline] Phase 4 APPROVED on round=%d", rounds_used)
+                break
+
+            if verdict.overall_status == "REJECTED":
+                logger.error("[Pipeline] Auditor REJECTED the pack — aborting")
+                await emit({
+                    "type": "pipeline_failed",
+                    "status": "REJECTED",
+                    "error": verdict.revision_brief or "auditor rejected the pack",
+                })
+                raise RuntimeError(
+                    f"Pipeline failed: auditor rejected the pack. "
+                    f"brief={verdict.revision_brief!r}"
+                )
+
+            # NEEDS_REVISION
+            if rounds_used >= max_revise_rounds:
+                logger.warning(
+                    "[Pipeline] Max revise rounds reached (%d). Accepting pack with residual issues.",
+                    max_revise_rounds,
+                )
+                break
+
+            rounds_used += 1
+            logger.info(
+                "[Pipeline] Revise round=%d · files=%s · brief=%r",
+                rounds_used,
+                verdict.files_to_rewrite,
+                verdict.revision_brief[:200],
+            )
+            kg, rules, dictionary = await _apply_revisions(
+                client=client,
+                model=model,
+                device_label=device_label,
+                raw_dump=raw_dump,
+                registry=registry,
+                verdict=verdict,
+                current_kg=kg,
+                current_rules=rules,
+                current_dictionary=dictionary,
+            )
+            _write_writer_outputs(pack_dir, kg, rules, dictionary)
+
+        await emit({
+            "type": "phase_finished",
+            "phase": "audit",
+            "elapsed_s": time.monotonic() - t0,
+            "status": verdict.overall_status,
+            "consistency_score": verdict.consistency_score,
+            "revise_rounds_used": rounds_used,
+        })
+
+        # -------- Done ----------------------------------------------------------
+        logger.info("Pipeline end · pack=%s · rounds=%d", pack_dir, rounds_used)
+        logger.info("=" * 72)
+
+        await emit({
+            "type": "pipeline_finished",
+            "device_slug": slug,
+            "status": verdict.overall_status,
+            "revise_rounds_used": rounds_used,
+            "consistency_score": verdict.consistency_score,
+        })
+
+        # NOTE: token totals are aggregated via the stdout logs of `call_with_forced_tool`
+        # and `run_scout`; wiring them into PipelineResult precisely will require threading
+        # a counter through each call site. V2 returns zeros for now — the logs are the
+        # source of truth for this hackathon run.
+        return PipelineResult(
+            device_slug=slug,
+            disk_path=str(pack_dir),
+            verdict=verdict,
+            revise_rounds_used=rounds_used,
+            tokens_used_total=0,
+            cache_read_tokens_total=0,
+            cache_write_tokens_total=0,
+        )
+    except RuntimeError:
+        raise
+    except Exception as exc:  # pragma: no cover — defensive wrapper
+        logger.exception("[Pipeline] Unexpected failure")
+        await emit({"type": "pipeline_failed", "status": "ERROR", "error": str(exc)})
+        raise
+
+
+def _wrap_on_event(on_event: OnEvent | None) -> OnEvent:
+    """Return a safe emitter: None → noop; exceptions → log-and-swallow."""
+    if on_event is None:
+        return _noop_on_event
+
+    async def safe(event: dict[str, Any]) -> None:
+        try:
+            await on_event(event)
+        except Exception:
+            logger.warning("[Pipeline] on_event listener raised; swallowing", exc_info=True)
+
+    return safe
 
 
 def _write_writer_outputs(
