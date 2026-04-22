@@ -315,6 +315,10 @@
   .brd-btn:hover{background:var(--panel-2);color:var(--text)}
 
   /* ================ Inspector panel ================ */
+  /* [hidden] override — our explicit `display:flex` below would otherwise
+     win over the user-agent's `display:none` for [hidden], leaving an empty
+     panel frame on screen when no part is selected. */
+  .brd-inspector[hidden]{display:none !important}
   .brd-inspector{
     position:absolute;top:56px;right:12px;
     width:320px;max-height:calc(100% - 76px);
@@ -1038,8 +1042,22 @@ function navigate(section) {
     el.classList.toggle("hidden", el.dataset.sectionStub !== section);
   });
   refreshChrome(section);
-  if (section === "pcb" && typeof window.initBoardview === "function") {
-    window.initBoardview(document.getElementById("brdRoot"));
+  if (section === "pcb") {
+    // brd_viewer.js loads as a deferred module; on first-load navigation
+    // (user hits /#pcb directly) the function may not be defined yet when
+    // navigate() runs from the boot IIFE. Try now, and retry once when
+    // the module is guaranteed to have executed.
+    const runPcbInit = () => {
+      const root = document.getElementById("brdRoot");
+      if (root && typeof window.initBoardview === "function") {
+        window.initBoardview(root);
+        return true;
+      }
+      return false;
+    };
+    if (!runPcbInit()) {
+      window.addEventListener("load", runPcbInit, { once: true });
+    }
   }
 }
 
