@@ -23,7 +23,9 @@ const state = {
   partBodyBboxes: null,
   pinsByNet: null,        // Map<netName, number[]>  pin indices grouped by net
   netCategory: null,      // Map<netName, 'power' | 'ground' | 'signal'>
+  partByRefdes: null,     // Map<refdes, Part>  — lookup from pin.part_refdes
   selectedPinIdx: null,   // currently highlighted pin (index into board.pins)
+  selectedPart: null,     // currently highlighted part (object or null)
   hoveredPinIdx: null,    // pin under the cursor (for click-affordance outline)
 };
 
@@ -77,16 +79,23 @@ function computeAllBodyBboxes(board) {
   return out;
 }
 
-// Classify each net as 'power' (+3V3, +5V, VBAT, VCC…), 'ground' (GND, VSS…),
-// or 'signal' (everything else) so we can colour pins distinctively — a
-// technician spots power / ground topology at a glance instead of hunting
-// through a uniform cyan sea.
+// Classify each net into one of: reset, clock, power, ground, signal.
+// Regex patterns are generic / cross-board — they match KiCad, OrCAD, Altium,
+// and vendor conventions from Apple / Samsung / ThinkPad / microcontroller
+// reference designs. Priority: reset > clock > power > ground > signal, so a
+// name like CLK_3V3 routes to 'clock' (the more specific cue).
+const NET_CLOCK_RE = /(^|[_\-/.])(CLK|CLOCK|XTAL|X_?IN|X_?OUT|OSC(IN|OUT)?|SCLK|SCK|SYSCLK|[MHP]CLK)([_\-/.0-9]|$)/i;
+const NET_RESET_RE = /(^|[_\-/.])(N_?RESET|N_?RST|RESET_?N|RST_?N|POR|PWR_?(GOOD|OK)|RESET|RST)([_\-/.0-9]|$)/i;
+
 function computeNetCategory(board) {
   const out = new Map();
   for (const n of board.nets || []) {
-    if (n.is_power) out.set(n.name, 'power');
-    else if (n.is_ground) out.set(n.name, 'ground');
-    else out.set(n.name, 'signal');
+    const name = n.name;
+    if (NET_RESET_RE.test(name))      out.set(name, 'reset');
+    else if (NET_CLOCK_RE.test(name)) out.set(name, 'clock');
+    else if (n.is_power)              out.set(name, 'power');
+    else if (n.is_ground)             out.set(name, 'ground');
+    else                              out.set(name, 'signal');
   }
   return out;
 }
@@ -102,6 +111,39 @@ function computePinsByNet(board) {
     out.get(net).push(i);
   }
   return out;
+}
+
+// Index parts by refdes for O(1) lookup from a pin's part_refdes.
+function computePartByRefdes(board) {
+  const out = new Map();
+  for (const p of board.parts || []) out.set(p.refdes, p);
+  return out;
+}
+
+// Hit-test: is (sx, sy) inside any part's body bbox? Iterate smallest-first
+// so that a small component sitting on top of a large connector is picked.
+// 0-pin annotations and wrong-side parts are skipped.
+function hitTestPart(sx, sy) {
+  if (!state.board) return null;
+  const parts = state.partsSorted || state.board.parts || [];
+  const bb = outlineBbox(state.board);
+  const boardW = bb.x1 + bb.x0;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i];
+    if (!part.pin_refs || part.pin_refs.length === 0) continue;
+    if (part.layer !== LAYER_BOTH) {
+      if (activeSide === LAYER_TOP    && part.layer !== LAYER_TOP)    continue;
+      if (activeSide === LAYER_BOTTOM && part.layer !== LAYER_BOTTOM) continue;
+    }
+    const bbox = state.partBodyBboxes?.get(part.refdes) || part.bbox;
+    if (!bbox || bbox.length < 2) continue;
+    const a = milsToScreen(bbox[0].x, bbox[0].y, boardW);
+    const b = milsToScreen(bbox[1].x, bbox[1].y, boardW);
+    const rx0 = Math.min(a.x, b.x), ry0 = Math.min(a.y, b.y);
+    const rx1 = Math.max(a.x, b.x), ry1 = Math.max(a.y, b.y);
+    if (sx >= rx0 && sx <= rx1 && sy >= ry0 && sy <= ry1) return part;
+  }
+  return null;
 }
 
 // Hit-test: given screen-px coords, return the index of the pin under the cursor.
@@ -297,10 +339,19 @@ function draw() {
     const rw = Math.abs(b.x - a.x);
     const rh = Math.abs(b.y - a.y);
 
-    ctx.fillStyle   = 'rgba(56,189,248,0.12)';
-    ctx.strokeStyle = 'rgba(56,189,248,0.7)';
+    const isSelected = state.selectedPart && state.selectedPart.refdes === part.refdes;
+    if (isSelected) {
+      ctx.fillStyle   = 'rgba(56,189,248,0.22)';
+      ctx.strokeStyle = 'rgba(56,189,248,1)';
+      ctx.lineWidth   = 2;
+    } else {
+      ctx.fillStyle   = 'rgba(56,189,248,0.12)';
+      ctx.strokeStyle = 'rgba(56,189,248,0.7)';
+      ctx.lineWidth   = 1;
+    }
     ctx.fillRect(rx, ry, rw, rh);
     ctx.strokeRect(rx, ry, rw, rh);
+    ctx.lineWidth = 1;
   }
 
   // ---- pins ----
@@ -308,23 +359,56 @@ function draw() {
   // Rects are axis-aligned (part rotation not applied to the pad rect yet —
   // accepted imprecision for rotated packages at MVP scope).
   const pins = board.pins || [];
-  const pinFillDefault   = 'rgba(169, 182, 204, 0.9)';   // --text-2 at slight transparency
-  const pinStrokeDefault = 'rgba(230, 237, 247, 1)';     // --text, sharp edge
-  const pinFillDim       = 'rgba(169, 182, 204, 0.22)';
-  const pinStrokeDim     = 'rgba(169, 182, 204, 0.35)';
-  const pinFillNet       = 'rgba(52, 211, 153, 0.95)';   // --emerald (selected)
-  const pinStrokeNet     = 'rgba(160, 240, 200, 1)';
-  // Net-category colours (applied only when no net is explicitly selected —
-  // the emerald selection override takes priority to keep the trace readable)
-  const pinFillPower     = 'rgba(245, 158, 11, 0.90)';   // --amber
-  const pinStrokePower   = 'rgba(252, 180, 60, 1)';
-  const pinFillGround    = 'rgba(110, 125, 150, 0.55)';  // dim gray (GND is everywhere)
-  const pinStrokeGround  = 'rgba(140, 155, 180, 0.7)';
+  // Pin colour palette keyed by { category, state }.
+  //   state: 'normal' (no selection)  | 'dim' (another net is selected)  | 'net' (selected net)
+  //   category: 'signal' | 'power' | 'ground'
+  // Keeping category colours in the dim state lets the tech still see which of
+  // the non-traced pins are power / ground / signal during net exploration.
+  const PIN_COLORS = {
+    signal:   { normal: ['rgba(169,182,204,0.90)', 'rgba(230,237,247,1)'],
+                dim:    ['rgba(169,182,204,0.22)', 'rgba(169,182,204,0.35)'] },
+    power:    { normal: ['rgba(245,158,11,0.90)',  'rgba(252,180,60,1)'],
+                dim:    ['rgba(245,158,11,0.28)',  'rgba(252,180,60,0.45)'] },
+    ground:   { normal: ['rgba(110,125,150,0.55)', 'rgba(140,155,180,0.7)'],
+                dim:    ['rgba(110,125,150,0.20)', 'rgba(140,155,180,0.30)'] },
+    clock:    { normal: ['rgba(192,132,252,0.90)', 'rgba(214,165,255,1)'],
+                dim:    ['rgba(192,132,252,0.25)', 'rgba(214,165,255,0.40)'] },
+    reset:    { normal: ['rgba(245,130,120,0.95)', 'rgba(255,170,160,1)'],
+                dim:    ['rgba(245,130,120,0.25)', 'rgba(255,170,160,0.40)'] },
+    // Outline-only hollow pin — clearly "nothing inside" without competing
+    // with the filled-gray ground category. Transparent fill, white-ish stroke.
+    'no-net': { normal: ['rgba(0,0,0,0)', 'rgba(230,237,247,0.65)'],
+                dim:    ['rgba(0,0,0,0)', 'rgba(169,182,204,0.28)'] },
+  };
+  // Net-selection colours keyed by category of the traced net. Power nets
+  // trace in amber (reinforces "this is a rail"), ground in silver-white
+  // (distinct from the dim GND default), signals stay emerald.
+  const PIN_NET_SEL = {
+    signal:   ['rgba(52,211,153,0.95)',  'rgba(160,240,200,1)'],
+    power:    ['rgba(255,200,60,1)',     'rgba(255,232,160,1)'],
+    ground:   ['rgba(220,226,237,0.95)', 'rgba(255,255,255,1)'],
+    clock:    ['rgba(214,165,255,1)',    'rgba(235,210,255,1)'],
+    reset:    ['rgba(255,160,150,1)',    'rgba(255,205,200,1)'],
+    'no-net': ['rgba(255,110,110,0.95)', 'rgba(255,170,170,1)'],
+  };
+  const FLY_LINE_COLOR = {
+    signal:   'rgba(52,211,153,0.55)',
+    power:    'rgba(252,180,60,0.65)',
+    ground:   'rgba(210,220,235,0.50)',
+    clock:    'rgba(214,165,255,0.65)',
+    reset:    'rgba(255,170,160,0.65)',
+    'no-net': 'rgba(255,110,110,0.40)',
+  };
 
   // Determine the selected net (if any) from state.selectedPinIdx
   const selectedPin = state.selectedPinIdx != null ? pins[state.selectedPinIdx] : null;
   const selectedNet = selectedPin && selectedPin.net ? selectedPin.net : null;
   const netPinSet = selectedNet ? new Set(state.pinsByNet?.get(selectedNet) || []) : null;
+  let selectedCat = 'signal';
+  if (selectedPin) {
+    if (!selectedPin.net) selectedCat = 'no-net';
+    else selectedCat = state.netCategory?.get(selectedPin.net) || 'signal';
+  }
 
   ctx.lineWidth = 1;
   for (let i = 0; i < pins.length; i++) {
@@ -344,27 +428,22 @@ function draw() {
     const w = Math.max(sw, 2);
     const h = Math.max(sh, 2);
 
-    // Pin colour: selected-net override > category > default
-    if (netPinSet) {
-      if (netPinSet.has(i)) {
-        ctx.fillStyle = pinFillNet;
-        ctx.strokeStyle = pinStrokeNet;
-      } else {
-        ctx.fillStyle = pinFillDim;
-        ctx.strokeStyle = pinStrokeDim;
-      }
+    // Semantic category for this pin (drives both colour and fill/outline style)
+    const pinCat = pin.net
+      ? (state.netCategory?.get(pin.net) || 'signal')
+      : 'no-net';
+    // no-net pads are drawn as hollow outlines so they never blend into any
+    // filled category (power / ground / signal / clock / reset).
+    const isHollow = pinCat === 'no-net' && !(netPinSet && netPinSet.has(i)) && state.selectedPinIdx !== i;
+
+    if (netPinSet && netPinSet.has(i)) {
+      [ctx.fillStyle, ctx.strokeStyle] = PIN_NET_SEL[selectedCat];
+    } else if (state.selectedPinIdx === i && !netPinSet) {
+      // Clicked a no-net pin — no fly-lines, but still highlight the pin itself
+      [ctx.fillStyle, ctx.strokeStyle] = PIN_NET_SEL[selectedCat];
     } else {
-      const category = pin.net ? state.netCategory?.get(pin.net) : null;
-      if (category === 'power') {
-        ctx.fillStyle   = pinFillPower;
-        ctx.strokeStyle = pinStrokePower;
-      } else if (category === 'ground') {
-        ctx.fillStyle   = pinFillGround;
-        ctx.strokeStyle = pinStrokeGround;
-      } else {
-        ctx.fillStyle   = pinFillDefault;
-        ctx.strokeStyle = pinStrokeDefault;
-      }
+      const stateKey = netPinSet ? 'dim' : 'normal';
+      [ctx.fillStyle, ctx.strokeStyle] = PIN_COLORS[pinCat][stateKey];
     }
 
     // Apply this pin's own pad rotation — each pad carries its own orientation
@@ -382,20 +461,20 @@ function draw() {
     if (rotDeg) ctx.rotate(rotRad);
 
     if (shape === 'rect' || shape === 'roundrect' || shape === 'trapezoid') {
-      ctx.fillRect(-w / 2, -h / 2, w, h);
-      if (vp.zoom >= 1.5) ctx.strokeRect(-w / 2, -h / 2, w, h);
+      if (!isHollow) ctx.fillRect(-w / 2, -h / 2, w, h);
+      if (isHollow || vp.zoom >= 1.5) ctx.strokeRect(-w / 2, -h / 2, w, h);
     } else if (shape === 'oval') {
       ctx.beginPath();
       ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      if (vp.zoom >= 1.5) ctx.stroke();
+      if (!isHollow) ctx.fill();
+      if (isHollow || vp.zoom >= 1.5) ctx.stroke();
     } else {
       // circle / custom / fallback (rotation-invariant)
       const r = Math.max(w, h) / 2;
       ctx.beginPath();
       ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-      if (vp.zoom >= 1.5) ctx.stroke();
+      if (!isHollow) ctx.fill();
+      if (isHollow || vp.zoom >= 1.5) ctx.stroke();
     }
 
     // Hover affordance — same shape as the pad, inflated by a 3 px gap.
@@ -425,7 +504,7 @@ function draw() {
   if (selectedNet && netPinSet && netPinSet.size <= RATNEST_MAX_PINS && state.selectedPinIdx != null) {
     const anchor = pins[state.selectedPinIdx];
     const anchorScr = milsToScreen(anchor.pos.x, anchor.pos.y, boardW);
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';   // --emerald ~55% alpha
+    ctx.strokeStyle = FLY_LINE_COLOR[selectedCat];
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
@@ -507,6 +586,101 @@ function updateCursorBadge(badge) {
   } else {
     el.textContent = '—';
   }
+}
+
+function updateInspector() {
+  const el = document.querySelector('.brd-inspector');
+  if (!el) return;
+  const part = state.selectedPart;
+  if (!part) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+
+  // Compute per-net pin counts for this part
+  const netCounts = new Map();  // netName → count
+  const partPins = (part.pin_refs || []).map(i => state.board.pins[i]).filter(Boolean);
+  let firstPinByNet = new Map();  // netName → first pin index (for click-to-trace)
+  for (const pinIdx of (part.pin_refs || [])) {
+    const pin = state.board.pins[pinIdx];
+    if (!pin) continue;
+    const net = pin.net;
+    if (!net) continue;
+    netCounts.set(net, (netCounts.get(net) || 0) + 1);
+    if (!firstPinByNet.has(net)) firstPinByNet.set(net, pinIdx);
+  }
+  const netsSorted = [...netCounts.entries()].sort((a, b) => b[1] - a[1]);
+
+  // Compute dimensions from body bbox
+  const bbox = state.partBodyBboxes?.get(part.refdes) || part.bbox;
+  const wMils = Math.abs(bbox[1].x - bbox[0].x);
+  const hMils = Math.abs(bbox[1].y - bbox[0].y);
+  const wMm = (wMils * 0.0254).toFixed(1);
+  const hMm = (hMils * 0.0254).toFixed(1);
+
+  const layerLabel = part.layer === LAYER_TOP ? 'TOP' : (part.layer === LAYER_BOTTOM ? 'BOTTOM' : 'BOTH');
+  const rot = part.rotation_deg != null ? `${Math.round(part.rotation_deg)}°` : '—';
+  const smdLabel = part.is_smd ? 'SMD' : 'THT';
+  const pinCount = (part.pin_refs || []).length;
+  const selectedNetName = state.selectedPinIdx != null
+    ? (state.board.pins[state.selectedPinIdx]?.net || null)
+    : null;
+
+  const escapeHtml = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  const netList = netsSorted.map(([net, count]) => {
+    const cat = state.netCategory?.get(net) || 'signal';
+    const isSelected = net === selectedNetName;
+    return `<li class="brd-ins-net${isSelected ? ' selected' : ''}" data-net="${escapeHtml(net)}" data-pin="${firstPinByNet.get(net)}" data-cat="${cat}">
+      <span class="brd-ins-net-name">${escapeHtml(net)}</span>
+      <span class="brd-ins-net-count">×${count}</span>
+    </li>`;
+  }).join('');
+
+  el.hidden = false;
+  el.innerHTML = `
+    <header class="brd-ins-head">
+      <div class="brd-ins-ref">${escapeHtml(part.refdes)}</div>
+      <button class="brd-ins-close" title="Fermer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+      </button>
+    </header>
+    <div class="brd-ins-value">${escapeHtml(part.value || '—')}</div>
+    <div class="brd-ins-footprint">${escapeHtml(part.footprint || '—')}</div>
+    <div class="brd-ins-meta">
+      <span>${layerLabel}</span><span>·</span>
+      <span>rot ${rot}</span><span>·</span>
+      <span>${smdLabel}</span>
+    </div>
+    <div class="brd-ins-size">${wMm} × ${hMm} mm · ${pinCount} pin${pinCount > 1 ? 's' : ''}</div>
+    ${netsSorted.length > 0 ? `
+      <div class="brd-ins-section-label">Nets du composant (${netsSorted.length})</div>
+      <ul class="brd-ins-netlist">${netList}</ul>
+    ` : ''}
+  `;
+
+  // Wire interactions
+  el.querySelector('.brd-ins-close')?.addEventListener('click', () => {
+    state.selectedPart = null;
+    state.selectedPinIdx = null;
+    updateInspector();
+    const tb = document.querySelector('.brd-toolbar');
+    if (tb) updateNetReadout(tb);
+    requestRedraw();
+  });
+  el.querySelectorAll('.brd-ins-net').forEach(li => {
+    li.addEventListener('click', () => {
+      const pinIdx = parseInt(li.dataset.pin, 10);
+      if (Number.isNaN(pinIdx)) return;
+      state.selectedPinIdx = pinIdx;
+      // Keep the same part selected — user is exploring its nets
+      updateInspector();
+      const tb = document.querySelector('.brd-toolbar');
+      if (tb) updateNetReadout(tb);
+      requestRedraw();
+    });
+  });
 }
 
 function updateNetReadout(toolbar) {
@@ -602,16 +776,26 @@ function attachInteraction(containerEl, toolbar, badge) {
     if (!dragging) return;
     dragging = false;
     canvas.style.cursor = 'grab';
-    // A click (no meaningful drag) selects a pin or clears the selection
+    // A click (no meaningful drag) selects a pin (priority) or a part
+    // (fallback) — or clears the selection if nothing is under the cursor.
     if (!dragMoved) {
       const rect = canvas.getBoundingClientRect();
       if (ev.clientX >= rect.left && ev.clientX <= rect.right &&
           ev.clientY >= rect.top  && ev.clientY <= rect.bottom) {
         const sx = ev.clientX - rect.left;
         const sy = ev.clientY - rect.top;
-        const hit = hitTestPin(sx, sy);
-        state.selectedPinIdx = hit;  // null clears
+        const pinHit = hitTestPin(sx, sy);
+        if (pinHit != null) {
+          const pin = state.board.pins[pinHit];
+          state.selectedPinIdx = pinHit;
+          state.selectedPart   = state.partByRefdes?.get(pin.part_refdes) || null;
+        } else {
+          const partHit = hitTestPart(sx, sy);
+          state.selectedPinIdx = null;
+          state.selectedPart   = partHit;
+        }
         updateNetReadout(toolbar);
+        updateInspector();
         requestRedraw();
       }
     }
@@ -619,9 +803,11 @@ function attachInteraction(containerEl, toolbar, badge) {
 
   // Escape clears selection
   window.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && state.selectedPinIdx != null) {
+    if (ev.key === 'Escape' && (state.selectedPinIdx != null || state.selectedPart != null)) {
       state.selectedPinIdx = null;
+      state.selectedPart   = null;
       updateNetReadout(toolbar);
+      updateInspector();
       requestRedraw();
     }
   });
@@ -704,6 +890,12 @@ function mountCanvas(containerEl, board) {
     <span class="brd-cursor" style="font-family:var(--mono);font-size:11px;color:var(--text-2)">—</span>
     <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3)">${partCount} composants · ${pinCount} pins</span>`;
   containerEl.appendChild(badge);
+
+  // Inspector — top-right floating glass (below toolbar)
+  const inspector = document.createElement('aside');
+  inspector.className = 'brd-inspector';
+  inspector.hidden = true;
+  containerEl.appendChild(inspector);
 
   // Layer-flip buttons
   toolbar.querySelectorAll('.brd-seg-btn').forEach(btn => {
@@ -789,7 +981,9 @@ export async function initBoardview(containerEl) {
   state.partsSorted = sortPartsByAreaDesc(board.parts || [], state.partBodyBboxes);
   state.pinsByNet = computePinsByNet(board);
   state.netCategory = computeNetCategory(board);
+  state.partByRefdes = computePartByRefdes(board);
   state.selectedPinIdx = null;
+  state.selectedPart = null;
   mountCanvas(containerEl, board);
 }
 

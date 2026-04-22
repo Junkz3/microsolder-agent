@@ -313,6 +313,45 @@
   /* icon button in toolbar (Fit) */
   .brd-btn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--text-2);cursor:pointer;transition:background .12s,color .12s;padding:0}
   .brd-btn:hover{background:var(--panel-2);color:var(--text)}
+
+  /* inspector — top-right glass panel, below toolbar */
+  .brd-inspector{position:absolute;top:56px;right:12px;width:300px;max-height:calc(100% - 76px);overflow:auto;padding:14px 16px 12px;background:rgba(20,32,48,.93);border:1px solid var(--border);border-radius:10px;backdrop-filter:blur(12px);box-shadow:0 18px 48px rgba(0,0,0,.45);z-index:6;display:flex;flex-direction:column;gap:6px;animation:brd-ins-in .18s cubic-bezier(.2,.8,.2,1)}
+  @keyframes brd-ins-in{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:translateX(0)}}
+  .brd-ins-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+  .brd-ins-ref{font-family:var(--mono);font-size:17px;font-weight:600;color:var(--text);letter-spacing:.3px}
+  .brd-ins-close{background:transparent;border:0;color:var(--text-3);cursor:pointer;padding:3px;border-radius:4px;display:flex}
+  .brd-ins-close:hover{color:var(--text);background:var(--panel-2)}
+  .brd-ins-value{font-size:13px;color:var(--text-2);line-height:1.35;word-break:break-word}
+  .brd-ins-footprint{font-family:var(--mono);font-size:10.5px;color:var(--text-3);word-break:break-all;letter-spacing:.15px;line-height:1.4}
+  .brd-ins-meta{display:flex;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .brd-ins-size{font-family:var(--mono);font-size:11px;color:var(--text-2);padding-top:6px;border-top:1px solid var(--border-soft)}
+  .brd-ins-section-label{font-family:var(--mono);font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-top:4px;padding-top:8px;border-top:1px solid var(--border-soft)}
+  .brd-ins-netlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:260px;overflow:auto}
+  .brd-ins-net{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;font-family:var(--mono);font-size:11px;border-radius:4px;cursor:pointer;border-left:2px solid transparent;transition:background .1s,border-color .1s}
+  .brd-ins-net:hover{background:var(--panel-2)}
+  .brd-ins-net[data-cat="power"]{border-left-color:var(--amber)}
+  .brd-ins-net[data-cat="power"] .brd-ins-net-name{color:var(--amber)}
+  .brd-ins-net[data-cat="ground"]{border-left-color:var(--text-3)}
+  .brd-ins-net[data-cat="ground"] .brd-ins-net-name{color:var(--text-3)}
+  .brd-ins-net[data-cat="signal"] .brd-ins-net-name{color:var(--text-2)}
+  .brd-ins-net[data-cat="clock"]{border-left-color:rgba(192,132,252,1)}
+  .brd-ins-net[data-cat="clock"] .brd-ins-net-name{color:rgba(214,165,255,1)}
+  .brd-ins-net[data-cat="reset"]{border-left-color:rgba(245,130,120,1)}
+  .brd-ins-net[data-cat="reset"] .brd-ins-net-name{color:rgba(255,160,150,1)}
+  /* Selected net row — colour follows the traced category (power=amber,
+     ground=light, signal=emerald) so the inspector matches the canvas trace. */
+  .brd-ins-net.selected[data-cat="signal"]{background:rgba(52,211,153,.1);border-left-color:var(--emerald)}
+  .brd-ins-net.selected[data-cat="signal"] .brd-ins-net-name{color:var(--emerald)}
+  .brd-ins-net.selected[data-cat="power"]{background:rgba(245,158,11,.1);border-left-color:var(--amber)}
+  .brd-ins-net.selected[data-cat="power"] .brd-ins-net-name{color:var(--amber);font-weight:500}
+  .brd-ins-net.selected[data-cat="ground"]{background:rgba(230,237,247,.06);border-left-color:var(--text)}
+  .brd-ins-net.selected[data-cat="ground"] .brd-ins-net-name{color:var(--text)}
+  .brd-ins-net.selected[data-cat="clock"]{background:rgba(192,132,252,.10);border-left-color:rgba(214,165,255,1)}
+  .brd-ins-net.selected[data-cat="clock"] .brd-ins-net-name{color:rgba(214,165,255,1);font-weight:500}
+  .brd-ins-net.selected[data-cat="reset"]{background:rgba(245,130,120,.10);border-left-color:rgba(255,160,150,1)}
+  .brd-ins-net.selected[data-cat="reset"] .brd-ins-net-name{color:rgba(255,160,150,1);font-weight:500}
+  .brd-ins-net-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .brd-ins-net-count{color:var(--text-3);font-size:10px;margin-left:8px;flex-shrink:0}
 </style>
 </head>
 <body>
