@@ -1,7 +1,20 @@
 const BRD_URL  = '/boards/mnt-reform-motherboard.brd';
 const PARSE_URL = '/api/board/parse';
 
-const state = { board: null };
+const state = { board: null, partsSorted: null };
+
+// Sort parts by descending bbox area so big packages (SoM connectors, BGA SoCs)
+// are drawn first and dense clusters of small passives on top of them remain
+// visible. Bbox is guaranteed normalized by the BRD2 parser post-fix.
+function sortPartsByAreaDesc(parts) {
+  return [...parts].sort((a, b) => {
+    const aw = a.bbox[1].x - a.bbox[0].x;
+    const ah = a.bbox[1].y - a.bbox[0].y;
+    const bw = b.bbox[1].x - b.bbox[0].x;
+    const bh = b.bbox[1].y - b.bbox[0].y;
+    return (bw * bh) - (aw * ah);
+  });
+}
 
 // layer IntFlag values
 const LAYER_TOP    = 1;
@@ -123,7 +136,7 @@ function draw() {
   }
 
   // ---- parts ----
-  const parts = board.parts || [];
+  const parts = state.partsSorted || board.parts || [];
   ctx.lineWidth = 1;
   for (const part of parts) {
     // layer filter: skip parts that don't belong to the active side
@@ -377,6 +390,7 @@ export async function initBoardview(containerEl) {
   }
 
   state.board = board;
+  state.partsSorted = sortPartsByAreaDesc(board.parts || []);
   mountCanvas(containerEl, board);
 }
 
