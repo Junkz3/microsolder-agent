@@ -1,37 +1,27 @@
 # microsolder-agent
 
-> Board-level diagnostics on a $30 microscope — the $10,000 repair bench, rewritten by Claude.
+> A senior microsoldering technician, available to every repair shop.
 
 ## What it does
 
 `microsolder-agent` is an agent-native diagnostics workbench for board-level
-electronics repair. A microsoldering technician asks questions in natural
-language — "where is the PMIC?", "why isn't the 3V3 rail coming up?" — and
-Claude Opus 4.7 drives a three-panel UI in response, highlighting components,
-pulling up schematic nets, and narrating the reasoning in a persistent repair
-journal.
-
-## How it works
-
-The UI is split into three synchronized panels:
-
-- **Boardview** — the physical board layout (image + component footprints).
-- **Schematic** — the electrical logic (PDF-rendered schematic with nets).
-- **Agent chat + journal** — conversation with Claude and a running repair log.
+electronics repair. A technician asks questions in natural language —
+"where is the PMIC?", "why isn't the 3V3 rail coming up?" — and Claude
+highlights components, traces nets on the boardview, and narrates the
+reasoning in a persistent repair journal.
 
 The agent is not a chatbot glued on top of buttons. It *is* the interface:
-every pan/zoom/highlight/annotation happens through tool calls emitted by
-Claude in response to the technician's questions. The user never clicks a
-"find component" button — they ask, and the agent drives the view.
+pan, zoom, highlight, and net tracing happen through tool calls emitted by
+Claude in response to the technician's questions.
 
 ## Stack
 
 - **Backend:** Python 3.11+, FastAPI, WebSocket, Pydantic, pdfplumber
 - **Agent:** Anthropic Python SDK with `claude-opus-4-7` (reasoning) and
-  `claude-haiku-4-5` (fast validation/formatting)
-- **Frontend:** Vanilla HTML/CSS/JS, Tailwind CSS (CDN), Alpine.js (CDN),
-  PDF.js (CDN) — no build step
-- **Target board:** MNT Reform motherboard (CERN-OHL-S-2.0, fully open-hardware KiCad sources)
+  `claude-haiku-4-5` (validation, formatting)
+- **Frontend:** Vanilla HTML, CSS, JS — no build step, no framework
+- **Boards:** open-hardware only. Ships with KiCad `.kicad_pcb` support;
+  parser architecture designed to extend to OpenBoardView formats.
 
 ## Quick start
 
