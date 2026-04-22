@@ -7,6 +7,7 @@ import { APP_VERSION, currentSection, navigate, wireRouter } from './router.js';
 import { loadHomePacks, renderHome, initNewRepairModal } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
+import { initPipelineProgress } from './pipeline_progress.js';
 
 
 /* ---------- INIT ---------- */
@@ -16,6 +17,7 @@ import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
   wireRouter();
   initNewRepairModal();
   initMemoryBank();
+  initPipelineProgress();
 
   const hash = window.location.hash;
   const params = new URLSearchParams(window.location.search);
@@ -39,10 +41,12 @@ import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
     loadMemoryBank();
   }
 
-  // Lazy-load the Memory Bank whenever the user navigates to it. The router
-  // doesn't own side-effects, so we hook into hashchange here.
-  window.addEventListener("hashchange", () => {
-    if (currentSection() === "memory-bank") loadMemoryBank();
+  // Sections that need their data refetched when the user navigates back to
+  // them — the router only toggles DOM visibility, side-effects live here.
+  window.addEventListener("hashchange", async () => {
+    const sec = currentSection();
+    if (sec === "memory-bank") loadMemoryBank();
+    else if (sec === "home") renderHome(await loadHomePacks());
   });
 })();
 

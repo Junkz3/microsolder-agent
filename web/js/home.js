@@ -7,6 +7,8 @@
 // handler — stopImmediatePropagation() in this handler only works if it
 // runs first.
 
+import { openPipelineProgress } from './pipeline_progress.js';
+
 export async function loadHomePacks() {
   try {
     const res = await fetch("/pipeline/packs");
@@ -120,29 +122,23 @@ async function submitNewRepair(ev) {
   setNewRepairError(null);
   setNewRepairBusy(true);
   try {
-    const res = await fetch("/repairs", {
+    const res = await fetch("/pipeline/repairs", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({device_label, symptom}),
     });
     if (!res.ok) {
-      if (res.status === 404) {
-        setNewRepairError(
-          "L'endpoint /repairs n'est pas encore branché côté backend. Réessaie dès que l'intégration est en place.",
-          {title:"Backend indisponible — "}
-        );
-      } else {
-        let detail = "";
-        try { detail = (await res.json()).detail || ""; } catch (_) {}
-        setNewRepairError(`Le backend a répondu ${res.status}. ${detail}`.trim(), {title:"Erreur — "});
-      }
+      let detail = "";
+      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      setNewRepairError(`Le backend a répondu ${res.status}. ${detail}`.trim(), {title:"Erreur — "});
       setNewRepairBusy(false);
       return;
     }
-    const r = await res.json();
-    const slug = encodeURIComponent(r.device_slug || "");
-    const id   = encodeURIComponent(r.id || "");
-    window.location.href = `?device=${slug}&repair=${id}#graphe`;
+    const repair = await res.json();
+    // Close the modal, then hand off to the pipeline progress drawer which
+    // either redirects immediately (pack already built) or streams live events.
+    closeNewRepair();
+    openPipelineProgress(repair);
   } catch (err) {
     console.error("newRepair submit failed", err);
     setNewRepairError(
