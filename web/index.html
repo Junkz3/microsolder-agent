@@ -282,6 +282,18 @@
   body.no-metabar .stub{top:48px}
   body.no-metabar .inspector{top:60px}
   body.no-metabar .tweaks{top:60px}
+
+  /* =========== BOARD VIEWER =========== */
+  .brd-root{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-2);font-family:var(--mono);font-size:12px}
+  .brd-root .summary-card{padding:24px 28px;background:rgba(20,32,48,.92);border:1px solid var(--border);border-radius:10px;backdrop-filter:blur(12px);box-shadow:0 20px 56px rgba(0,0,0,.45);min-width:320px;display:flex;flex-direction:column;gap:10px}
+  .brd-root .sc-row{display:grid;grid-template-columns:110px 1fr;gap:8px;align-items:baseline}
+  .brd-root .sc-label{font-family:var(--mono);font-size:10.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
+  .brd-root .sc-value{font-family:var(--mono);font-size:13px;color:var(--text)}
+  .brd-root .sc-status{margin-top:8px;padding-top:10px;border-top:1px solid var(--border-soft);font-family:var(--mono);font-size:11px;color:var(--text-3)}
+  .brd-root .sc-status.sc-ok{color:var(--emerald)}
+  .brd-root .error-card{padding:20px 24px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:10px;backdrop-filter:blur(12px);box-shadow:0 20px 56px rgba(0,0,0,.45);min-width:280px;display:flex;flex-direction:column;gap:8px}
+  .brd-root .ec-code{font-family:var(--mono);font-size:12px;color:var(--amber);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+  .brd-root .ec-msg{font-family:var(--mono);font-size:12px;color:var(--text-2);line-height:1.5}
 </style>
 </head>
 <body>
@@ -334,10 +346,7 @@
 
 <!-- Stub sections — progressively replaced in following tasks -->
 <section class="stub hidden" data-section-stub="pcb">
-  <div class="stub-card">
-    <h2>PCB</h2>
-    <p>Intégration du composant <code>web/boardviewer/</code> d'Agent Boardviewer — voir Task B2.</p>
-  </div>
+  <div id="brdRoot" class="brd-root"></div>
 </section>
 <section class="stub hidden" data-section-stub="schematic">
   <div class="stub-card"><h2>Schematic</h2><p>Viewer PDF + nets — à faire en V2.</p></div>
@@ -824,11 +833,13 @@ function navigate(section) {
   // Hide all known section DOMs, show the target.
   document.getElementById("homeSection").classList.toggle("hidden", section !== "home");
   document.getElementById("canvas").classList.toggle("hidden", section !== "graphe");
-  // pcb/schematic/memory-bank/agent/profile/aide: placeholders for now (Task B2+).
   document.querySelectorAll("[data-section-stub]").forEach(el => {
     el.classList.toggle("hidden", el.dataset.sectionStub !== section);
   });
   refreshChrome(section);
+  if (section === "pcb" && typeof window.initBoardview === "function") {
+    window.initBoardview(document.getElementById("brdRoot"));
+  }
 }
 
 window.addEventListener("hashchange", () => navigate(currentSection()));
@@ -1479,5 +1490,6 @@ window.addEventListener("resize", () => {
   }
 })();
 </script>
+<script type="module" src="brd_viewer.js" defer></script>
 </body>
 </html>
