@@ -200,6 +200,13 @@
   .home-empty.hidden{display:none}
   .canvas.hidden{display:none}
 
+  /* =========== STUB SECTIONS =========== */
+  .stub{position:fixed;top:92px;left:52px;right:0;bottom:28px;display:flex;align-items:center;justify-content:center;z-index:2;padding:40px}
+  .stub.hidden{display:none}
+  .stub-card{max-width:520px;padding:32px;background:var(--panel);border:1px solid var(--border);border-radius:10px;text-align:center}
+  .stub-card h2{margin:0 0 12px;font-size:20px}
+  .stub-card p{margin:0;color:var(--text-2);line-height:1.5}
+
   /* =========== TOOLTIP =========== */
   .tooltip{position:fixed;pointer-events:none;background:rgba(10,17,32,.95);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:11.5px;color:var(--text);backdrop-filter:blur(6px);box-shadow:0 8px 20px rgba(0,0,0,.4);max-width:260px;z-index:40;opacity:0;transform:translateY(3px);transition:opacity .12s,transform .12s}
   .tooltip.show{opacity:1;transform:translateY(0)}
@@ -250,15 +257,16 @@
 
 <!-- ============ LEFT RAIL ============ -->
 <div class="rail">
-  <button class="rail-btn" title="CAO"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></button>
-  <button class="rail-btn active" title="Graphe"><svg class="icon" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 7l8 0M7 8l4 7M17 9l-4 6"/></svg></button>
-  <button class="rail-btn" title="Mesures"><svg class="icon" viewBox="0 0 24 24"><path d="M2 12h20M6 8v4M10 6v6M14 8v4M18 6v6"/></svg></button>
-  <button class="rail-btn" title="Notes"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M16 4v4h4"/></svg></button>
+  <button class="rail-btn" data-section="home" title="Bibliothèque"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 6l0-2h16v2"/><path d="M8 10h8M8 14h6"/></svg></button>
+  <button class="rail-btn" data-section="pcb" title="PCB"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></button>
+  <button class="rail-btn" data-section="schematic" title="Schematic"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 8h16M4 12h16M4 16h16"/></svg></button>
+  <button class="rail-btn" data-section="graphe" title="Graphe"><svg class="icon" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 7l8 0M7 8l4 7M17 9l-4 6"/></svg></button>
   <div class="rail-sep"></div>
-  <button class="rail-btn" title="Historique"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
-  <button class="rail-btn" title="Bibliothèque"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 6l0-2h16v2"/><path d="M8 10h8M8 14h6"/></svg></button>
+  <button class="rail-btn" data-section="memory-bank" title="Memory Bank"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7c0-1.1.9-2 2-2h12a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M4 11h16M8 7v12"/></svg></button>
+  <button class="rail-btn" data-section="agent" title="Agent"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></button>
+  <button class="rail-btn" data-section="profile" title="Profil"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></button>
   <div style="flex:1"></div>
-  <button class="rail-btn" title="Aide"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1 .8-1 1.7M12 17h.01"/></svg></button>
+  <button class="rail-btn" data-section="aide" title="Aide"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1 .8-1 1.7M12 17h.01"/></svg></button>
 </div>
 
 <!-- ============ METABAR ============ -->
@@ -282,6 +290,36 @@
     </div>
   </div>
 </div>
+
+<!-- Stub sections — progressively replaced in following tasks -->
+<section class="stub hidden" data-section-stub="pcb">
+  <div class="stub-card">
+    <h2>PCB</h2>
+    <p>Intégration du composant <code>web/boardviewer/</code> d'Agent Boardviewer — voir Task B2.</p>
+  </div>
+</section>
+<section class="stub hidden" data-section-stub="schematic">
+  <div class="stub-card"><h2>Schematic</h2><p>Viewer PDF + nets — à faire en V2.</p></div>
+</section>
+<section class="stub hidden" data-section-stub="memory-bank">
+  <div class="stub-card"><h2>Memory Bank</h2><p>3 onglets Timeline / Knowledge / Stats — à faire en V2.</p></div>
+</section>
+<section class="stub hidden" data-section-stub="agent">
+  <div class="stub-card"><h2>Agent</h2><p>Config / Historique / Traces / Coûts — à faire en V2.</p></div>
+</section>
+<section class="stub hidden" data-section-stub="profile">
+  <div class="stub-card"><h2>Profil</h2><p>Stats dérivées + overrides éditables — à faire en V2.</p></div>
+</section>
+<section class="stub hidden" data-section-stub="aide">
+  <div class="stub-card">
+    <h2>Raccourcis</h2>
+    <dl style="display:grid;grid-template-columns:100px 1fr;gap:8px;font-family:var(--mono)">
+      <dt>⌘K</dt><dd>Recherche dans le graphe</dd>
+      <dt>Esc</dt><dd>Fermer panel / inspector</dd>
+      <dt>1–8</dt><dd>Bascule section (à venir)</dd>
+    </dl>
+  </div>
+</section>
 
 <!-- ============ HOME / BIBLIOTHÈQUE ============ -->
 <section class="home hidden" id="homeSection">
@@ -548,10 +586,39 @@ function renderHome(packs) {
   }
 }
 
-function showSection(which) {
-  document.getElementById("homeSection").classList.toggle("hidden", which !== "home");
-  document.getElementById("canvas").classList.toggle("hidden", which !== "graphe");
+/* ---------- HASH ROUTER ---------- */
+const SECTIONS = ["home", "pcb", "schematic", "graphe", "memory-bank", "agent", "profile", "aide"];
+
+function currentSection() {
+  const h = (window.location.hash || "#home").slice(1);
+  return SECTIONS.includes(h) ? h : "home";
 }
+
+function setActiveRail(which) {
+  document.querySelectorAll(".rail-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.section === which);
+  });
+}
+
+function navigate(section) {
+  if (!SECTIONS.includes(section)) section = "home";
+  setActiveRail(section);
+  // Hide all known section DOMs, show the target.
+  document.getElementById("homeSection").classList.toggle("hidden", section !== "home");
+  document.getElementById("canvas").classList.toggle("hidden", section !== "graphe");
+  // pcb/schematic/memory-bank/agent/profile/aide: placeholders for now (Task B2+).
+  document.querySelectorAll("[data-section-stub]").forEach(el => {
+    el.classList.toggle("hidden", el.dataset.sectionStub !== section);
+  });
+}
+
+window.addEventListener("hashchange", () => navigate(currentSection()));
+
+document.querySelectorAll(".rail-btn[data-section]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    window.location.hash = "#" + btn.dataset.section;
+  });
+});
 
 document.getElementById("homeNewBtn").addEventListener("click", () => {
   const label = prompt("Nom du device à générer (ex. 'MNT Reform motherboard') :");
@@ -1035,11 +1102,15 @@ window.addEventListener("resize", () => {
 
 /* ---------- INIT ---------- */
 (async function bootstrap() {
+  const hash = window.location.hash;
   const params = new URLSearchParams(window.location.search);
   const slug = params.get("device");
-  if (slug) {
-    // Device-scoped view → show graph
-    showSection("graphe");
+
+  // Precedence: explicit hash > slug-implies-graphe > home default
+  const initial = hash ? currentSection() : (slug ? "graphe" : "home");
+  navigate(initial);
+
+  if (initial === "graphe" && slug) {
     const fetched = await loadGraphFromBackend();
     if (fetched && fetched.nodes && fetched.nodes.length > 0) {
       setEmptyState(false);
@@ -1047,11 +1118,8 @@ window.addEventListener("resize", () => {
     } else {
       setEmptyState(true);
     }
-  } else {
-    // No device → show Home
-    showSection("home");
-    const packs = await loadHomePacks();
-    renderHome(packs);
+  } else if (initial === "home") {
+    renderHome(await loadHomePacks());
   }
 })();
 </script>
