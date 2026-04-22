@@ -71,10 +71,52 @@ def register(parser_cls: type[BoardParser]) -> type[BoardParser]:
     return parser_cls
 
 
+_BRD2_SNIFF = b"BRDOUT:"
+_TEST_LINK_SNIFF = b"str_length:"
+
+
+def _sniff_brd_variant(path: Path) -> BoardParser | None:
+    """Peek the first 256 bytes of a .brd file and return the right parser instance.
+
+    The `.brd` extension hosts two incompatible formats — Test_Link (OBV's
+    original layout, declared by `str_length:` / `var_data:` header tokens)
+    and BRD2 (converter output from tools like `whitequark/kicad-boardview`,
+    declared by `BRDOUT:` / `NETS:` / `PARTS:` UPPERCASE block markers). A
+    byte-level sniff is enough to tell them apart — both markers live in the
+    file's first few lines.
+
+    Returns `None` if neither marker is present, letting the caller fall back
+    to extension dispatch or raise `UnsupportedFormatError`.
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(256)
+    except OSError:
+        return None
+    if _BRD2_SNIFF in head:
+        from api.board.parser.brd2 import BRD2Parser
+
+        return BRD2Parser()
+    if _TEST_LINK_SNIFF in head:
+        from api.board.parser.test_link import BRDParser
+
+        return BRDParser()
+    return None
+
+
 def parser_for(path: Path) -> BoardParser:
     ext = path.suffix.lower()
     if not ext:
         raise UnsupportedFormatError(f"file has no extension: {path.name!r}")
+
+    # `.brd` hosts two different formats (Test_Link and BRD2) — sniff the
+    # content to decide which parser to hand back. Other extensions route
+    # straight through the registry.
+    if ext == ".brd":
+        sniffed = _sniff_brd_variant(path)
+        if sniffed is not None:
+            return sniffed
+
     cls = _REGISTRY.get(ext)
     if cls is None:
         raise UnsupportedFormatError(f"no parser registered for extension {ext!r}")

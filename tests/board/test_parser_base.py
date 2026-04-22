@@ -65,3 +65,33 @@ def test_parser_for_file_without_extension_raises_clearly(tmp_path: Path):
     p.write_bytes(b"whatever")
     with pytest.raises(UnsupportedFormatError, match="no extension"):
         parser_for(p)
+
+
+def test_parser_for_dispatches_to_brd2_on_content(tmp_path: Path):
+    """A .brd file with BRDOUT: must route to BRD2Parser, not BRDParser."""
+    from api.board.parser.brd2 import BRD2Parser
+
+    f = tmp_path / "mnt.brd"
+    f.write_text("0\nBRDOUT: 0 0 0\n\nNETS: 0\n\nPARTS: 0\n\nPINS: 0\n\nNAILS: 0\n")
+    p = parser_for(f)
+    assert isinstance(p, BRD2Parser)
+
+
+def test_parser_for_dispatches_to_test_link_on_content(tmp_path: Path):
+    """A .brd file with str_length: still routes to the Test_Link parser."""
+    from api.board.parser.test_link import BRDParser
+
+    f = tmp_path / "legacy.brd"
+    f.write_text("str_length: 0\nvar_data: 0 0 0 0\n")
+    p = parser_for(f)
+    assert isinstance(p, BRDParser)
+
+
+def test_parser_for_mnt_reform_fixture_routes_to_brd2():
+    """End-to-end : the committed MNT Reform fixture routes to BRD2Parser."""
+    from api.board.parser.brd2 import BRD2Parser
+
+    repo_root = Path(__file__).resolve().parents[2]
+    fixture = repo_root / "board_assets" / "mnt-reform-motherboard.brd"
+    p = parser_for(fixture)
+    assert isinstance(p, BRD2Parser)
