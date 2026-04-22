@@ -22,6 +22,7 @@ from anthropic import AsyncAnthropic
 
 from api.config import get_settings
 from api.pipeline.auditor import run_auditor
+from api.pipeline.drift import compute_drift
 from api.pipeline.registry import run_registry_builder
 from api.pipeline.schemas import (
     AuditVerdict,
@@ -202,6 +203,17 @@ async def generate_knowledge_pack(
         verdict: AuditVerdict
 
         while True:
+            code_drift = compute_drift(
+                registry=registry,
+                knowledge_graph=kg,
+                rules=rules,
+                dictionary=dictionary,
+            )
+            logger.info(
+                "[Pipeline] Pre-computed drift · items=%d · files=%s",
+                len(code_drift),
+                sorted({item.file for item in code_drift}),
+            )
             verdict = await run_auditor(
                 client=client,
                 model=models_by_role["auditor"],
@@ -210,6 +222,7 @@ async def generate_knowledge_pack(
                 knowledge_graph=kg,
                 rules=rules,
                 dictionary=dictionary,
+                precomputed_drift=code_drift,
             )
             (pack_dir / "audit_verdict.json").write_text(
                 verdict.model_dump_json(indent=2), encoding="utf-8"
@@ -233,11 +246,31 @@ async def generate_knowledge_pack(
 
             # NEEDS_REVISION
             if rounds_used >= max_revise_rounds:
-                logger.warning(
-                    "[Pipeline] Max revise rounds reached (%d). Accepting pack with residual issues.",
+                logger.error(
+                    "[Pipeline] Max revise rounds (%d) exhausted with unresolved drift — rejecting.",
                     max_revise_rounds,
                 )
-                break
+                verdict = verdict.model_copy(
+                    update={
+                        "overall_status": "REJECTED",
+                        "revision_brief": (
+                            f"Max revise rounds ({max_revise_rounds}) exhausted with "
+                            f"unresolved drift. Last brief: {verdict.revision_brief!r}"
+                        ),
+                    }
+                )
+                (pack_dir / "audit_verdict.json").write_text(
+                    verdict.model_dump_json(indent=2), encoding="utf-8"
+                )
+                await emit({
+                    "type": "pipeline_failed",
+                    "status": "REJECTED",
+                    "error": verdict.revision_brief,
+                })
+                raise RuntimeError(
+                    f"Pipeline failed: {max_revise_rounds} revise rounds exhausted "
+                    f"with unresolved drift. brief={verdict.revision_brief!r}"
+                )
 
             rounds_used += 1
             logger.info(

@@ -1,15 +1,27 @@
 """Phase 4 — Auditor. Verifies internal consistency of the generated knowledge pack
 and emits a structured verdict that drives the self-healing loop.
+
+Vocabulary drift is pre-computed at code level by `api.pipeline.drift.compute_drift`
+and passed to the LLM as ground truth — the LLM's real job is cross-file coherence
+and plausibility judgment.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from anthropic import AsyncAnthropic
 
 from api.pipeline.prompts import AUDITOR_SYSTEM, AUDITOR_USER_TEMPLATE
-from api.pipeline.schemas import AuditVerdict, Dictionary, KnowledgeGraph, Registry, RulesSet
+from api.pipeline.schemas import (
+    AuditVerdict,
+    Dictionary,
+    DriftItem,
+    KnowledgeGraph,
+    Registry,
+    RulesSet,
+)
 from api.pipeline.tool_call import call_with_forced_tool
 
 logger = logging.getLogger("microsolder.pipeline.auditor")
@@ -35,12 +47,26 @@ async def run_auditor(
     knowledge_graph: KnowledgeGraph,
     rules: RulesSet,
     dictionary: Dictionary,
+    precomputed_drift: list[DriftItem],
 ) -> AuditVerdict:
-    """Execute Phase 4 — return a validated `AuditVerdict`."""
-    logger.info("[Auditor] Auditing knowledge pack for device=%r", device_label)
+    """Execute Phase 4 — return a validated `AuditVerdict`.
+
+    `precomputed_drift` is the code-level set-diff result; the LLM must include
+    it verbatim and focus on coherence + plausibility judgment.
+    """
+    logger.info(
+        "[Auditor] Auditing knowledge pack for device=%r · precomputed_drift=%d items",
+        device_label,
+        len(precomputed_drift),
+    )
+
+    precomputed_drift_json = json.dumps(
+        [item.model_dump() for item in precomputed_drift], indent=2
+    )
 
     user_prompt = AUDITOR_USER_TEMPLATE.format(
         device_label=device_label,
+        precomputed_drift_json=precomputed_drift_json,
         registry_json=registry.model_dump_json(indent=2),
         knowledge_graph_json=knowledge_graph.model_dump_json(indent=2),
         rules_json=rules.model_dump_json(indent=2),

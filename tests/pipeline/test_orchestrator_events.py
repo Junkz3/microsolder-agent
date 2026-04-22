@@ -149,6 +149,64 @@ async def test_pipeline_emits_pipeline_failed_on_rejected_verdict(
     assert failures[0]["status"] == "REJECTED"
 
 
+async def test_pipeline_rejects_when_max_revise_rounds_exhausted(
+    tmp_path, dummy_registry, dummy_outputs
+):
+    """NEEDS_REVISION that never clears must end in REJECTED, not silent-accept.
+
+    The pre-refactor code fell through the loop with a warning and returned
+    the unresolved verdict — dangerous for a diagnostic tool under the
+    anti-hallucination hard rule. Now max-rounds exhaustion is fatal.
+    """
+    kg, rules, dictionary = dummy_outputs
+    needs_revision = AuditVerdict(
+        overall_status="NEEDS_REVISION",
+        consistency_score=0.4,
+        files_to_rewrite=["rules"],
+        drift_report=[],
+        revision_brief="unresolved drift on U99",
+    )
+    events: list[dict[str, Any]] = []
+
+    async def collect(ev: dict[str, Any]) -> None:
+        events.append(ev)
+
+    with (
+        patch("api.pipeline.orchestrator.run_scout", new=AsyncMock(return_value="# dump")),
+        patch(
+            "api.pipeline.orchestrator.run_registry_builder",
+            new=AsyncMock(return_value=dummy_registry),
+        ),
+        patch(
+            "api.pipeline.orchestrator.run_writers_parallel",
+            new=AsyncMock(return_value=(kg, rules, dictionary)),
+        ),
+        patch(
+            "api.pipeline.orchestrator.run_auditor",
+            new=AsyncMock(return_value=needs_revision),
+        ),
+        patch(
+            "api.pipeline.orchestrator.run_single_writer_revision",
+            new=AsyncMock(side_effect=[rules]),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="revise rounds exhausted"):
+            await orchestrator.generate_knowledge_pack(
+                "Demo",
+                client=object(),
+                memory_root=tmp_path,
+                max_revise_rounds=1,
+                on_event=collect,
+            )
+
+    failures = [e for e in events if e["type"] == "pipeline_failed"]
+    assert len(failures) == 1
+    assert failures[0]["status"] == "REJECTED"
+
+    persisted = (tmp_path / "demo" / "audit_verdict.json").read_text()
+    assert '"overall_status": "REJECTED"' in persisted
+
+
 async def test_pipeline_runs_without_on_event(tmp_path, dummy_registry, dummy_outputs, approved_verdict):
     """on_event is optional — the orchestrator must not crash when it's None."""
     kg, rules, dictionary = dummy_outputs
