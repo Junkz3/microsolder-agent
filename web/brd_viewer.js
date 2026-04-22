@@ -19,11 +19,11 @@ const PARSE_URL = '/api/board/parse';
 
 const state = { board: null, partsSorted: null, partBodyBboxes: null };
 
-// whitequark/kicad-boardview uses module.GetBoundingBox() which includes
-// silkscreen + reference text + value text, so PART bboxes are ~5x bigger
-// than the actual component body. Recompute a tighter "body" bbox from each
-// part's pin cluster + small padding so rendered rectangles approximate the
-// physical component size. Falls back to the BRD2 bbox when no pins.
+// whitequark/kicad-boardview (for BRD2 / Test_Link) uses module.GetBoundingBox()
+// which includes silkscreen + reference text + value text, so PART bboxes from
+// those sources are ~5x bigger than the actual component body. Our native
+// KiCad parser (source_format='kicad_pcb') already emits pads-only bboxes in
+// board coords, so no correction is needed there — see needsBodyBboxCorrection.
 function computeBodyBbox(part, pinsById) {
   const pins = (part.pin_refs || []).map(i => pinsById[i]).filter(Boolean);
   if (pins.length === 0) {
@@ -48,8 +48,16 @@ function computeBodyBbox(part, pinsById) {
   ];
 }
 
-// Map part.refdes -> body bbox (pin-derived). Computed once per board.
+// Source formats that need the pin-derived bbox correction. KiCad native emits
+// pads-only bboxes directly; BRD2 / Test_Link emit inflated module bboxes.
+function needsBodyBboxCorrection(board) {
+  return board.source_format !== 'kicad_pcb';
+}
+
+// Map part.refdes -> body bbox (pin-derived). Computed once per board when
+// the source format needs the correction; returns null otherwise.
 function computeAllBodyBboxes(board) {
+  if (!needsBodyBboxCorrection(board)) return null;
   const pinsById = board.pins || [];
   const out = new Map();
   for (const p of board.parts || []) {
@@ -58,13 +66,15 @@ function computeAllBodyBboxes(board) {
   return out;
 }
 
-// Sort parts by descending body-bbox area so big packages (SoM connectors,
-// BGA SoCs) are drawn first and dense clusters of small passives on top of
-// them remain visible.
+// Sort parts by descending bbox area so big packages (SoM connectors, BGA SoCs)
+// are drawn first and dense clusters of small passives on top of them remain
+// visible. Uses bodyBboxes when provided (BRD2 / Test_Link sources), otherwise
+// falls back to part.bbox (already pads-only for kicad_pcb source).
 function sortPartsByAreaDesc(parts, bodyBboxes) {
+  const bboxOf = (p) => (bodyBboxes && bodyBboxes.get(p.refdes)) || p.bbox;
   return [...parts].sort((a, b) => {
-    const ab = bodyBboxes.get(a.refdes) || a.bbox;
-    const bb = bodyBboxes.get(b.refdes) || b.bbox;
+    const ab = bboxOf(a);
+    const bb = bboxOf(b);
     const aw = ab[1].x - ab[0].x;
     const ah = ab[1].y - ab[0].y;
     const bw = bb[1].x - bb[0].x;
