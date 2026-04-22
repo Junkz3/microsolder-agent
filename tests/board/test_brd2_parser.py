@@ -81,6 +81,29 @@ def test_mnt_reform_all_part_bboxes_are_normalized():
         assert a.y <= b.y, f"{part.refdes}: y not normalized ({a.y} > {b.y})"
 
 
+def test_parses_bilayer_fixture_with_top_and_bottom_parts():
+    """Synthetic bilayer BRD2 fixture must split parts and pins correctly across
+    TOP (side=1) and BOTTOM (side=2). Regression guard added after the MNT Reform
+    fixture turned out to be 100 % single-sided (all side=1) and we needed an
+    independent bilayer input to confirm the parser splits sides correctly."""
+    path = FIXTURE_DIR / "bilayer_minimal.brd"
+    board = BRD2Parser().parse_file(path)
+
+    assert len(board.parts) == 4
+    top_parts = [p for p in board.parts if p.layer == Layer.TOP]
+    bot_parts = [p for p in board.parts if p.layer == Layer.BOTTOM]
+    assert len(top_parts) == 2
+    assert len(bot_parts) == 2
+    assert {p.refdes for p in top_parts} == {"R1_TOP", "C1_TOP"}
+    assert {p.refdes for p in bot_parts} == {"R2_BOT", "C2_BOT"}
+
+    assert len(board.pins) == 8
+    top_pins = [p for p in board.pins if p.layer == Layer.TOP]
+    bot_pins = [p for p in board.pins if p.layer == Layer.BOTTOM]
+    assert len(top_pins) == 4
+    assert len(bot_pins) == 4
+
+
 def test_rejects_plain_test_link_by_mistake(tmp_path: Path):
     """A Test_Link file handed to BRD2Parser must refuse, not silently produce garbage."""
     f = tmp_path / "wrong_format.brd"
