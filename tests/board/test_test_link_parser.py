@@ -10,7 +10,7 @@ from api.board.parser.base import (
     ObfuscatedFileError,
     PinPartMismatchError,
 )
-from api.board.parser.brd import BRDParser
+from api.board.parser.test_link import BRDParser
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -213,7 +213,7 @@ def test_derives_nets_from_pins_with_power_ground_flags():
 
 def test_power_regex_matches_realistic_rpi4_rail_names():
     """`_POWER_RE` must classify the main Pi 4 schematic rails as power."""
-    from api.board.parser.brd import _POWER_RE
+    from api.board.parser.test_link import _POWER_RE
 
     should_match = [
         "+3V3",
@@ -242,7 +242,7 @@ def test_power_regex_matches_realistic_rpi4_rail_names():
 
 def test_power_regex_rejects_signal_and_non_power_names():
     """`_POWER_RE` must not flag signal nets as power."""
-    from api.board.parser.brd import _POWER_RE
+    from api.board.parser.test_link import _POWER_RE
 
     should_not_match = [
         "GND",
@@ -263,7 +263,7 @@ def test_power_regex_rejects_signal_and_non_power_names():
 
 def test_ground_regex_rejects_power_and_signal_names():
     """`_GROUND_RE` must not flag non-ground names."""
-    from api.board.parser.brd import _GROUND_RE
+    from api.board.parser.test_link import _GROUND_RE
 
     should_not_match = [
         "+3V3",

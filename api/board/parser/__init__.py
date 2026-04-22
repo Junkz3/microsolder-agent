@@ -20,9 +20,9 @@ from api.board.parser.base import (
 # Concrete parsers — importing them populates the dispatch registry.
 # Add new formats here as they ship.
 try:
-    from api.board.parser import brd  # noqa: F401
+    from api.board.parser import test_link  # noqa: F401
 except ImportError:
-    # BRDParser not yet implemented (pending Task 5). Safe during bootstrap.
+    # BRDParser not yet implemented. Safe during bootstrap.
     pass
 
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from api.board.parser.brd import BRDParser
+from api.board.parser.test_link import BRDParser
 from api.board.validator import (
     is_valid_refdes,
     resolve_net,

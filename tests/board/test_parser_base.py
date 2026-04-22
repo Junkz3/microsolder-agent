@@ -19,7 +19,7 @@ def test_parser_for_unknown_extension_raises(tmp_path: Path):
 
 def test_parser_for_brd_returns_brd_parser(tmp_path: Path):
     try:
-        from api.board.parser.brd import BRDParser  # noqa: F401
+        from api.board.parser.test_link import BRDParser  # noqa: F401
     except ImportError:
         pytest.skip("BRDParser not yet implemented (Task 5)")
     p = tmp_path / "mini.brd"
@@ -44,7 +44,7 @@ def test_importing_parser_package_populates_registry_when_brd_exists(tmp_path: P
     """Smoke test for the bootstrap : after `import api.board.parser`,
     `parser_for` should work without the caller importing concrete submodules."""
     try:
-        import api.board.parser.brd  # noqa: F401
+        import api.board.parser.test_link  # noqa: F401
     except ImportError:
         pytest.skip("BRDParser not yet implemented (Task 5)")
 
