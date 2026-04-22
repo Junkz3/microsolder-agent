@@ -5,14 +5,19 @@ import pytest
 from api.board.parser.base import parser_for
 from api.board.parser.kicad import KicadPcbParser
 
-KICAD_FIXTURE = Path(
+# Primary: in-repo committed fixture (stable, reproducible).
+# Fallback: tmp path kept for local dev workflows where the repo copy may
+# not yet be present (e.g. fresh checkout without LFS or mid-session).
+_INREPO = Path(__file__).parent.parent.parent / "board_assets" / "mnt-reform-motherboard.kicad_pcb"
+_TMP = Path(
     "/tmp/mnt-reform-work/mnt-reform/reform2-motherboard25-pcb/reform2-motherboard25.kicad_pcb"
 )
+KICAD_FIXTURE = _INREPO if _INREPO.exists() else _TMP
 
 
 def _skip_if_fixture_missing():
     if not KICAD_FIXTURE.exists():
-        pytest.skip("MNT Reform .kicad_pcb fixture not available at /tmp/mnt-reform-work/...")
+        pytest.skip("MNT Reform .kicad_pcb fixture not available (in-repo or /tmp)")
 
 
 def test_parser_registered_for_kicad_pcb_extension(tmp_path):

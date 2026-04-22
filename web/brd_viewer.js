@@ -1,11 +1,12 @@
 // Board fixture selection via `?board=<slug>` query param. Default = MNT Reform.
 // Known slugs map to files under /boards/. Unknown slugs fall back to default.
 const BOARD_FIXTURES = {
-  'mnt-reform': '/boards/mnt-reform-motherboard.brd',
-  'bilayer': '/boards/bilayer_minimal.brd',
+  'mnt-reform':     '/boards/mnt-reform-motherboard.kicad_pcb',
+  'mnt-reform-brd': '/boards/mnt-reform-motherboard.brd',
+  'bilayer':        '/boards/bilayer_minimal.brd',
   // 0BSD reference fixture from whitequark/kicad-boardview — 245 parts,
   // 165 top + 80 bottom, canonical production-grade bilayer test board.
-  'whitequark': '/boards/whitequark-example.brd',
+  'whitequark':     '/boards/whitequark-example.brd',
 };
 const DEFAULT_BOARD = 'mnt-reform';
 function resolveBoardUrl() {

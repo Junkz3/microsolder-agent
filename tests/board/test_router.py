@@ -67,3 +67,22 @@ def test_parse_rejects_malformed_brd():
     r = client.post("/api/board/parse", files={"file": ("bad.brd", b"not a brd file at all\n", "application/octet-stream")})
     assert r.status_code in (415, 422)
     assert "detail" in r.json()["detail"]
+
+
+def test_parse_accepts_mnt_reform_kicad_pcb_fixture():
+    fixture = ASSETS_DIR / "mnt-reform-motherboard.kicad_pcb"
+    if not fixture.exists():
+        pytest.skip("MNT Reform .kicad_pcb fixture not present")
+    with fixture.open("rb") as fh:
+        r = client.post(
+            "/api/board/parse",
+            files={"file": ("mnt-reform-motherboard.kicad_pcb", fh, "application/octet-stream")},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source_format"] == "kicad_pcb"
+    # Rich metadata should be populated
+    parts_with_value = [p for p in body["parts"] if p.get("value")]
+    assert len(parts_with_value) > 100
+    parts_with_footprint = [p for p in body["parts"] if p.get("footprint")]
+    assert len(parts_with_footprint) == len(body["parts"])
