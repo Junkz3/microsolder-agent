@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import __version__
+from api.board.router import router as board_router
 from api.config import get_settings
 from api.logging_setup import configure_logging
 from api.pipeline import router as pipeline_router
@@ -52,6 +53,7 @@ app.add_middleware(
 )
 
 app.include_router(pipeline_router)
+app.include_router(board_router)
 
 
 @app.get("/health")
