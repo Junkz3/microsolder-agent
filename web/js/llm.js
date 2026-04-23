@@ -498,6 +498,14 @@ function connect() {
   lastTurnCostUsd = 0;
   currentTurn = null;
   currentConvId = null;
+  // Clear the log — the next session_ready / history_replay_start will
+  // rebuild the right content. Without this, switching conv or tier
+  // appends the replayed history below the old conv's visible messages.
+  const log = el("llmLog");
+  if (log) {
+    log.innerHTML = "";
+    log.classList.remove("replay");
+  }
   updateCostTotal();
   const url = wsURL(slug, currentTier, repairId, pendingConvParam);
   pendingConvParam = null;  // consume after this connect
