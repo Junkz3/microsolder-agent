@@ -84,13 +84,28 @@ async def _run_agent_turn(
     (b) after each user input in the main WS loop. Both paths mutate the
     caller's `messages` list in place.
     """
+    # Mark the end of the stable prefix (system + tools) with cache_control
+    # so Anthropic caches the ~2-3k token prefix across turns. First call
+    # pays 1.25x input for cache creation; every subsequent call of this
+    # session pays 0.10x for the same prefix — the 50-90% input reduction
+    # Anthropic advertises. Our tools list is large (16 custom tools) so
+    # this is the big win.
+    cached_tools = list(tools)
+    if cached_tools:
+        last = cached_tools[-1]
+        if "cache_control" not in last:
+            cached_tools[-1] = {**last, "cache_control": {"type": "ephemeral"}}
+    cached_system = [
+        {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+    ]
+
     while True:
         response = await client.messages.create(
             model=model,
             max_tokens=8000,
-            system=system_prompt,
+            system=cached_system,
             messages=messages,
-            tools=tools,
+            tools=cached_tools,
         )
 
         # Two passes over response.content are intentional: emit every
