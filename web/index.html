@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="styles/brd.css">
 <link rel="stylesheet" href="styles/memory_bank.css">
 <link rel="stylesheet" href="styles/pipeline_progress.css">
+<link rel="stylesheet" href="styles/llm.css">
 </head>
 <body>
 
@@ -32,6 +33,10 @@
   <button class="top-btn"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>Importer CAO</button>
   <button class="top-btn" id="tweaksToggle" title="Réglages">
     <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  </button>
+  <button class="top-btn llm-toggle" id="llmToggle" title="Agent diagnostic (⌘J)">
+    <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3.5-6 7-6s7 2.5 7 6"/><path d="M8 8h-2M18 8h-2"/></svg>
+    Agent
   </button>
 </div>
 
@@ -419,6 +424,32 @@
   <div class="spacer"></div>
   <div class="group" id="zoomReadout">zoom 1.00×</div>
 </div>
+
+<!-- ============ LLM DIAGNOSTIC PANEL ============ -->
+<aside class="llm-panel" id="llmPanel" aria-hidden="true" aria-label="Agent diagnostic">
+  <header class="llm-head">
+    <span class="type-badge action">Agent</span>
+    <h3>Diagnostic <span class="llm-model" id="llmModel">—</span></h3>
+    <button class="close-x" id="llmClose" aria-label="Fermer le panel" type="button">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <div class="llm-tiers" role="tablist" aria-label="Tier de modèle">
+    <button class="llm-tier on" data-tier="fast" role="tab" aria-selected="true">Fast · Haiku</button>
+    <button class="llm-tier" data-tier="normal" role="tab" aria-selected="false">Normal · Sonnet</button>
+    <button class="llm-tier" data-tier="deep" role="tab" aria-selected="false">Deep · Opus</button>
+  </div>
+  <div class="llm-status" id="llmStatus">
+    <span class="dot"></span>
+    <span id="llmStatusText">inactif</span>
+    <span class="device-tag" id="llmDevice" style="display:none"></span>
+  </div>
+  <div class="llm-log" id="llmLog" aria-live="polite"></div>
+  <form class="llm-input" id="llmForm">
+    <input id="llmInput" type="text" placeholder="Pose ta question à l'agent…" autocomplete="off" spellcheck="false" />
+    <button type="submit" id="llmSend" disabled>Envoyer</button>
+  </form>
+</aside>
 
 <script type="module" src="js/main.js"></script>
 <script type="module" src="brd_viewer.js" defer></script>

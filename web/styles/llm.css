@@ -95,6 +95,8 @@ body.llm-open .stub{right:420px}
 .llm-log .msg.user .role{color:var(--cyan)}
 .llm-log .msg.assistant{background:var(--panel);border-left:2px solid var(--border);color:var(--text)}
 .llm-log .msg.assistant .role{color:var(--text-2)}
+.llm-log .msg.replay,.llm-log .tool.replay{opacity:.55}
+.llm-log .msg.replay .role{letter-spacing:.4px}
 
 .llm-log .tool{
   font-family:var(--mono);font-size:10.5px;

@@ -35,19 +35,21 @@ function logRow(cls, innerHTML) {
   return row;
 }
 
-function logMessage(role, text) {
+function logMessage(role, text, isReplay = false) {
   const roleLabel = role === "user" ? "Toi" : "Agent";
+  const cls = `msg ${role}${isReplay ? " replay" : ""}`;
   logRow(
-    `msg ${role}`,
-    `<span class="role">${roleLabel}</span>${escapeHTML(text)}`,
+    cls,
+    `<span class="role">${roleLabel}${isReplay ? " · replay" : ""}</span>${escapeHTML(text)}`,
   );
 }
 
-function logToolUse(name, input) {
+function logToolUse(name, input, isReplay = false) {
   let args = "";
   try { args = JSON.stringify(input ?? {}); } catch { args = String(input); }
+  const cls = `tool${isReplay ? " replay" : ""}`;
   logRow(
-    "tool",
+    cls,
     `<span class="arrow">→</span><span class="name">${escapeHTML(name)}</span><span class="args">${escapeHTML(args)}</span>`,
   );
 }
@@ -69,9 +71,16 @@ function currentDeviceSlug() {
   return new URLSearchParams(window.location.search).get("device") || "demo-pi";
 }
 
-function wsURL(slug, tier) {
+function currentRepairId() {
+  return new URLSearchParams(window.location.search).get("repair") || null;
+}
+
+function wsURL(slug, tier, repairId) {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const q = tier ? `?tier=${encodeURIComponent(tier)}` : "";
+  const params = new URLSearchParams();
+  if (tier) params.set("tier", tier);
+  if (repairId) params.set("repair", repairId);
+  const q = params.toString() ? `?${params.toString()}` : "";
   return `${scheme}://${window.location.host}/ws/diagnostic/${encodeURIComponent(slug)}${q}`;
 }
 
@@ -81,9 +90,10 @@ function setSendEnabled(enabled) {
 
 function connect() {
   const slug = currentDeviceSlug();
-  el("llmDevice").textContent = slug;
+  const repairId = currentRepairId();
+  el("llmDevice").textContent = repairId ? `${slug} · ${repairId.slice(0, 8)}` : slug;
   el("llmDevice").style.display = "";
-  const url = wsURL(slug, currentTier);
+  const url = wsURL(slug, currentTier, repairId);
   statusTone("connecting", `connexion · ${slug} · ${currentTier}`);
 
   try {
@@ -114,19 +124,33 @@ function connect() {
     try { payload = JSON.parse(ev.data); }
     catch { payload = { type: "message", role: "assistant", text: ev.data }; }
 
+    // Boardview events are visual mutations — not chat content. Route them
+    // to the renderer (or its pending buffer if the renderer hasn't mounted).
+    if (typeof payload.type === "string" && payload.type.startsWith("boardview.")) {
+      window.Boardview.apply(payload);
+      return;
+    }
+
     switch (payload.type) {
       case "session_ready": {
         const model = payload.model || "claude";
         const mode = payload.mode || "managed";
         el("llmModel").textContent = `${model} · ${mode}`;
-        logSys(`session prête — ${mode} · ${model}`);
+        const rid = payload.repair_id ? ` · repair ${payload.repair_id.slice(0, 8)}` : "";
+        logSys(`session prête — ${mode} · ${model}${rid}`);
         break;
       }
+      case "history_replay_start":
+        logSys(`replay · ${payload.count} events précédents`);
+        break;
+      case "history_replay_end":
+        logSys("replay terminé — reprends où tu t'étais arrêté");
+        break;
       case "message":
-        logMessage(payload.role || "assistant", payload.text || "");
+        logMessage(payload.role || "assistant", payload.text || "", payload.replay === true);
         break;
       case "tool_use":
-        logToolUse(payload.name, payload.input);
+        logToolUse(payload.name, payload.input, payload.replay === true);
         break;
       case "thinking":
         // Quieter than a full message — render as sys line.
@@ -181,6 +205,19 @@ function switchTier(newTier) {
   }
   ws = null;
   connect();
+}
+
+// Auto-open the panel when the URL carries ?repair=<id>. Called from the
+// main bootstrap so that clicking a repair card on Home lands the user
+// directly in the conversation — no extra click needed.
+export function openLLMPanelIfRepairParam() {
+  const rid = currentRepairId();
+  const slug = new URLSearchParams(window.location.search).get("device");
+  if (rid && slug) {
+    // Defer one frame so the DOM is definitely wired (openPanel touches
+    // llmInput, llmToggle, etc.) and the status bar has mounted.
+    requestAnimationFrame(() => openPanel());
+  }
 }
 
 export function initLLMPanel() {

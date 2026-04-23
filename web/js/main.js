@@ -8,7 +8,17 @@ import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModa
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
 import { initPipelineProgress } from './pipeline_progress.js';
+import { initLLMPanel, openLLMPanelIfRepairParam } from './llm.js';
 
+// Early stub: collect boardview.* events in __pending until brd_viewer
+// mounts and replaces this with the real implementation. Without this,
+// events sent before the tech navigates to #pcb are silently lost.
+if (!window.Boardview) {
+  window.Boardview = {
+    __pending: [],
+    apply(ev) { this.__pending.push(ev); },
+  };
+}
 
 /* ---------- INIT ---------- */
 (async function bootstrap() {
@@ -18,6 +28,8 @@ import { initPipelineProgress } from './pipeline_progress.js';
   initNewRepairModal();
   initMemoryBank();
   initPipelineProgress();
+  initLLMPanel();
+  openLLMPanelIfRepairParam();
 
   const hash = window.location.hash;
   const params = new URLSearchParams(window.location.search);
