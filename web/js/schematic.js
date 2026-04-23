@@ -366,6 +366,23 @@ const SimulationController = {
       console.warn("[hydrateFromJournal] failed", err);
     }
   },
+  async loadMeasurementHistory(target) {
+    const slug = STATE.slug;
+    const repairId = new URLSearchParams(location.search).get("repair")
+      || new URLSearchParams((location.hash.split("?")[1] || "")).get("repair");
+    if (!slug || !repairId) return [];
+    try {
+      const res = await fetch(
+        `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements?target=${encodeURIComponent(target)}`,
+      );
+      if (!res.ok) return [];
+      const payload = await res.json();
+      return payload.events || [];
+    } catch (err) {
+      console.warn("[measurements] GET failed", err);
+      return [];
+    }
+  },
   _applyObservationClasses() {
     document
       .querySelectorAll(".obs-dead, .obs-alive, .obs-anomalous, .obs-hot, .obs-shorted")
@@ -2572,6 +2589,45 @@ function updateInspector(node) {
     inputEl.addEventListener("blur", doRecord);
     recordBtn.addEventListener("click", doRecord);
     body.appendChild(metricRow);
+
+    // --- Measurement history (async fetch, replaces on reopen) ---
+    const historyBox = document.createElement("div");
+    historyBox.className = "sim-measurement-history";
+    historyBox.innerHTML = `<div class="sim-mh-title">Historique — ${obsKey}</div><div class="sim-mh-list"></div>`;
+    body.appendChild(historyBox);
+    (async () => {
+      const target = `${obsKind === "comp" ? "comp" : "rail"}:${obsKey}`;
+      const events = await SimulationController.loadMeasurementHistory(target);
+      const listEl = historyBox.querySelector(".sim-mh-list");
+      if (!events.length) {
+        listEl.innerHTML = `<div class="sim-mh-empty">Aucune mesure pour cette cible.</div>`;
+        return;
+      }
+      // Keep the 6 most recent (reverse order).
+      const recent = events.slice(-6);
+      let prev = null;
+      const rows = recent.map(ev => {
+        const ts = (ev.timestamp || "").slice(11, 19);  // HH:MM:SS
+        const val = ev.value != null ? `${ev.value}${ev.unit || ""}` : "—";
+        const ratio = (ev.value != null && ev.nominal)
+          ? ` (${((ev.value / ev.nominal) * 100).toFixed(0)}%)`
+          : "";
+        const mode = ev.auto_classified_mode || "—";
+        const note = ev.note ? ` · « ${escHtml(ev.note)} »` : "";
+        const delta = (prev && ev.value != null && prev.value != null)
+          ? ` Δ${(ev.value - prev.value).toFixed(3)}`
+          : "";
+        prev = ev;
+        return `
+          <div class="sim-mh-row">
+            <span class="sim-mh-ts">${ts}</span>
+            <span class="sim-mh-val">${val}${ratio}</span>
+            <span class="sim-mh-mode sim-mh-mode--${mode}">${mode}</span>
+            <span class="sim-mh-note">${delta}${note}</span>
+          </div>`;
+      });
+      listEl.innerHTML = rows.join("");
+    })();
   }
 
   // --- Diagnostiquer / Réinitialiser buttons (reverse-diagnostic) ---
