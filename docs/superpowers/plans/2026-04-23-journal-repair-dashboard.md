@@ -772,8 +772,11 @@ export async function leaveSession() {
   // Refresh chrome (drops the pill) and swap to list mode.
   navigate("home");
   // Reload the list data. Dynamic import avoids a static circular dependency
-  // between router.js and home.js.
-  const { loadHomePacks, loadTaxonomy, loadRepairs, renderHome } = await import("./home.js");
+  // between router.js and home.js. hideRepairDashboard() must run explicitly
+  // because history.replaceState() does NOT fire a hashchange event, so the
+  // hashchange dispatch in main.js that would normally call it never runs.
+  const { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, hideRepairDashboard } = await import("./home.js");
+  hideRepairDashboard();
   const [packs, taxonomy, repairs] = await Promise.all([
     loadHomePacks(), loadTaxonomy(), loadRepairs(),
   ]);
