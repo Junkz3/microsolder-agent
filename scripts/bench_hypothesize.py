@@ -51,10 +51,8 @@ def main() -> None:
     for _ in range(args.iterations):
         for sc in scenarios:
             obs = Observations(
-                dead_comps=frozenset(sc["observations"]["dead_comps"]),
-                alive_comps=frozenset(sc["observations"]["alive_comps"]),
-                dead_rails=frozenset(sc["observations"]["dead_rails"]),
-                alive_rails=frozenset(sc["observations"]["alive_rails"]),
+                state_comps=sc["observations"]["state_comps"],
+                state_rails=sc["observations"]["state_rails"],
             )
             t0 = time.perf_counter_ns()
             res = hypothesize(eg, analyzed_boot=ab, observations=obs)
