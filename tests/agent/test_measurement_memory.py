@@ -201,3 +201,56 @@ def test_compare_measurements_insufficient_returns_none(tmp_path: Path):
         target="rail:+3V3",
     )
     assert diff is None  # only one measurement — no before/after
+
+
+def test_end_to_end_journal_drives_hypothesize(tmp_path: Path):
+    """
+    Tech records +3V3 dead (0.02V) + +5V alive (5.0V).
+    synthesise_observations must produce Observations with:
+      - state_rails={'+3V3': 'dead', '+5V': 'alive'}
+      - metrics_rails populated with both.
+    hypothesize() on a mini_graph then returns U12 (source of +3V3) top-1.
+    """
+    from api.pipeline.schematic.hypothesize import Observations, hypothesize
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, ElectricalGraph, NetNode, PagePin, PowerRail,
+        SchematicQualityReport,
+    )
+
+    mr = tmp_path / "memory"
+    append_measurement(
+        memory_root=mr, device_slug="demo", repair_id="r",
+        target="rail:+3V3", value=0.02, unit="V", nominal=3.3, source="agent",
+    )
+    append_measurement(
+        memory_root=mr, device_slug="demo", repair_id="r",
+        target="rail:+5V", value=5.0, unit="V", nominal=5.0, source="agent",
+    )
+
+    obs = synthesise_observations(
+        memory_root=mr, device_slug="demo", repair_id="r",
+    )
+    assert obs.state_rails == {"+3V3": "dead", "+5V": "alive"}
+    assert obs.metrics_rails["+3V3"].measured == 0.02
+
+    # Minimal graph where U12 sources +3V3 and consumes +5V (like MNT).
+    eg = ElectricalGraph(
+        device_slug="demo",
+        components={
+            "U12": ComponentNode(refdes="U12", type="ic", pins=[
+                PagePin(number="1", name="VIN", role="power_in", net_label="+5V"),
+                PagePin(number="2", name="VOUT", role="power_out", net_label="+3V3"),
+            ]),
+        },
+        nets={"+5V": NetNode(label="+5V", is_power=True, is_global=True),
+              "+3V3": NetNode(label="+3V3", is_power=True, is_global=True)},
+        power_rails={
+            "+5V": PowerRail(label="+5V", source_refdes="U7", consumers=["U12"]),
+            "+3V3": PowerRail(label="+3V3", source_refdes="U12"),
+        },
+        typed_edges=[], boot_sequence=[], designer_notes=[], ambiguities=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
+    )
+    r = hypothesize(eg, observations=obs)
+    assert r.hypotheses[0].kill_refdes == ["U12"]
+    assert r.hypotheses[0].kill_modes == ["dead"]
