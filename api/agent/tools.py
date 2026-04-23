@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from api.agent.field_reports import list_field_reports, record_field_report
+from api.board.validator import suggest_similar
+from api.session.state import SessionState
 
 
 def _load_pack(slug: str, memory_root: Path) -> dict[str, Any]:
@@ -31,40 +33,76 @@ def _load_pack(slug: str, memory_root: Path) -> dict[str, Any]:
 
 
 def mb_get_component(
-    *, device_slug: str, refdes: str, memory_root: Path
+    *,
+    device_slug: str,
+    refdes: str,
+    memory_root: Path,
+    session: SessionState | None = None,
 ) -> dict[str, Any]:
-    """Return component info, or `{found: False, closest_matches: [...]}`.
+    """Return component info, aggregated from memory bank + parsed board.
 
-    Never fabricates data: if the refdes is unknown, the tool returns the
-    structured not-found payload and lets the agent choose (ask the user,
-    pick one of `closest_matches`, etc.).
+    Response shape (cf. spec §5.1, 4 presence cases):
+      - case 1: {found: true, canonical_name, memory_bank: {...}, board: {...}}
+      - case 2: {found: true, canonical_name, memory_bank: {...}, board: null}
+      - case 3: {found: true, canonical_name, memory_bank: null, board: {...}}
+      - case 4: {found: false, closest_matches: [...]}  # no memory_bank/board keys
     """
     pack = _load_pack(device_slug, memory_root)
-    reg_comp = {c["canonical_name"]: c for c in pack["registry"].get("components", [])}
-    dct_comp = {e["canonical_name"]: e for e in pack["dictionary"].get("entries", [])}
+    reg_by_name = {c["canonical_name"]: c for c in pack["registry"].get("components", [])}
+    dct_by_name = {e["canonical_name"]: e for e in pack["dictionary"].get("entries", [])}
 
-    if refdes in reg_comp:
-        dct = dct_comp.get(refdes, {})
-        reg = reg_comp[refdes]
-        return {
-            "found": True,
-            "canonical_name": refdes,
-            "aliases": reg.get("aliases", []),
-            "kind": reg.get("kind", "unknown"),
+    memory_section: dict[str, Any] | None = None
+    if refdes in reg_by_name:
+        reg = reg_by_name[refdes]
+        dct = dct_by_name.get(refdes, {})
+        memory_section = {
             "role": dct.get("role"),
             "package": dct.get("package"),
+            "aliases": reg.get("aliases", []),
+            "kind": reg.get("kind", "unknown"),
             "typical_failure_modes": dct.get("typical_failure_modes", []),
             "description": reg.get("description", ""),
         }
 
-    prefix = refdes[0].upper() if refdes else ""
-    candidates = sorted(c for c in reg_comp if prefix and c.startswith(prefix))
+    board_section: dict[str, Any] | None = None
+    if session is not None and session.board is not None:
+        part = session.board.part_by_refdes(refdes)
+        if part is not None:
+            pin_indexes = set(part.pin_refs)
+            connected_nets: list[str] = []
+            for net in session.board.nets:
+                if set(net.pin_refs) & pin_indexes:
+                    connected_nets.append(net.name)
+            side = "top" if part.layer & 1 else "bottom"
+            bbox = part.bbox
+            board_section = {
+                "side": side,
+                "pin_count": len(part.pin_refs),
+                "bbox": [[bbox[0].x, bbox[0].y], [bbox[1].x, bbox[1].y]],
+                "nets": connected_nets,
+            }
+
+    if memory_section is None and board_section is None:
+        # Case 4: unknown on both sides. Union of candidates.
+        prefix = refdes[0].upper() if refdes else ""
+        mem_candidates = sorted(c for c in reg_by_name if prefix and c.startswith(prefix))
+        board_candidates: list[str] = []
+        if session is not None and session.board is not None:
+            board_candidates = suggest_similar(session.board, refdes, k=5)
+        merged = list(dict.fromkeys(mem_candidates + board_candidates))[:5]
+        return {
+            "found": False,
+            "error": "not_found",
+            "queried_refdes": refdes,
+            "closest_matches": merged,
+            "hint": f"No refdes {refdes!r} on device {device_slug!r}.",
+        }
+
     return {
-        "found": False,
-        "error": "not_found",
-        "queried_refdes": refdes,
-        "closest_matches": candidates[:5],
-        "hint": f"No refdes {refdes!r} in the registry for {device_slug!r}.",
+        "found": True,
+        "canonical_name": refdes,
+        "memory_bank": memory_section,
+        "board": board_section,
     }
 
 

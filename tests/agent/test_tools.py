@@ -23,29 +23,32 @@ def seeded_memory_root(tmp_path):
 
 def test_mb_get_component_found(seeded_memory_root):
     result = mb_get_component(
-        device_slug="demo-pi", refdes="U7", memory_root=seeded_memory_root
+        device_slug="demo-pi", refdes="U7", memory_root=seeded_memory_root,
     )
     assert result["found"] is True
     assert result["canonical_name"] == "U7"
-    assert result["role"] == "PMIC"
-    assert result["package"] == "QFN-24"
-    assert result["kind"] == "pmic"
+    assert result["memory_bank"] is not None
+    assert result["memory_bank"]["role"] == "PMIC"
+    assert result["memory_bank"]["package"] == "QFN-24"
+    assert result["memory_bank"]["kind"] == "pmic"
+    assert result["board"] is None  # no session passed
 
 
 def test_mb_get_component_not_found_suggests_closest(seeded_memory_root):
     result = mb_get_component(
-        device_slug="demo-pi", refdes="U99", memory_root=seeded_memory_root
+        device_slug="demo-pi", refdes="U999", memory_root=seeded_memory_root,
     )
     assert result["found"] is False
     assert result["error"] == "not_found"
     assert "closest_matches" in result
-    # U99 shares prefix U with U7 → U7 should be in the suggestions.
     assert "U7" in result["closest_matches"]
+    assert "memory_bank" not in result
+    assert "board" not in result
 
 
 def test_mb_get_component_empty_refdes_returns_not_found(seeded_memory_root):
     result = mb_get_component(
-        device_slug="demo-pi", refdes="", memory_root=seeded_memory_root
+        device_slug="demo-pi", refdes="", memory_root=seeded_memory_root,
     )
     assert result["found"] is False
     assert result["error"] == "not_found"
