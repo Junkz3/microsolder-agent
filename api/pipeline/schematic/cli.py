@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 import tempfile
 from pathlib import Path
 
@@ -25,7 +26,9 @@ from api.pipeline.schematic.grounding import (
     format_grounding_for_prompt,
 )
 from api.pipeline.schematic.page_vision import extract_page
+from api.pipeline.schematic.passive_classifier import classify_passives_heuristic
 from api.pipeline.schematic.renderer import render_pages
+from api.pipeline.schematic.schemas import ElectricalGraph
 
 logger = logging.getLogger("microsolder.pipeline.schematic.cli")
 
@@ -110,10 +113,18 @@ def main() -> None:
     settings = get_settings()
     parser = argparse.ArgumentParser(
         prog="schematic-cli",
-        description="Run Claude vision on a single page of a schematic PDF.",
+        description="Run Claude vision on a single page of a schematic PDF, or re-classify passives on an existing graph.",
     )
-    parser.add_argument("pdf", type=Path, help="Path to the schematic PDF.")
-    parser.add_argument("page", type=int, help="1-based page number to analyse.")
+    parser.add_argument(
+        "--classify-passives",
+        type=str,
+        metavar="SLUG",
+        help="Re-run the passive heuristic classifier in isolation on an "
+             "existing electrical_graph.json (no recompile). Fast — seconds. "
+             "Use after upgrading from a Phase 1 graph to Phase 4.",
+    )
+    parser.add_argument("pdf", nargs="?", type=Path, help="Path to the schematic PDF.")
+    parser.add_argument("page", nargs="?", type=int, help="1-based page number to analyse.")
     parser.add_argument(
         "--model",
         default=settings.anthropic_model_main,
@@ -132,6 +143,42 @@ def main() -> None:
         help="Disable pdfplumber grounding dump (default: grounding on).",
     )
     args = parser.parse_args()
+
+    # Handle --classify-passives mode (early return before other pipeline work)
+    if args.classify_passives:
+        path = Path(settings.memory_root) / args.classify_passives / "electrical_graph.json"
+        if not path.exists():
+            print(
+                f"error: {path} does not exist — run the full pipeline first.",
+                file=sys.stderr,
+            )
+            return 1
+        graph = ElectricalGraph.model_validate_json(path.read_text())
+        assignments = classify_passives_heuristic(graph)
+        enriched = dict(graph.components)
+        touched = 0
+        for refdes, (kind, role, _conf) in assignments.items():
+            node = enriched.get(refdes)
+            if node is None:
+                continue
+            if node.kind == kind and node.role == role:
+                continue
+            enriched[refdes] = node.model_copy(
+                update={"kind": kind, "role": role}
+            )
+            touched += 1
+        updated = graph.model_copy(update={"components": enriched})
+        path.write_text(updated.model_dump_json(indent=2))
+        print(
+            f"re-classified {len(assignments)} passives in {path} "
+            f"({touched} updated, {len(assignments) - touched} unchanged)"
+        )
+        return 0
+
+    # Normal vision mode (requires pdf and page args)
+    if args.pdf is None or args.page is None:
+        parser.error("either --classify-passives or (pdf + page) required")
+
     output = args.output or Path(
         f"/tmp/schematic_page_{args.page}_{args.model.replace('-', '_')}.json"
     )

@@ -156,7 +156,8 @@ def _classify_diode(
     nets = _pin_nets(comp)
     if len(nets) < 2:
         return None, 0.0
-    n1, n2 = sorted(nets)  # sort to make the inductor lookup symmetric
+    # For >2 nets, take first two sorted (unusual but can happen with multi-pin models)
+    n1, n2 = sorted(nets)[:2]
     gnd1 = _is_ground_net(n1)
     gnd2 = _is_ground_net(n2)
     rail1 = _is_power_rail(graph, n1)
@@ -243,3 +244,45 @@ def classify_passives_heuristic(
         graph.device_slug, len(out),
     )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Optional Opus pass — deferred to Phase 4.1.
+# Stub-only. Mirror the shape of `net_classifier.classify_nets_llm` when
+# implementing: batch + forced-tool + merge with heuristic fallback.
+# ---------------------------------------------------------------------------
+
+
+async def classify_passives_llm(
+    graph: ElectricalGraph,
+    *,
+    client,
+    model=None,
+):
+    """Opus-enriched classifier — NOT IMPLEMENTED.
+
+    Mirror the shape of `api.pipeline.schematic.net_classifier.classify_nets_llm`:
+      - Batch passives per ~150 and dispatch in parallel via asyncio.gather.
+      - Use `call_with_forced_tool` with a `PassiveClassification` schema.
+      - Merge with the heuristic baseline so every passive has an entry.
+      - Graceful exception fallback to the heuristic output.
+
+    See `net_classifier.py` for the pattern — replicate structure, swap
+    schema to `PassiveClassification`.
+    """
+    raise NotImplementedError(
+        "Opus passive classifier deferred to Phase 4.1 — see passive_classifier.py "
+        "docstring for the implementation pattern. For now, callers should use "
+        "`classify_passives_heuristic(graph)` directly."
+    )
+
+
+async def classify_passives(
+    graph: ElectricalGraph,
+    *,
+    client=None,
+    model=None,
+):
+    """Public entry point — currently always routes to the heuristic path.
+    When Part A lands, this will try the LLM first with graceful fallback."""
+    return classify_passives_heuristic(graph)
