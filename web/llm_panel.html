@@ -31,13 +31,14 @@
   </div>
   <div class="llm-log" id="llmLog" aria-live="polite"></div>
   <form class="llm-input" id="llmForm">
-    <textarea id="llmInput" rows="1" placeholder="Pose ta question à l'agent… (Enter pour envoyer, Shift+Enter pour un retour à la ligne)" autocomplete="off" spellcheck="false"></textarea>
+    <textarea id="llmInput" rows="3" placeholder="Pose ta question à l'agent… (Enter pour envoyer, Shift+Enter pour un retour à la ligne)" autocomplete="off" spellcheck="false"></textarea>
     <div class="llm-input-actions">
-      <button type="button" class="llm-stop" id="llmStop" title="Interrompre l'agent (Esc)" disabled>
-        <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
-        Stop
+      <button type="button" class="llm-stop icon-btn" id="llmStop" title="Interrompre l'agent (Esc)" aria-label="Stop" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
       </button>
-      <button type="submit" id="llmSend" disabled>Envoyer</button>
+      <button type="submit" class="icon-btn llm-send" id="llmSend" title="Envoyer (Enter)" aria-label="Envoyer" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l17-8L4 4l3 8-3 8zM7 12h14"/></svg>
+      </button>
     </div>
   </form>
 </aside>

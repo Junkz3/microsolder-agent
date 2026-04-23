@@ -108,15 +108,17 @@ body.llm-open .stub{right:420px}
 .llm-log::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 .llm-log::-webkit-scrollbar-track{background:transparent}
 
-.llm-log .msg{padding:8px 10px;border-radius:6px;overflow-wrap:anywhere}
-.llm-log .msg .role{
-  display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.5px;
-  text-transform:uppercase;color:var(--text-3);margin-bottom:3px;
+.llm-log .msg{padding:4px 0 4px 22px;overflow-wrap:anywhere;position:relative}
+.llm-log .msg .role{display:none}
+.llm-log .msg.user{color:var(--text)}
+/* Sobre attribution marker — a tiny cyan chevron on the left, no bubble, no bg. */
+.llm-log .msg.user::before{
+  content:"›";
+  position:absolute;left:6px;top:3px;
+  font-family:var(--mono);font-size:13px;line-height:1;
+  color:var(--cyan);opacity:.75;
 }
-.llm-log .msg.user{background:rgba(56,189,248,.08);border-left:2px solid var(--cyan);color:var(--text)}
-.llm-log .msg.user .role{color:var(--cyan)}
 .llm-log .msg.replay,.llm-log .tool.replay{opacity:.55}
-.llm-log .msg.replay .role{letter-spacing:.4px}
 .llm-log .msg .cost-chip{display:inline-block;margin-top:6px;padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;font-family:var(--mono);font-size:9.5px;color:var(--text-3);letter-spacing:.3px}
 .llm-status .cost-total{margin-left:auto;padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;font-family:var(--mono);font-size:10px;color:var(--text-2);letter-spacing:.3px}
 .llm-status .cost-total.hot{color:var(--amber);border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.08)}
@@ -129,37 +131,61 @@ body.llm-open .stub{right:420px}
 
 /* --- input --- */
 .llm-input{
-  display:flex;flex-direction:column;gap:8px;padding:10px 12px;
+  display:flex;flex-direction:column;gap:10px;padding:12px 14px 14px;
   border-top:1px solid var(--border);
   background:var(--bg-2);
 }
 .llm-input textarea{
   flex:1;width:100%;
   background:var(--panel);border:1px solid var(--border);color:var(--text);
-  border-radius:5px;padding:8px 10px;
-  font-family:inherit;font-size:12.5px;line-height:1.45;
+  border-radius:6px;padding:12px 14px;
+  font-family:inherit;font-size:13px;line-height:1.5;
   outline:none;resize:none;
-  min-height:36px;max-height:120px;overflow-y:auto;
-  transition:border-color .15s;
+  min-height:72px;max-height:200px;overflow-y:auto;
+  transition:border-color .15s,box-shadow .15s;
 }
-.llm-input textarea:focus{border-color:var(--cyan)}
+.llm-input textarea:focus{
+  border-color:var(--cyan);
+  box-shadow:0 0 0 3px rgba(56,189,248,.12);
+}
 .llm-input textarea::placeholder{color:var(--text-3)}
-.llm-input-actions{display:flex;gap:6px;justify-content:space-between;align-items:center}
-.llm-input button{
-  background:rgba(56,189,248,.12);color:var(--cyan);
-  border:1px solid rgba(56,189,248,.3);border-radius:5px;
-  padding:6px 14px;cursor:pointer;font-family:inherit;font-size:11px;
-  letter-spacing:.4px;text-transform:uppercase;transition:all .15s;
-  display:inline-flex;align-items:center;gap:6px;
+.llm-input-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+
+/* Icon-only compact buttons (Stop + Envoyer). */
+.llm-input .icon-btn{
+  width:34px;height:34px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--panel);border:1px solid var(--border);border-radius:6px;
+  color:var(--text-2);cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s,transform .1s;
 }
-.llm-input button:hover{background:rgba(56,189,248,.18);border-color:rgba(56,189,248,.5)}
-.llm-input button:disabled{opacity:.45;cursor:not-allowed}
-.llm-input button.llm-stop{
-  background:rgba(245,158,11,.08);color:var(--amber);border-color:rgba(245,158,11,.3);
-  padding:6px 10px;
+.llm-input .icon-btn svg{width:16px;height:16px;display:block}
+.llm-input .icon-btn:hover{
+  background:var(--panel-2);border-color:#2e4468;color:var(--text);
 }
-.llm-input button.llm-stop:hover{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.55)}
-.llm-input button.llm-stop:disabled{opacity:.35}
+.llm-input .icon-btn:active{transform:scale(.95)}
+.llm-input .icon-btn:disabled{opacity:.35;cursor:not-allowed}
+.llm-input .icon-btn:disabled:hover{background:var(--panel);border-color:var(--border);color:var(--text-2)}
+
+/* Stop — amber when active. */
+.llm-input .icon-btn.llm-stop:not(:disabled){
+  color:var(--amber);
+  border-color:rgba(245,158,11,.35);
+  background:rgba(245,158,11,.08);
+}
+.llm-input .icon-btn.llm-stop:not(:disabled):hover{
+  background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.6);
+}
+
+/* Envoyer — cyan when enabled, primary action. */
+.llm-input .icon-btn.llm-send:not(:disabled){
+  color:var(--cyan);
+  border-color:rgba(56,189,248,.4);
+  background:rgba(56,189,248,.12);
+}
+.llm-input .icon-btn.llm-send:not(:disabled):hover{
+  background:rgba(56,189,248,.22);border-color:rgba(56,189,248,.65);
+}
 
 /* topbar toggle — matches the existing .top-btn visually */
 .top-btn.llm-toggle.on{

@@ -723,7 +723,7 @@ export async function initLLMPanel() {
   function autoGrow() {
     if (!input) return;
     input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    input.style.height = Math.min(input.scrollHeight, 200) + "px";
   }
   input?.addEventListener("input", autoGrow);
 
