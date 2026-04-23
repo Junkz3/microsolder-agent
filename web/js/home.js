@@ -31,6 +31,17 @@ export async function loadTaxonomy() {
   }
 }
 
+export async function loadRepairs() {
+  try {
+    const res = await fetch("/pipeline/repairs");
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (err) {
+    console.warn("loadRepairs failed", err);
+    return [];
+  }
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => (
     {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]
@@ -41,97 +52,173 @@ function humanizeSlug(slug) {
   return slug.replace(/-/g, " ").replace(/^./, c => c.toUpperCase());
 }
 
-function cardHTML(entry, packIndex) {
-  const p = packIndex.get(entry.device_slug) || {};
-  const complete = entry.complete;
-  const badges = [
-    `<span class="badge ${complete ? 'ok' : 'warn'}">${complete ? 'pack complet' : 'incomplet'}</span>`,
-    p.has_audit_verdict ? '<span class="badge">audité</span>' : '',
-    entry.form_factor ? `<span class="badge mono">${escapeHtml(entry.form_factor)}</span>` : '',
-    entry.version ? `<span class="badge mono">${escapeHtml(entry.version)}</span>` : '',
-  ].filter(Boolean).join("");
+// Strip a trailing form_factor ("motherboard", "logic board") from a label
+// that was typed with the form_factor glued on. Used when we don't have a
+// taxonomy.model to fall back on.
+function stripFormFactor(label, formFactor) {
+  if (!label || !formFactor) return label;
+  const ff = formFactor.trim();
+  if (!ff) return label;
+  const re = new RegExp("\\s+" + ff.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&") + "\\s*$", "i");
+  return label.replace(re, "").trim() || label;
+}
+
+// The device NAME — what the board is, not what form it takes. Prefer the
+// clean `taxonomy.model` (set by the Registry Builder from the dump) over
+// the raw user-typed `device_label` which usually glues the form_factor on.
+// Brand is included by default so the name reads standalone; set
+// `includeBrand: false` inside brand-grouped UI sections.
+function deviceName(entry, { includeBrand = true } = {}) {
+  const brand = entry.brand || "";
+  const model = entry.model || "";
+  if (brand && model) return includeBrand ? `${brand} ${model}` : model;
+  if (model) return model;
+  return stripFormFactor(entry.device_label || humanizeSlug(entry.device_slug), entry.form_factor);
+}
+
+// Index the taxonomy so each repair can be resolved to {brand, model,
+// form_factor, version} without an extra fetch per card.
+function indexTaxonomyBySlug(taxonomy) {
+  const index = new Map();
+  for (const [brand, models] of Object.entries(taxonomy.brands || {})) {
+    for (const [modelName, packs] of Object.entries(models)) {
+      for (const p of packs) {
+        index.set(p.device_slug, { ...p, brand, model: modelName });
+      }
+    }
+  }
+  for (const p of (taxonomy.uncategorized || [])) {
+    index.set(p.device_slug, { ...p, brand: null, model: null });
+  }
+  return index;
+}
+
+function relativeTimeFr(isoString) {
+  if (!isoString) return "—";
+  const then = new Date(isoString);
+  if (isNaN(then)) return isoString;
+  const diffMs = Date.now() - then.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "à l'instant";
+  if (mins < 60) return `il y a ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "hier";
+  if (days < 7) return `il y a ${days} j`;
+  return then.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+}
+
+const STATUS_LABEL = {
+  open: "ouverte",
+  in_progress: "en cours",
+  closed: "clôturée",
+};
+
+function statusBadgeHTML(status) {
+  const label = STATUS_LABEL[status] || status || "ouverte";
+  const cls = status === "closed" ? "ok" : (status === "in_progress" ? "warn" : "");
+  return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function repairCardHTML(repair, taxEntry) {
+  const when = relativeTimeFr(repair.created_at);
+  const symptom = repair.symptom || "—";
+  const truncated = symptom.length > 120 ? symptom.slice(0, 118) + "…" : symptom;
+  const deviceContext = taxEntry
+    ? deviceName(taxEntry, { includeBrand: false })
+    : repair.device_slug;
+  const form = taxEntry?.form_factor
+    ? `<span class="badge mono">${escapeHtml(taxEntry.form_factor)}</span>`
+    : "";
+  // Href carries both the device slug (so graph view loads) and the repair
+  // id (so the diagnostic context can be resumed). The graph view ignores
+  // the repair param for now; the diagnostic UI will consume it.
+  const href = `?device=${encodeURIComponent(repair.device_slug)}&repair=${encodeURIComponent(repair.repair_id)}`;
   return `
-    <a class="home-card" href="?device=${encodeURIComponent(entry.device_slug)}">
-      <div class="slug">${escapeHtml(entry.device_slug)}</div>
-      <div class="name">${escapeHtml(entry.device_label || humanizeSlug(entry.device_slug))}</div>
-      <div class="badges">${badges}</div>
+    <a class="home-card" href="${href}">
+      <div class="repair-top">
+        <div class="slug">${escapeHtml(repair.repair_id.slice(0, 8))} · ${escapeHtml(when)}</div>
+        <div class="badges">${statusBadgeHTML(repair.status)}${form}</div>
+      </div>
+      <div class="name">${escapeHtml(deviceContext)}</div>
+      <div class="repair-symptom">${escapeHtml(truncated)}</div>
     </a>
   `;
 }
 
-function brandBlockHTML(brandName, models, packIndex) {
-  const modelNames = Object.keys(models).sort((a, b) => a.localeCompare(b));
-  const totalPacks = modelNames.reduce((n, m) => n + models[m].length, 0);
-  const counter = `${totalPacks} ${totalPacks > 1 ? 'réparations' : 'réparation'} · ${modelNames.length} ${modelNames.length > 1 ? 'modèles' : 'modèle'}`;
-  const modelBlocks = modelNames.map(modelName => {
-    const entries = models[modelName].slice().sort((a, b) =>
-      (a.device_label || a.device_slug).localeCompare(b.device_label || b.device_slug)
-    );
-    const cards = entries.map(e => cardHTML(e, packIndex)).join("");
-    return `
-      <div class="home-model">
-        <div class="home-model-head">
-          <span class="home-model-name">${escapeHtml(modelName)}</span>
-          <span class="home-model-count mono">${entries.length}</span>
-        </div>
-        <div class="home-grid">${cards}</div>
+function deviceBlockHTML(taxEntry, repairs) {
+  const sorted = repairs.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  const cards = sorted.map(r => repairCardHTML(r, taxEntry)).join("");
+  const modelName = taxEntry?.model || deviceName(taxEntry, { includeBrand: false });
+  return `
+    <div class="home-model">
+      <div class="home-model-head">
+        <span class="home-model-name">${escapeHtml(modelName)}</span>
+        <span class="home-model-count mono">${sorted.length} ${sorted.length > 1 ? 'réparations' : 'réparation'}</span>
       </div>
-    `;
-  }).join("");
+      <div class="home-grid">${cards}</div>
+    </div>
+  `;
+}
+
+function brandBlockHTML(brandName, devicesMap) {
+  const slugs = Array.from(devicesMap.keys()).sort((a, b) => a.localeCompare(b));
+  const totalRepairs = slugs.reduce((n, s) => n + devicesMap.get(s).repairs.length, 0);
+  const counter = `${totalRepairs} ${totalRepairs > 1 ? 'réparations' : 'réparation'} · ${slugs.length} ${slugs.length > 1 ? 'devices' : 'device'}`;
+  const body = slugs
+    .map(slug => {
+      const { taxEntry, repairs } = devicesMap.get(slug);
+      return deviceBlockHTML(taxEntry, repairs);
+    })
+    .join("");
   return `
     <section class="home-brand">
       <header class="home-brand-head">
         <h2 class="home-brand-name">${escapeHtml(brandName)}</h2>
         <span class="home-brand-count mono">${counter}</span>
       </header>
-      <div class="home-brand-body">${modelBlocks}</div>
+      <div class="home-brand-body">${body}</div>
     </section>
   `;
 }
 
-function uncategorizedBlockHTML(entries, packIndex) {
-  const cards = entries
-    .slice()
-    .sort((a, b) => (a.device_label || a.device_slug).localeCompare(b.device_label || b.device_slug))
-    .map(e => cardHTML(e, packIndex))
-    .join("");
-  const counter = `${entries.length} ${entries.length > 1 ? 'réparations' : 'réparation'}`;
-  return `
-    <section class="home-brand home-brand-uncategorized">
-      <header class="home-brand-head">
-        <h2 class="home-brand-name">Non catégorisé</h2>
-        <span class="home-brand-count mono">${counter}</span>
-      </header>
-      <div class="home-brand-body">
-        <div class="home-model">
-          <div class="home-grid">${cards}</div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-export function renderHome(packs, taxonomy) {
+export function renderHome(_packs, taxonomy, repairs = []) {
   const container = document.getElementById("homeSections");
   const empty = document.getElementById("homeEmpty");
   container.innerHTML = "";
 
-  const packIndex = new Map(packs.map(p => [p.device_slug, p]));
-
-  const brandNames = Object.keys(taxonomy.brands || {}).sort((a, b) => a.localeCompare(b));
-  const uncategorized = taxonomy.uncategorized || [];
-
-  if (brandNames.length === 0 && uncategorized.length === 0) {
+  if (!repairs || repairs.length === 0) {
     empty.classList.remove("hidden");
     return;
   }
   empty.classList.add("hidden");
 
-  const blocks = brandNames.map(brand => brandBlockHTML(brand, taxonomy.brands[brand], packIndex));
-  if (uncategorized.length > 0) {
-    blocks.push(uncategorizedBlockHTML(uncategorized, packIndex));
+  const taxIndex = indexTaxonomyBySlug(taxonomy);
+  // Group repairs by brand → device_slug → list of repairs.
+  const byBrand = new Map();  // brand → Map(slug → {taxEntry, repairs})
+  for (const r of repairs) {
+    const tax = taxIndex.get(r.device_slug) || null;
+    const brand = tax?.brand || "Non catégorisé";
+    if (!byBrand.has(brand)) byBrand.set(brand, new Map());
+    const devices = byBrand.get(brand);
+    if (!devices.has(r.device_slug)) {
+      devices.set(r.device_slug, {
+        taxEntry: tax || { device_slug: r.device_slug, device_label: r.device_label },
+        repairs: [],
+      });
+    }
+    devices.get(r.device_slug).repairs.push(r);
   }
-  container.innerHTML = blocks.join("");
+
+  const brandNames = Array.from(byBrand.keys()).sort((a, b) => {
+    if (a === "Non catégorisé") return 1;
+    if (b === "Non catégorisé") return -1;
+    return a.localeCompare(b);
+  });
+  container.innerHTML = brandNames
+    .map(brand => brandBlockHTML(brand, byBrand.get(brand)))
+    .join("");
 }
 
 /* ---------- NEW REPAIR MODAL ---------- */
@@ -141,15 +228,33 @@ const newRepairDevice   = document.getElementById("newRepairDevice");
 const newRepairSymptom  = document.getElementById("newRepairSymptom");
 const newRepairSubmit   = document.getElementById("newRepairSubmit");
 const newRepairError    = document.getElementById("newRepairError");
+const newRepairCombo    = document.getElementById("newRepairCombo");
+const newRepairPanel    = document.getElementById("newRepairComboPanel");
+const newRepairHint     = document.getElementById("newRepairDeviceHint");
+const newRepairRebuildRow = document.getElementById("newRepairRebuildRow");
+const newRepairForceRebuild = document.getElementById("newRepairForceRebuild");
 let   newRepairLastFocus = null;
+let   comboEntries = [];      // flat list of known devices
+let   comboActiveIndex = -1;  // keyboard-highlighted option
+// When the user PICKS an existing entry from the combobox we keep the pack's
+// original device_label + slug here so the submit hits the exact same slug
+// server-side. Free typing resets both — we only want this mapping for clicks.
+let   selectedEntryLabel = null;
+let   selectedEntrySlug = null;
 
 function openNewRepair() {
   newRepairLastFocus = document.activeElement;
   newRepairForm.reset();
   setNewRepairError(null);
   setNewRepairBusy(false);
+  newRepairRebuildRow.hidden = true;
+  newRepairForceRebuild.checked = false;
+  selectedEntryLabel = null;
+  selectedEntrySlug = null;
   newRepairBackdrop.classList.add("open");
   newRepairBackdrop.setAttribute("aria-hidden", "false");
+  // Kick off the taxonomy fetch and cache it for the session — small payload.
+  refreshComboEntries();
   // Let the backdrop fade-in paint, then focus first field.
   requestAnimationFrame(() => newRepairDevice.focus());
 }
@@ -159,9 +264,280 @@ function closeNewRepair() {
   newRepairBackdrop.classList.remove("open");
   newRepairBackdrop.setAttribute("aria-hidden", "true");
   setNewRepairBusy(false);
+  hideComboPanel();
   if (newRepairLastFocus && typeof newRepairLastFocus.focus === "function") {
     newRepairLastFocus.focus();
   }
+}
+
+/* ---------- Combobox — device autocomplete ---------- */
+
+async function refreshComboEntries() {
+  const tax = await loadTaxonomy();
+  const entries = [];
+  for (const [brand, models] of Object.entries(tax.brands || {})) {
+    for (const [modelName, packs] of Object.entries(models)) {
+      for (const p of packs) {
+        entries.push({ ...p, brand, model: modelName });
+      }
+    }
+  }
+  for (const p of tax.uncategorized || []) {
+    entries.push({ ...p, brand: null, model: null });
+  }
+  comboEntries = entries;
+}
+
+// Normalize: lowercase, strip accents, collapse whitespace. Used both on the
+// query and on every candidate field so the match is case- and accent-agnostic.
+function normalize(s) {
+  return (s || "")
+    .toString()
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function scoreEntry(entry, qNorm, qTokens, qInline) {
+  // Concatenate the searchable surface once, then rank.
+  const haystack = normalize(
+    [entry.device_label, entry.device_slug, entry.brand, entry.model, entry.version, entry.form_factor]
+      .filter(Boolean).join(" ")
+  );
+  if (!qNorm) return 1;                         // empty query → all pass
+  if (haystack === qNorm) return 1000;          // exact full-label match
+  if (haystack.startsWith(qNorm)) return 500;   // prefix match
+  if (haystack.includes(qNorm)) return 300;     // contiguous substring
+  // Space-insensitive substring: lets "iphoneX" match "iPhone X", handy when
+  // the tech omits spaces or concatenates brand+model.
+  const haystackInline = haystack.replace(/ /g, "");
+  if (qInline && haystackInline.includes(qInline)) return 200;
+  // Token coverage: every query token must appear somewhere in the haystack.
+  // Tolerates word-level reordering ("motherboard reform mnt"), and partial
+  // prefix typing ("refo" matches "reform").
+  let covered = 0;
+  for (const t of qTokens) {
+    if (!t) continue;
+    if (haystack.includes(t)) covered++;
+  }
+  if (covered === qTokens.length) return 100 + covered;
+  if (covered >= Math.ceil(qTokens.length / 2)) return 30 + covered;
+  return 0;
+}
+
+function filterEntries(query) {
+  const qNorm = normalize(query);
+  const qTokens = qNorm.split(" ").filter(Boolean);
+  const qInline = qNorm.replace(/ /g, "");
+  return comboEntries
+    .map(entry => ({ entry, score: scoreEntry(entry, qNorm, qTokens, qInline) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.entry.device_label.localeCompare(b.entry.device_label));
+}
+
+// Highlight every occurrence of the normalized query's substrings in the raw
+// label, without stripping the original casing.
+function highlight(raw, query) {
+  if (!query) return escapeHtml(raw);
+  const qNorm = normalize(query);
+  if (!qNorm) return escapeHtml(raw);
+  const rawNorm = normalize(raw);
+  const idx = rawNorm.indexOf(qNorm);
+  if (idx === -1) return escapeHtml(raw);
+  // Map back to original-string offsets. normalize collapses whitespace and
+  // strips accents 1:1 so the offsets are the same length; good enough here.
+  const start = idx;
+  const end = idx + qNorm.length;
+  return escapeHtml(raw.slice(0, start))
+       + "<mark>" + escapeHtml(raw.slice(start, end)) + "</mark>"
+       + escapeHtml(raw.slice(end));
+}
+
+function renderComboPanel(query) {
+  const results = filterEntries(query);
+  const groups = new Map(); // brand → entries[]
+  for (const { entry } of results) {
+    const key = entry.brand || "Non catégorisé";
+    (groups.get(key) || groups.set(key, []).get(key)).push(entry);
+  }
+
+  const parts = [];
+  const trimmed = query.trim();
+  const exactExists = results.some(r => normalize(r.entry.device_label) === normalize(trimmed));
+  if (trimmed && !exactExists) {
+    parts.push(`
+      <button type="button" class="combo-option combo-create" data-action="create"
+              data-label="${escapeHtml(trimmed)}" role="option">
+        <span class="combo-label">+ Créer « ${escapeHtml(trimmed)} »</span>
+        <span class="combo-meta"><span class="combo-badge">nouveau</span></span>
+      </button>
+    `);
+  }
+
+  if (groups.size === 0 && !trimmed) {
+    parts.push('<div class="combo-empty">Aucun device connu — tape un nom pour en créer un.</div>');
+  }
+
+  const sortedBrands = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+  for (const brand of sortedBrands) {
+    const entries = groups.get(brand);
+    parts.push(`
+      <div class="combo-section">
+        <div class="combo-section-head">
+          <span>${escapeHtml(brand)}</span>
+          <span class="combo-section-count">${entries.length}</span>
+        </div>
+    `);
+    for (const e of entries) {
+      // Inside a brand section the brand is already in the header — show only
+      // the model/device, keep the form_factor as a separate mono chip.
+      const name = deviceName(e, { includeBrand: false });
+      const badges = [
+        e.complete ? '<span class="combo-badge ok">audité</span>' : '<span class="combo-badge">partiel</span>',
+        e.form_factor ? `<span class="combo-badge">${escapeHtml(e.form_factor)}</span>` : '',
+      ].filter(Boolean).join("");
+      parts.push(`
+        <button type="button" class="combo-option" role="option"
+                data-action="select"
+                data-slug="${escapeHtml(e.device_slug)}"
+                data-label="${escapeHtml(e.device_label)}"
+                data-complete="${e.complete ? "1" : "0"}">
+          <span class="combo-label">${highlight(name, query)}</span>
+          <span class="combo-meta">${badges}</span>
+        </button>
+      `);
+    }
+    parts.push('</div>');
+  }
+
+  newRepairPanel.innerHTML = parts.join("");
+  newRepairPanel.hidden = false;
+  newRepairDevice.setAttribute("aria-expanded", "true");
+  comboActiveIndex = -1;
+  syncComboActive();
+}
+
+function hideComboPanel() {
+  newRepairPanel.hidden = true;
+  newRepairDevice.setAttribute("aria-expanded", "false");
+  comboActiveIndex = -1;
+}
+
+function comboOptions() {
+  return Array.from(newRepairPanel.querySelectorAll(".combo-option"));
+}
+
+function syncComboActive() {
+  comboOptions().forEach((el, i) => el.classList.toggle("active", i === comboActiveIndex));
+}
+
+function comboMoveActive(delta) {
+  const opts = comboOptions();
+  if (opts.length === 0) return;
+  comboActiveIndex = (comboActiveIndex + delta + opts.length) % opts.length;
+  syncComboActive();
+  opts[comboActiveIndex].scrollIntoView({ block: "nearest" });
+}
+
+// Picking an existing entry from the combobox. We display the CLEAN name
+// ({brand} {model}) in the input — no form_factor clutter — but we keep the
+// original device_label + slug aside so the submit resolves to the exact
+// same pack slug server-side.
+function applyExistingEntry(entry) {
+  newRepairDevice.value = deviceName(entry, { includeBrand: true });
+  selectedEntryLabel = entry.device_label;
+  selectedEntrySlug = entry.device_slug;
+  hideComboPanel();
+  applyRebuildStateForEntry(entry);
+}
+
+// Picking the "+ Créer « … »" row — the user wants a brand-new device
+// with whatever string they typed.
+function applyNewDeviceSelection(rawText) {
+  newRepairDevice.value = rawText;
+  selectedEntryLabel = null;
+  selectedEntrySlug = null;
+  hideComboPanel();
+  applyRebuildStateForTyped();
+}
+
+function applyRebuildStateForEntry(entry) {
+  if (entry.complete) {
+    newRepairRebuildRow.hidden = false;
+    newRepairHint.textContent =
+      "Pack déjà construit — la session rouvre directement. Coche pour regénérer.";
+  } else {
+    newRepairRebuildRow.hidden = true;
+    newRepairForceRebuild.checked = false;
+    newRepairHint.textContent =
+      "Pack existe mais incomplet — le pipeline va compléter les artefacts manquants.";
+  }
+}
+
+function applyRebuildStateForTyped() {
+  newRepairRebuildRow.hidden = true;
+  newRepairForceRebuild.checked = false;
+  newRepairHint.textContent =
+    "Tape le nom du device (marque + modèle). Le type de board est détecté automatiquement.";
+}
+
+function commitOption(el) {
+  if (!el) return;
+  if (el.dataset.action === "select") {
+    const slug = el.dataset.slug;
+    const entry = comboEntries.find(e => e.device_slug === slug);
+    if (entry) applyExistingEntry(entry);
+  } else if (el.dataset.action === "create") {
+    applyNewDeviceSelection(el.dataset.label);
+  }
+}
+
+function initCombo() {
+  newRepairDevice.addEventListener("focus", () => {
+    renderComboPanel(newRepairDevice.value);
+  });
+  newRepairDevice.addEventListener("input", () => {
+    // Free typing — the picked-entry mapping no longer applies.
+    selectedEntryLabel = null;
+    selectedEntrySlug = null;
+    renderComboPanel(newRepairDevice.value);
+    applyRebuildStateForTyped();
+  });
+  newRepairDevice.addEventListener("keydown", ev => {
+    if (newRepairPanel.hidden) return;
+    if (ev.key === "ArrowDown") { ev.preventDefault(); comboMoveActive(1); return; }
+    if (ev.key === "ArrowUp")   { ev.preventDefault(); comboMoveActive(-1); return; }
+    if (ev.key === "Enter" && comboActiveIndex >= 0) {
+      ev.preventDefault();
+      commitOption(comboOptions()[comboActiveIndex]);
+      return;
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      hideComboPanel();
+    }
+  });
+  newRepairPanel.addEventListener("mousedown", ev => {
+    const opt = ev.target.closest(".combo-option");
+    if (!opt) return;
+    ev.preventDefault();  // keep input focus
+    commitOption(opt);
+  });
+  // Click outside closes.
+  document.addEventListener("mousedown", ev => {
+    if (newRepairPanel.hidden) return;
+    if (newRepairCombo.contains(ev.target)) return;
+    hideComboPanel();
+  });
+  // Tab-away from the input closes the panel too. setTimeout lets an in-panel
+  // click fire first (since mousedown on an option preventDefault'd the blur).
+  newRepairDevice.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (!newRepairCombo.contains(document.activeElement)) hideComboPanel();
+    }, 120);
+  });
 }
 
 function setNewRepairError(msg, opts) {
@@ -195,8 +571,16 @@ function setNewRepairBusy(busy) {
 
 async function submitNewRepair(ev) {
   ev.preventDefault();
-  const device_label = newRepairDevice.value.trim();
+  // When the user picked an existing entry from the combobox, send its
+  // ORIGINAL device_label AND the canonical device_slug so the backend
+  // resolves to the exact pack on disk — regardless of any Registry-rewrite
+  // drift between device_label and the directory name. Only fall back to the
+  // input value for a brand-new device the user typed out.
+  const typedValue = newRepairDevice.value.trim();
+  const device_label = selectedEntryLabel || typedValue;
+  const device_slug  = selectedEntrySlug || null;
   const symptom      = newRepairSymptom.value.trim();
+  const force_rebuild = newRepairForceRebuild.checked;
   if (device_label.length < 2) {
     setNewRepairError("Le nom du device doit faire au moins 2 caractères.", {title:"Champ incomplet — "});
     newRepairDevice.focus();
@@ -213,7 +597,7 @@ async function submitNewRepair(ev) {
     const res = await fetch("/pipeline/repairs", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({device_label, symptom}),
+      body: JSON.stringify({device_label, device_slug, symptom, force_rebuild}),
     });
     if (!res.ok) {
       let detail = "";
@@ -260,6 +644,7 @@ export function initNewRepairModal() {
   newRepairBackdrop.addEventListener("click", ev => {
     if (ev.target === newRepairBackdrop) closeNewRepair();
   });
+  initCombo();
 
   // Registered BEFORE the global ESC/Cmd+K handler, so we can intercept those
   // keys while the modal is open without closing the Inspector or stealing focus.

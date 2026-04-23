@@ -23,3 +23,27 @@
 .modal-submit[aria-busy="true"]{cursor:progress}
 .modal-spinner{display:inline-block;width:12px;height:12px;border:1.8px solid currentColor;border-top-color:transparent;border-radius:50%;animation:modal-spin .7s linear infinite;vertical-align:-1px}
 @keyframes modal-spin{to{transform:rotate(360deg)}}
+
+/* ---------- Device combobox (autocomplete grouped by brand) ---------- */
+.combo{position:relative}
+.combo-panel{position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:320px;overflow-y:auto;background:rgba(15,22,36,.96);border:1px solid var(--border);border-radius:6px;box-shadow:0 12px 32px rgba(0,0,0,.45);backdrop-filter:blur(10px);z-index:10;display:flex;flex-direction:column;padding:4px 0}
+.combo-panel[hidden]{display:none}
+.combo-section{display:flex;flex-direction:column}
+.combo-section-head{display:flex;align-items:baseline;gap:8px;padding:8px 12px 4px;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:.4px;text-transform:uppercase;border-top:1px solid var(--border-soft)}
+.combo-section:first-child .combo-section-head{border-top:none}
+.combo-section-count{font-size:9.5px;color:var(--text-3);opacity:.75}
+.combo-option{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;cursor:pointer;color:var(--text-2);transition:background .12s,color .12s;font-size:12.5px;border:none;background:transparent;text-align:left;font-family:inherit;width:100%}
+.combo-option:hover,.combo-option.active{background:var(--panel-2);color:var(--text)}
+.combo-option .combo-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.combo-option .combo-label mark{background:rgba(56,189,248,.25);color:inherit;border-radius:2px;padding:0 1px}
+.combo-option .combo-meta{display:flex;gap:4px;flex-shrink:0;font-family:var(--mono);font-size:9.5px;color:var(--text-3);letter-spacing:.3px;text-transform:uppercase}
+.combo-option .combo-badge{padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;color:var(--text-3)}
+.combo-option .combo-badge.ok{color:var(--emerald);border-color:rgba(52,211,153,.3);background:rgba(52,211,153,.08)}
+.combo-create{border-top:1px solid var(--border-soft);color:var(--cyan);font-family:var(--mono);font-size:11px;letter-spacing:.3px;text-transform:uppercase}
+.combo-create .combo-label{color:var(--cyan)}
+.combo-create:first-child{border-top:none}
+.combo-empty{padding:12px;font-family:var(--mono);font-size:10.5px;color:var(--text-3);text-align:center}
+
+.modal-rebuild{display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:4px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11.5px;color:var(--text-2);cursor:pointer}
+.modal-rebuild[hidden]{display:none}
+.modal-rebuild input[type="checkbox"]{margin:0;accent-color:var(--amber)}

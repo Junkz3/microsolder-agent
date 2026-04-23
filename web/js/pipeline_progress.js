@@ -240,9 +240,11 @@ function redirectToMemoryBank() {
 export function openPipelineProgress(repairResponse) {
   if (!repairResponse || !repairResponse.device_slug) return;
 
-  // Pack already complete on disk — skip the drawer and go straight to the Memory Bank.
+  // Pack already complete on disk — skip the drawer and open the graph view
+  // for this device. Consistent with clicking a home card: the user lands on
+  // the rich visual representation of the pack, not the read-only data dump.
   if (repairResponse.pipeline_started === false) {
-    window.location.href = `?device=${encodeURIComponent(repairResponse.device_slug)}#memory-bank`;
+    window.location.href = `?device=${encodeURIComponent(repairResponse.device_slug)}`;
     return;
   }
 

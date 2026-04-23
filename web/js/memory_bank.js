@@ -133,7 +133,16 @@ function renderDeviceLabel() {
     h1.textContent = "Memory Bank";
     return;
   }
-  h1.innerHTML = `Memory Bank <span class="sub" style="color:var(--text-3);font-weight:400;font-size:14px;margin-left:10px">· ${escHtml(STATE.pack.device_label || STATE.currentSlug)}</span>`;
+  // Prefer a clean `{brand} {model}` from taxonomy; append the form_factor as
+  // a small subordinate chip so the header reads "what we're fixing" without
+  // repeating the board type inside the name.
+  const tax = (STATE.pack.registry || {}).taxonomy || {};
+  const nameParts = [tax.brand, tax.model].filter(Boolean);
+  const deviceName = nameParts.length > 0
+    ? nameParts.join(" ")
+    : (STATE.pack.device_label || STATE.currentSlug);
+  const form = tax.form_factor ? ` <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);letter-spacing:.3px;text-transform:uppercase;margin-left:8px;padding:1px 7px;border:1px solid var(--border-soft);border-radius:10px">${escHtml(tax.form_factor)}</span>` : "";
+  h1.innerHTML = `Memory Bank <span class="sub" style="color:var(--text-3);font-weight:400;font-size:14px;margin-left:10px">· ${escHtml(deviceName)}</span>${form}`;
 }
 
 /* ---------- blocks rendering ---------- */

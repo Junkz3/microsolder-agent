@@ -4,7 +4,7 @@
 // colour pickers.
 
 import { APP_VERSION, currentSection, navigate, wireRouter } from './router.js';
-import { loadHomePacks, loadTaxonomy, renderHome, initNewRepairModal } from './home.js';
+import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModal } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
 import { initPipelineProgress } from './pipeline_progress.js';
@@ -36,8 +36,8 @@ import { initPipelineProgress } from './pipeline_progress.js';
       setEmptyState(true);
     }
   } else if (initial === "home") {
-    const [packs, taxonomy] = await Promise.all([loadHomePacks(), loadTaxonomy()]);
-    renderHome(packs, taxonomy);
+    const [packs, taxonomy, repairs] = await Promise.all([loadHomePacks(), loadTaxonomy(), loadRepairs()]);
+    renderHome(packs, taxonomy, repairs);
   } else if (initial === "memory-bank") {
     loadMemoryBank();
   }
@@ -48,8 +48,8 @@ import { initPipelineProgress } from './pipeline_progress.js';
     const sec = currentSection();
     if (sec === "memory-bank") loadMemoryBank();
     else if (sec === "home") {
-      const [packs, taxonomy] = await Promise.all([loadHomePacks(), loadTaxonomy()]);
-      renderHome(packs, taxonomy);
+      const [packs, taxonomy, repairs] = await Promise.all([loadHomePacks(), loadTaxonomy(), loadRepairs()]);
+      renderHome(packs, taxonomy, repairs);
     }
   });
 })();

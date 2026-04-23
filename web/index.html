@@ -327,10 +327,22 @@
     <form class="modal-body" id="newRepairForm" novalidate>
       <div class="modal-field">
         <label class="modal-label" for="newRepairDevice">Device</label>
-        <input class="modal-input" id="newRepairDevice" type="text"
-               required minlength="2" maxlength="200"
-               placeholder="ex. MNT Reform motherboard" autocomplete="off" spellcheck="false" />
-        <span class="modal-hint">Nom du board. Si la mémoire n'existe pas, l'agent la construira en arrière-plan.</span>
+        <div class="combo" id="newRepairCombo">
+          <input class="modal-input combo-input" id="newRepairDevice" type="text"
+                 required minlength="2" maxlength="200"
+                 placeholder="ex. iPhone X · MNT Reform · Steam Deck"
+                 autocomplete="off" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="newRepairComboPanel" aria-haspopup="listbox" />
+          <div class="combo-panel" id="newRepairComboPanel" role="listbox" aria-label="Devices connus" hidden></div>
+        </div>
+        <span class="modal-hint" id="newRepairDeviceHint">
+          Tape le nom du device (marque + modèle). Le type de board (logic board, motherboard…) est détecté automatiquement.
+        </span>
+        <label class="modal-rebuild" id="newRepairRebuildRow" hidden>
+          <input type="checkbox" id="newRepairForceRebuild" />
+          <span>Regénérer depuis zéro (coût tokens — utilise si le pack est obsolète)</span>
+        </label>
       </div>
       <div class="modal-field">
         <label class="modal-label" for="newRepairSymptom">Symptôme observé</label>
