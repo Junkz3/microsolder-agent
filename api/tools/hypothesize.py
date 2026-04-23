@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from api.pipeline.schematic.hypothesize import (
-    ObservedMetric,
     Observations,
+    ObservedMetric,
     hypothesize,
 )
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph

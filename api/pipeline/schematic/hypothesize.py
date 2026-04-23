@@ -429,7 +429,7 @@ def _narrate(
             head += f", {anom_count} composant(s) aval anormaux"
         head += "."
     else:
-        parts = [f"{r} ({m})" for r, m in zip(kill_refdes, kill_modes)]
+        parts = [f"{r} ({m})" for r, m in zip(kill_refdes, kill_modes, strict=True)]
         head = (
             f"Si {' ET '.join(parts)} échouent simultanément : "
             f"{rails_preview} → {dead_count} composant(s) downstream morts."

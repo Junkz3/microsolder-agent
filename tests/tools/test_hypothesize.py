@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from api.pipeline.schematic.schemas import (
-    ComponentNode, ElectricalGraph, NetNode, PagePin, PowerRail,
+    ComponentNode,
+    ElectricalGraph,
+    NetNode,
+    PagePin,
+    PowerRail,
     SchematicQualityReport,
 )
 from api.tools.hypothesize import mb_hypothesize

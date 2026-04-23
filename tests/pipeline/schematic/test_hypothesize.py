@@ -13,12 +13,11 @@ from api.pipeline.schematic.hypothesize import (
     Hypothesis,
     HypothesisDiff,
     HypothesisMetrics,
-    HypothesizeResult,
-    ObservedMetric,
     Observations,
-    PruningStats,
+    ObservedMetric,
     _empty_cascade,
-    _simulate_dead,
+    _propagate_signal_downstream,
+    _score_candidate,
     _simulate_failure,
     hypothesize,
 )
@@ -26,13 +25,13 @@ from api.pipeline.schematic.schemas import (
     AnalyzedBootPhase,
     AnalyzedBootSequence,
     AnalyzedBootTrigger,
-    BootPhase,
     ComponentNode,
     ElectricalGraph,
     NetNode,
     PagePin,
     PowerRail,
     SchematicQualityReport,
+    TypedEdge,
 )
 
 
@@ -177,10 +176,6 @@ def test_simulate_failure_unknown_mode_raises():
         _simulate_failure(_mini_graph(), _mini_boot(), "U7", "bogus")
 
 
-from api.pipeline.schematic.hypothesize import _propagate_signal_downstream
-from api.pipeline.schematic.schemas import TypedEdge
-
-
 def _mini_graph_with_signal_edges() -> ElectricalGraph:
     """MNT-like mini graph with signal edges: U10 → U11 → U17 chain."""
     g = _mini_graph()
@@ -279,9 +274,6 @@ def test_simulate_failure_shorted_orphan_consumer_returns_self_dead():
     assert c["dead_comps"] == frozenset({"U99"})
     assert c["shorted_rails"] == frozenset()
     assert c["hot_comps"] == frozenset()
-
-
-from api.pipeline.schematic.hypothesize import _score_candidate
 
 
 def test_score_perfect_match_dead():

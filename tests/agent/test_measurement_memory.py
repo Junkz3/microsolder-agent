@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from api.agent.measurement_memory import (
     MeasurementEvent,
+    append_measurement,
     auto_classify,
+    compare_measurements,
+    load_measurements,
     parse_target,
+    synthesise_observations,
 )
 
 
@@ -87,16 +93,6 @@ def test_auto_classify_rail_missing_nominal_returns_none():
 def test_auto_classify_unknown_target_kind_returns_none():
     # Pin-level measurements don't auto-classify to component modes.
     assert auto_classify(target="pin:U7:3", value=0.8, unit="V", nominal=3.3) is None
-
-
-from pathlib import Path
-
-from api.agent.measurement_memory import (
-    append_measurement,
-    compare_measurements,
-    load_measurements,
-    synthesise_observations,
-)
 
 
 def test_append_and_load_roundtrip(tmp_path: Path):
@@ -211,9 +207,13 @@ def test_end_to_end_journal_drives_hypothesize(tmp_path: Path):
       - metrics_rails populated with both.
     hypothesize() on a mini_graph then returns U12 (source of +3V3) top-1.
     """
-    from api.pipeline.schematic.hypothesize import Observations, hypothesize
+    from api.pipeline.schematic.hypothesize import hypothesize
     from api.pipeline.schematic.schemas import (
-        ComponentNode, ElectricalGraph, NetNode, PagePin, PowerRail,
+        ComponentNode,
+        ElectricalGraph,
+        NetNode,
+        PagePin,
+        PowerRail,
         SchematicQualityReport,
     )
 
