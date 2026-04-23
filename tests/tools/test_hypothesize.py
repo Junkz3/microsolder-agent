@@ -140,18 +140,11 @@ def test_mb_hypothesize_empty_inputs(memory_root: Path, graph: ElectricalGraph):
 
 def test_mb_hypothesize_manifest_exposes_new_signature():
     from api.agent import manifest
-    names: list[str] = []
-    if hasattr(manifest, "TOOLS"):
-        names = [t["name"] for t in manifest.TOOLS]
-    elif hasattr(manifest, "build_tools_manifest"):
-        tools = manifest.build_tools_manifest(session=None)
-        names = [t["name"] for t in tools]
+    # Use MB_TOOLS directly (always present, no session needed).
+    tools = manifest.MB_TOOLS
+    names = [t["name"] for t in tools]
     assert "mb_hypothesize" in names
     # Verify schema B properties are present.
-    if hasattr(manifest, "build_tools_manifest"):
-        tools = manifest.build_tools_manifest(session=None)
-    else:
-        tools = manifest.TOOLS
     hyp = next(t for t in tools if t["name"] == "mb_hypothesize")
     props = hyp["input_schema"]["properties"]
     assert "state_comps" in props
