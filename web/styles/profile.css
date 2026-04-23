@@ -1,0 +1,145 @@
+/* =========== PROFILE SECTION =========== */
+.profile{
+  position:fixed;top:92px;left:52px;right:0;bottom:28px;
+  overflow-y:auto;padding:28px 32px;z-index:2;
+}
+.profile.hidden{display:none}
+body.llm-open .profile{right:420px}
+
+/* Keep the identity modal visually centred on the available canvas when the
+   agent chat panel is docked on the right. Without this, inset:0 on the
+   backdrop spans the whole viewport and the modal lands left-of-centre. */
+body.llm-open #profIdentityBackdrop{right:420px}
+
+/* Generic icon-only button (ghost). Used for the drawer + modal close. */
+.btn-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;padding:0;border-radius:6px;
+  background:transparent;border:1px solid transparent;
+  color:var(--text-3);cursor:pointer;
+  transition:all .15s;
+}
+.btn-icon:hover{color:var(--text);background:var(--panel-2);border-color:var(--border-soft)}
+.btn-icon:active{transform:scale(.94)}
+.btn-icon .icon{width:16px;height:16px}
+
+/* Pinned close button for the identity modal (top-right of the header). */
+.modal-close{
+  position:absolute;top:10px;right:10px;
+  color:var(--text-3);
+}
+.modal-close:hover{color:var(--amber)}
+
+/* head */
+.profile-head{
+  display:flex;align-items:center;gap:16px;padding:20px;
+  background:var(--panel);border:1px solid var(--border);border-radius:10px;
+}
+.profile-avatar{
+  width:64px;height:64px;border-radius:50%;
+  background:var(--panel-2);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:22px;letter-spacing:.5px;color:var(--text);
+}
+.profile-head-main{flex:1}
+.profile-head-main h1{margin:0 0 4px;font-size:18px;color:var(--text)}
+.profile-head-meta{margin:0;color:var(--text-2);font-size:12px;display:flex;gap:8px;align-items:center}
+.profile-head-meta .tag{
+  font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;
+  padding:2px 6px;border:1px solid var(--border);border-radius:4px;color:var(--cyan);
+}
+
+/* block shells */
+.profile-block{
+  margin-top:20px;padding:18px 20px;
+  background:var(--panel);border:1px solid var(--border);border-radius:10px;
+}
+.profile-block > h2{
+  margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+  color:var(--text-2);font-weight:500;
+}
+
+/* tools grid */
+.profile-tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.profile-tool{
+  display:flex;align-items:center;gap:8px;padding:8px 10px;
+  background:var(--panel-2);border:1px solid var(--border);border-radius:6px;
+  cursor:pointer;transition:all .15s;font-size:13px;color:var(--text-2);
+}
+.profile-tool:hover{border-color:var(--border-soft);color:var(--text)}
+.profile-tool.on{color:var(--emerald);border-color:rgba(110,200,150,.4)}
+.profile-tool .dot{
+  width:8px;height:8px;border-radius:50%;background:var(--text-3);
+}
+.profile-tool.on .dot{background:var(--emerald)}
+
+/* skills — 3 progress columns (mastered / practiced / learning) then a
+   "Non pratiquées" row full-width below (compact chips). */
+.profile-skills{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.profile-skill-col[data-status="unlearned"]{grid-column:1 / -1;margin-top:4px}
+.profile-skill-col > h3{
+  margin:0 0 8px;font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--text-3);display:flex;align-items:center;gap:6px;
+}
+.profile-skill-col-count{
+  font-family:var(--mono);font-size:9.5px;color:var(--text-3);
+  padding:1px 5px;border:1px solid var(--border);border-radius:3px;
+  background:var(--panel-2);
+}
+.profile-skill-col[data-status="mastered"] > h3{color:var(--violet)}
+.profile-skill-col[data-status="practiced"] > h3{color:var(--emerald)}
+.profile-skill-col[data-status="learning"]  > h3{color:var(--cyan)}
+.profile-skill-col[data-status="unlearned"] > h3{color:var(--text-3)}
+
+/* Compact chip list for the unlearned bucket. */
+.profile-skill-chips{display:flex;flex-wrap:wrap;gap:4px}
+.profile-skill-chip{
+  display:inline-flex;align-items:center;padding:3px 8px;
+  background:var(--panel-2);border:1px solid var(--border);border-radius:12px;
+  font-size:11px;color:var(--text-3);cursor:pointer;transition:all .15s;
+  line-height:1.3;
+}
+.profile-skill-chip:hover{border-color:var(--border-soft);color:var(--text-2)}
+
+.profile-skill{
+  display:flex;flex-direction:column;gap:4px;padding:8px 10px;margin-bottom:6px;
+  background:var(--panel-2);border:1px solid var(--border);border-radius:6px;
+  cursor:pointer;transition:border-color .15s;
+}
+.profile-skill:hover{border-color:var(--border-soft)}
+.profile-skill-label{font-size:12px;color:var(--text)}
+.profile-skill-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.profile-skill-bar{flex:1;height:3px;background:var(--border-soft);border-radius:2px;overflow:hidden}
+.profile-skill-bar > span{display:block;height:100%;background:var(--cyan)}
+.profile-skill-count{
+  font-family:var(--mono);font-size:10.5px;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;
+}
+
+/* prefs */
+.profile-prefs{display:flex;flex-wrap:wrap;gap:16px}
+.profile-prefs-group{display:flex;flex-direction:column;gap:4px}
+.profile-prefs-group label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3)}
+.profile-prefs-group .opts{display:flex;gap:4px}
+.profile-prefs-opt{
+  padding:4px 10px;border:1px solid var(--border);border-radius:6px;
+  font-size:12px;color:var(--text-2);background:var(--panel-2);cursor:pointer;
+}
+.profile-prefs-opt.on{color:var(--cyan);border-color:rgba(100,190,230,.4)}
+
+/* drawer (glass) */
+.profile-drawer{
+  position:absolute;top:0;right:0;bottom:0;width:360px;
+  background:rgba(24,24,27,.92);backdrop-filter:blur(10px);
+  border-left:1px solid var(--border);
+  display:flex;flex-direction:column;z-index:3;
+  animation:profDrawerIn .28s cubic-bezier(.2,.8,.2,1);
+}
+.profile-drawer.hidden{display:none}
+@keyframes profDrawerIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
+.profile-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.profile-drawer-head h3{margin:0;font-size:14px;color:var(--text)}
+.profile-drawer-body{padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.profile-evidence{padding:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text-2)}
+.profile-evidence .dev{font-family:var(--mono);font-size:10.5px;color:var(--cyan);text-transform:uppercase;letter-spacing:.4px}
+.profile-evidence .sum{display:block;margin-top:4px;color:var(--text)}
+.profile-evidence .date{display:block;margin-top:4px;font-family:var(--mono);font-size:10px;color:var(--text-3)}

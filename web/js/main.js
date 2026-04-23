@@ -7,6 +7,7 @@ import { APP_VERSION, currentSection, navigate, wireRouter } from './router.js';
 import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModal } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
+import { initProfileSection } from './profile.js';
 import { initPipelineProgress } from './pipeline_progress.js';
 import { initLLMPanel, openLLMPanelIfRepairParam } from './llm.js';
 
@@ -52,6 +53,8 @@ if (!window.Boardview) {
     renderHome(packs, taxonomy, repairs);
   } else if (initial === "memory-bank") {
     loadMemoryBank();
+  } else if (initial === "profile") {
+    initProfileSection();
   }
 
   // Sections that need their data refetched when the user navigates back to
@@ -59,6 +62,7 @@ if (!window.Boardview) {
   window.addEventListener("hashchange", async () => {
     const sec = currentSection();
     if (sec === "memory-bank") loadMemoryBank();
+    else if (sec === "profile") initProfileSection();
     else if (sec === "home") {
       const [packs, taxonomy, repairs] = await Promise.all([loadHomePacks(), loadTaxonomy(), loadRepairs()]);
       renderHome(packs, taxonomy, repairs);

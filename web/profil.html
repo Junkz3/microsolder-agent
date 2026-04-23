@@ -1,0 +1,94 @@
+<!-- Profile section body. Fetched by web/js/profile.js and injected into
+     #profileSection in index.html on first navigation. The identity
+     modal lives here too so it ships with the section's DOM in one fetch. -->
+<header class="profile-head">
+  <div class="profile-avatar" id="profAvatar">—</div>
+  <div class="profile-head-main">
+    <h1 id="profName">—</h1>
+    <p class="profile-head-meta">
+      <span id="profLevel" class="tag">—</span>
+      <span>·</span>
+      <span id="profYears">—</span>
+      <span>·</span>
+      <span id="profSpecs">—</span>
+    </p>
+  </div>
+  <button class="btn" id="profEditIdentityBtn">
+    <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+    Éditer
+  </button>
+</header>
+
+<section class="profile-block">
+  <h2>Outillage</h2>
+  <div class="profile-tools" id="profTools"></div>
+</section>
+
+<section class="profile-block">
+  <h2>Compétences</h2>
+  <div class="profile-skills" id="profSkills"></div>
+</section>
+
+<section class="profile-block">
+  <h2>Préférences diagnostic</h2>
+  <div class="profile-prefs" id="profPrefs"></div>
+</section>
+
+<aside class="profile-drawer hidden" id="profDrawer">
+  <header class="profile-drawer-head">
+    <h3 id="profDrawerTitle">—</h3>
+    <button class="btn-icon" id="profDrawerClose" aria-label="Fermer">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+    </button>
+  </header>
+  <div class="profile-drawer-body" id="profDrawerBody"></div>
+</aside>
+
+<!-- Identity edit modal (opened by #profEditIdentityBtn).
+     Matches the project's modal pattern: outer .modal-backdrop is the fade/click-catch
+     layer, inner .modal is the card. Toggling visibility = classList.toggle("open")
+     on the backdrop. `hidden` class is unused for modals here — the CSS handles the
+     default (opacity:0; pointer-events:none) via .modal-backdrop base rule. -->
+<div class="modal-backdrop" id="profIdentityBackdrop" data-dismiss>
+  <div class="modal" role="dialog" aria-labelledby="profIdentityTitle">
+    <header class="modal-head">
+      <div class="type-row">Profil technicien</div>
+      <h2 id="profIdentityTitle">Éditer ton identité</h2>
+      <button type="button" class="modal-close btn-icon" data-dismiss aria-label="Fermer">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+      </button>
+    </header>
+    <form id="profIdentityForm" class="modal-body">
+      <label class="modal-field">
+        <span class="modal-label">Nom</span>
+        <input class="modal-input" name="name" type="text" maxlength="40"/>
+      </label>
+      <label class="modal-field">
+        <span class="modal-label">Avatar (2 lettres ou emoji)</span>
+        <input class="modal-input" name="avatar" type="text" maxlength="2"/>
+      </label>
+      <label class="modal-field">
+        <span class="modal-label">Années d'expérience</span>
+        <input class="modal-input" name="years_experience" type="number" min="0" max="80"/>
+      </label>
+      <label class="modal-field">
+        <span class="modal-label">Spécialités (séparées par virgule)</span>
+        <input class="modal-input" name="specialties" type="text" placeholder="apple, consoles, laptops"/>
+      </label>
+      <label class="modal-field">
+        <span class="modal-label">Forcer le niveau (optionnel)</span>
+        <select class="modal-input" name="level_override">
+          <option value="">(dérivé automatiquement)</option>
+          <option value="beginner">beginner</option>
+          <option value="intermediate">intermediate</option>
+          <option value="confirmed">confirmed</option>
+          <option value="expert">expert</option>
+        </select>
+      </label>
+      <footer class="modal-foot" style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px">
+        <button type="button" class="btn" data-dismiss>Annuler</button>
+        <button type="submit" class="btn primary">Enregistrer</button>
+      </footer>
+    </form>
+  </div>
+</div>

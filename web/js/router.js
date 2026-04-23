@@ -161,6 +161,7 @@ export function navigate(section) {
   document.getElementById("homeSection").classList.toggle("hidden", section !== "home");
   document.getElementById("canvas").classList.toggle("hidden", section !== "graphe");
   document.getElementById("memoryBank").classList.toggle("hidden", section !== "memory-bank");
+  document.getElementById("profileSection").classList.toggle("hidden", section !== "profile");
   document.querySelectorAll("[data-section-stub]").forEach(el => {
     el.classList.toggle("hidden", el.dataset.sectionStub !== section);
   });
