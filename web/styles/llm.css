@@ -97,6 +97,9 @@ body.llm-open .stub{right:420px}
 .llm-log .msg.assistant .role{color:var(--text-2)}
 .llm-log .msg.replay,.llm-log .tool.replay{opacity:.55}
 .llm-log .msg.replay .role{letter-spacing:.4px}
+.llm-log .msg .cost-chip{display:inline-block;margin-top:6px;padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;font-family:var(--mono);font-size:9.5px;color:var(--text-3);letter-spacing:.3px}
+.llm-status .cost-total{margin-left:auto;padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;font-family:var(--mono);font-size:10px;color:var(--text-2);letter-spacing:.3px}
+.llm-status .cost-total.hot{color:var(--amber);border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.08)}
 
 .llm-log .tool{
   font-family:var(--mono);font-size:10.5px;

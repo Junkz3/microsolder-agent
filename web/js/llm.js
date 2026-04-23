@@ -15,6 +15,44 @@
 
 let ws = null;
 let currentTier = "fast";
+// Session cost accumulator — reset on each (re)connect. The backend emits
+// `turn_cost` after every agent inference turn; we attach a chip to the most
+// recent assistant message and bump the running total in the status bar.
+let sessionCostUsd = 0;
+let sessionTurns = 0;
+
+function fmtUsd(amount) {
+  if (amount >= 1) return `$${amount.toFixed(2)}`;
+  if (amount >= 0.01) return `$${amount.toFixed(3)}`;
+  if (amount >= 0.0001) return `$${amount.toFixed(4)}`;
+  return amount > 0 ? `<$0.0001` : `$0.00`;
+}
+
+function updateCostTotal() {
+  const el2 = el("llmCostTotal");
+  if (!el2) return;
+  if (sessionTurns === 0) {
+    el2.style.display = "none";
+    return;
+  }
+  el2.style.display = "";
+  el2.textContent = `${fmtUsd(sessionCostUsd)} · ${sessionTurns} turn${sessionTurns > 1 ? "s" : ""}`;
+  el2.classList.toggle("hot", sessionCostUsd >= 0.50);
+}
+
+function attachCostChipToLastAssistant(payload) {
+  const log = el("llmLog");
+  const messages = log.querySelectorAll(".msg.assistant:not(.replay)");
+  const target = messages[messages.length - 1];
+  if (!target || target.querySelector(".cost-chip")) return;
+  const chip = document.createElement("span");
+  chip.className = "cost-chip";
+  const tokensLabel = `${(payload.input_tokens || 0) + (payload.cache_read_input_tokens || 0) + (payload.cache_creation_input_tokens || 0)}→${payload.output_tokens || 0} tok`;
+  const modelLabel = payload.model ? payload.model.replace("claude-", "") : "?";
+  const priceLabel = payload.priced ? fmtUsd(payload.cost_usd) : "—";
+  chip.textContent = `${modelLabel} · ${tokensLabel} · ${priceLabel}`;
+  target.appendChild(chip);
+}
 
 function el(id) { return document.getElementById(id); }
 
@@ -93,6 +131,11 @@ function connect() {
   const repairId = currentRepairId();
   el("llmDevice").textContent = repairId ? `${slug} · ${repairId.slice(0, 8)}` : slug;
   el("llmDevice").style.display = "";
+  // New connection = new cost scope. Replayed history doesn't re-bill so we
+  // reset here and let live turns accumulate fresh.
+  sessionCostUsd = 0;
+  sessionTurns = 0;
+  updateCostTotal();
   const url = wsURL(slug, currentTier, repairId);
   statusTone("connecting", `connexion · ${slug} · ${currentTier}`);
 
@@ -167,6 +210,12 @@ function connect() {
       case "thinking":
         // Quieter than a full message — render as sys line.
         logSys(`thinking · ${payload.text.slice(0, 120)}`);
+        break;
+      case "turn_cost":
+        sessionCostUsd += Number(payload.cost_usd || 0);
+        sessionTurns += 1;
+        updateCostTotal();
+        attachCostChipToLastAssistant(payload);
         break;
       case "error":
         logSys(`erreur : ${payload.text}`, true);
