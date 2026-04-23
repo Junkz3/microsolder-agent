@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 
+from api.pipeline.schematic.passive_classifier import classify_passives_heuristic
 from api.pipeline.schematic.schemas import (
     Ambiguity,
     BootPhase,
@@ -63,9 +64,46 @@ def compile_electrical_graph(
         page_confidences=page_confidences or {},
     )
 
-    return ElectricalGraph(
+    # --- Phase 4: passive role classifier ---
+    # Run heuristic classifier against the pre-compiled graph + rails.
+    # We build a minimal ElectricalGraph view so the classifier can use
+    # `power_rails`. Then copy `kind`/`role` onto each passive and
+    # populate `PowerRail.decoupling` for decoupling/bulk/filter caps.
+    proxy = ElectricalGraph(
         device_slug=graph.device_slug,
         components=graph.components,
+        nets=graph.nets,
+        power_rails=power_rails,
+        typed_edges=graph.typed_edges + depends_on,
+        quality=quality,
+    )
+    assignments = classify_passives_heuristic(proxy)
+    enriched = dict(graph.components)
+    for refdes, (kind, role, _conf) in assignments.items():
+        node = enriched.get(refdes)
+        if node is None:
+            continue
+        enriched[refdes] = node.model_copy(update={"kind": kind, "role": role})
+    # Populate PowerRail.decoupling from classifier output (cap-on-rail roles).
+    for refdes, (kind, role, _) in assignments.items():
+        if kind != "passive_c":
+            continue
+        if role not in {"decoupling", "bulk", "bypass"}:
+            continue
+        # Find the rail this cap sits on (any non-GND pin).
+        comp = enriched.get(refdes)
+        if comp is None:
+            continue
+        for pin in comp.pins:
+            if pin.net_label and pin.net_label in power_rails:
+                rail = power_rails[pin.net_label]
+                if refdes not in rail.decoupling:
+                    rail.decoupling.append(refdes)
+                break
+
+    return ElectricalGraph(
+        device_slug=graph.device_slug,
+        components=enriched,
         nets=graph.nets,
         power_rails=power_rails,
         typed_edges=graph.typed_edges + depends_on,

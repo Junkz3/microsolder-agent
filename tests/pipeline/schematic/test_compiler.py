@@ -371,3 +371,59 @@ def test_ground_nets_excluded_from_power_rails(ground_label: str):
     elec = compile_electrical_graph(g)
     assert "+3V3" in elec.power_rails
     assert ground_label not in elec.power_rails
+
+
+# ----------------------------------------------------------------------
+# Phase 4 — passive classifier integration
+# ----------------------------------------------------------------------
+
+
+def test_compile_populates_passive_kind_and_role():
+    """After compilation, every passive has kind=passive_* and a role
+    (or null) on the ComponentNode."""
+    from api.pipeline.schematic.compiler import compile_electrical_graph
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, NetNode, PagePin, SchematicGraph, TypedEdge,
+    )
+
+    graph = SchematicGraph(
+        device_slug="compiler-passive-test",
+        source_pdf="n/a", page_count=1,
+        components={
+            "U1": ComponentNode(
+                refdes="U1", type="ic",
+                pins=[
+                    PagePin(number="1", role="power_out", net_label="+3V3"),
+                ],
+            ),
+            "U7": ComponentNode(
+                refdes="U7", type="ic",
+                pins=[
+                    PagePin(number="1", role="power_in", net_label="+3V3"),
+                ],
+            ),
+            "C156": ComponentNode(
+                refdes="C156", type="capacitor",
+                pins=[
+                    PagePin(number="1", role="unknown", net_label="+3V3"),
+                    PagePin(number="2", role="unknown", net_label="GND"),
+                ],
+            ),
+        },
+        nets={
+            "+3V3": NetNode(label="+3V3", is_power=True, is_global=True),
+            "GND":  NetNode(label="GND",  is_power=True, is_global=True),
+        },
+        typed_edges=[
+            TypedEdge(src="U1", dst="+3V3", kind="powers"),
+        ],
+    )
+    result = compile_electrical_graph(graph)
+    # IC kept as-is
+    assert result.components["U1"].kind == "ic"
+    assert result.components["U1"].role is None
+    # Passive classified
+    assert result.components["C156"].kind == "passive_c"
+    assert result.components["C156"].role in {"decoupling", "filter"}
+    # PowerRail.decoupling populated with the refdes
+    assert "C156" in result.power_rails["+3V3"].decoupling
