@@ -19,9 +19,24 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from api.pipeline.subsystem import classify_nodes
+
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "unknown"
+
+
+_SUBSYSTEM_LABELS: dict[str, str] = {
+    "power":   "ALIMENTATION",
+    "charge":  "CHARGE",
+    "display": "DISPLAY",
+    "usb":     "USB",
+    "audio":   "AUDIO",
+    "cpu-mem": "CPU / MÉMOIRE",
+    "io":      "E/S",
+    "rf":      "RF / RADIO",
+    "unknown": "AUTRES",
+}
 
 
 def pack_to_graph_payload(
@@ -44,7 +59,7 @@ def pack_to_graph_payload(
     reg_signals = {s["canonical_name"]: s for s in registry.get("signals", [])}
 
     if not kg_nodes and not rules.get("rules"):
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": [], "subsystems": []}
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -190,7 +205,28 @@ def pack_to_graph_payload(
                 }
             )
 
-    return {"nodes": nodes, "edges": edges}
+    # 6. Classify every node into a subsystem bucket, attach to node.
+    sub_by_id = classify_nodes(nodes, edges)
+    for n in nodes:
+        n["subsystem"] = sub_by_id.get(n["id"], "unknown")
+
+    # 7. Build the subsystems index: sorted by count desc, `unknown` last.
+    counts: dict[str, int] = {}
+    for n in nodes:
+        counts[n["subsystem"]] = counts.get(n["subsystem"], 0) + 1
+    non_unknown = sorted(
+        ((k, v) for k, v in counts.items() if k != "unknown"),
+        key=lambda kv: (-kv[1], kv[0]),
+    )
+    ordered: list[tuple[str, int]] = list(non_unknown)
+    if counts.get("unknown"):
+        ordered.append(("unknown", counts["unknown"]))
+    subsystems = [
+        {"key": k, "label": _SUBSYSTEM_LABELS[k], "count": v}
+        for k, v in ordered
+    ]
+
+    return {"nodes": nodes, "edges": edges, "subsystems": subsystems}
 
 
 _ACTION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
