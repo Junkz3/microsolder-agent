@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from api.pipeline.subsystem import classify_nodes
@@ -169,3 +168,37 @@ def test_every_node_gets_a_subsystem():
     result = classify_nodes(nodes, [])
     assert set(result.keys()) == {"c1", "n1", "s1", "a1"}
     assert all(isinstance(v, str) and v for v in result.values())
+
+
+def test_net_numbered_usb_lanes_classify_as_usb_not_display():
+    """Regression: USB2_DP / USB3_RX would fall through to display (because
+    of `\\bdp\\b`) or unknown unless the usb rule allows `usb\\d*`."""
+    nodes = [
+        _net("n1", "USB2_DP"),
+        _net("n2", "USB2_DM"),
+        _net("n3", "USB3_RX0"),
+    ]
+    result = classify_nodes(nodes, [])
+    assert result == {"n1": "usb", "n2": "usb", "n3": "usb"}
+
+
+def test_unrecognised_node_type_still_gets_entry():
+    """Contract: if a node has an unexpected `type`, it still receives a
+    subsystem entry (falls back to 'unknown')."""
+    nodes = [{"id": "x1", "type": "cluster", "label": "group",
+              "description": "", "confidence": 0.5, "meta": {}}]
+    result = classify_nodes(nodes, [])
+    assert result == {"x1": "unknown"}
+
+
+def test_net_extra_power_and_display_aliases():
+    """VDD / VSYS / PWR_* are common ARM/i.MX8 power rails; LVDS is a
+    display-bus technology used on Reform's LCD connector."""
+    nodes = [
+        _net("n1", "VDD_ARM"),
+        _net("n2", "VSYS"),
+        _net("n3", "PWR_EN"),
+        _net("n4", "LVDS_CLK"),
+    ]
+    result = classify_nodes(nodes, [])
+    assert result == {"n1": "power", "n2": "power", "n3": "power", "n4": "display"}

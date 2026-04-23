@@ -22,9 +22,9 @@ from typing import Any
 #   - usb precedes power    → "VBUS_5V" lands in usb, not power via `\d+v`.
 _RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("charge",  re.compile(r"charge|battery|bms|balance|lifepo4|\bcell\b", re.I)),
-    ("usb",     re.compile(r"\busb\b|type-c|\bcc\d*\b|\bpd\b|vbus", re.I)),
-    ("power",   re.compile(r"vbat|vcc|v\d+|barrel|\d+v\b|\brail\b|supply|pmic|regulator|power", re.I)),
-    ("display", re.compile(r"hdmi|dsi|edp|\blcd\b|backlight|vsync|hsync|\bdp\b", re.I)),
+    ("usb",     re.compile(r"\busb\d*\b|type-c|\bcc\d*\b|\bpd\b|vbus", re.I)),
+    ("power",   re.compile(r"vbat|vcc|vdd|vsys|v\d+|barrel|\d+v\b|\brail\b|supply|\bpwr\b|pmic|regulator|power", re.I)),
+    ("display", re.compile(r"hdmi|dsi|edp|\blcd\b|\blvds\b|backlight|vsync|hsync|\bdp\b", re.I)),
     ("audio",   re.compile(r"i2s|bclk|speaker|mic|headphone|audio", re.I)),
     ("rf",      re.compile(r"antenna|\bant\b|\brf\b|pcie|wifi|\bbt\b", re.I)),
     ("cpu-mem", re.compile(r"\bcpu\b|\bddr\b|\bram\b|\bsoc\b|\bsom\b|\bspi\b|\bi2c\b", re.I)),
@@ -38,6 +38,8 @@ UNKNOWN = "unknown"
 # in Python `_` is a word character, so `\bspi\b` fails against "SPI_MOSI"
 # without this step.
 _SEPARATORS = re.compile(r"[_\-/]+")
+
+__all__ = ["classify_nodes", "UNKNOWN"]
 
 
 def _classify_text(text: str) -> str:
@@ -121,5 +123,12 @@ def classify_nodes(
             result[n["id"]] = top
         else:
             result[n["id"]] = UNKNOWN
+
+    # Contract: every input node gets an entry, even if its type isn't one
+    # of the four the passes handle. Defensive — protects downstream
+    # consumers (graph_transform, frontend) from KeyError if the schema
+    # grows.
+    for n in nodes:
+        result.setdefault(n["id"], UNKNOWN)
 
     return result
