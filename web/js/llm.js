@@ -154,9 +154,9 @@ function connect() {
         break;
       case "session_resumed":
         // Managed mode: we picked up an existing MA session so the agent
-        // remembers the conversation. The UI log is empty (we don't replay
-        // past events in managed mode yet) — warn the tech.
-        logSys("session reprise · l'agent garde tout le contexte précédent (ton chat était plus haut dans la session MA)");
+        // remembers the conversation. A history_replay_start will follow
+        // with the past events so the chat panel also rebuilds visually.
+        logSys("session reprise · historique et mémoire agent restaurés");
         break;
       case "message":
         logMessage(payload.role || "assistant", payload.text || "", payload.replay === true);

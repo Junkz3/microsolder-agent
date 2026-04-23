@@ -247,6 +247,13 @@ async def run_diagnostic_session_managed(
             "session_id": session.id,
             "repair_id": repair_id,
         })
+        # Replay the MA session's past events so the UI chat panel rebuilds
+        # the conversation visually. The agent itself already carries full
+        # state server-side; this is purely for the tech reading "what did
+        # I say yesterday?".
+        await _replay_ma_history_to_ws(
+            ws, client, session.id, session_state,
+        )
 
     # Cache: agent.custom_tool_use events by event.id, so we can look up
     # name+input when `requires_action` arrives and only hands us event_ids.
@@ -293,6 +300,107 @@ async def run_diagnostic_session_managed(
             )
         except Exception:  # noqa: BLE001 — best-effort
             pass
+
+
+async def _replay_ma_history_to_ws(
+    ws: WebSocket,
+    client: AsyncAnthropic,
+    session_id: str,
+    session_state: SessionState,
+) -> None:
+    """Replay a MA session's past events to the browser chat panel.
+
+    The SDK exposes events via `client.beta.sessions.events.list(session_id)`.
+    We iterate chronologically and surface only the subset the chat UI
+    renders: user text, agent text, agent custom_tool_use. The session
+    intro prefix (the hidden "[Nouvelle session de diagnostic] …" glued to
+    the first real user message) is stripped so the tech sees only what
+    they themselves typed.
+
+    Swallows any error — the stream will still work even if replay fails.
+    """
+    try:
+        events_iter = client.beta.sessions.events.list(session_id)
+    except AttributeError:
+        logger.warning(
+            "[Diag-MA] SDK has no beta.sessions.events.list — skipping replay"
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Diag-MA] events.list failed for %s: %s", session_id, exc)
+        return
+
+    collected: list[Any] = []
+    try:
+        # The SDK returns either an async iterator or a paginator; accept both.
+        if hasattr(events_iter, "__aiter__"):
+            async for ev in events_iter:
+                collected.append(ev)
+        else:
+            # Awaitable returning a list-like page.
+            page = await events_iter  # type: ignore[misc]
+            data = getattr(page, "data", None) or list(page)
+            collected.extend(data)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Diag-MA] events.list iterate failed: %s", exc)
+        return
+
+    if not collected:
+        return
+
+    await ws.send_json({"type": "history_replay_start", "count": len(collected)})
+
+    for event in collected:
+        etype = getattr(event, "type", None)
+        if etype == "user.message":
+            content = getattr(event, "content", None) or []
+            for block in content:
+                if getattr(block, "type", None) != "text":
+                    continue
+                text = getattr(block, "text", "") or ""
+                # Drop the bootstrap intro prefix (we prepend it to the first
+                # real user message in _forward_ws_to_session).
+                if text.startswith("[Nouvelle session de diagnostic]"):
+                    marker = "\n\n---\n\n"
+                    idx = text.find(marker)
+                    if idx >= 0:
+                        text = text[idx + len(marker):].strip()
+                    else:
+                        continue  # pure intro with no follow-up — hide
+                if not text:
+                    continue
+                await ws.send_json(
+                    {"type": "message", "role": "user", "text": text, "replay": True}
+                )
+
+        elif etype == "agent.message":
+            content = getattr(event, "content", None) or []
+            for block in content:
+                if getattr(block, "type", None) == "text":
+                    text = getattr(block, "text", "") or ""
+                    if not text:
+                        continue
+                    clean, _ = sanitize_agent_text(text, session_state.board)
+                    await ws.send_json(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "text": clean,
+                            "replay": True,
+                        }
+                    )
+
+        elif etype == "agent.custom_tool_use":
+            await ws.send_json(
+                {
+                    "type": "tool_use",
+                    "name": getattr(event, "name", None),
+                    "input": getattr(event, "input", {}) or {},
+                    "replay": True,
+                }
+            )
+
+    await ws.send_json({"type": "history_replay_end"})
 
 
 async def _forward_ws_to_session(
