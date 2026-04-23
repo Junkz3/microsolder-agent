@@ -460,25 +460,30 @@ function renderDashboardPack(pack, slug, rid) {
     body.innerHTML = '<div class="rd-block-empty">Aucun pack — la mémoire du device n\'est pas encore construite.</div>';
     return;
   }
-  const complete = pack.has_registry && pack.has_knowledge_graph
-    && pack.has_rules && pack.has_dictionary && pack.has_audit_verdict;
-  const statusLabel = complete ? "APPROUVÉ" : "en construction";
-  const statusClass = complete ? "ok" : "warn";
   const arts = [
     { key: "has_registry", label: "registry" },
-    { key: "has_knowledge_graph", label: "graph" },
+    { key: "has_knowledge_graph", label: "knowledge_graph" },
     { key: "has_rules", label: "rules" },
     { key: "has_dictionary", label: "dictionary" },
     { key: "has_audit_verdict", label: "audit" },
   ];
-  const chips = arts.map(a => (
-    `<span class="rd-pack-artefact ${pack[a.key] ? "present" : ""}">${pack[a.key] ? "✓ " : "· "}${a.label}</span>`
-  )).join("");
+  const presentCount = arts.filter(a => !!pack[a.key]).length;
+  const complete = presentCount === arts.length;
+  const statusLabel = complete ? "APPROUVÉ" : "en construction";
+  const statusClass = complete ? "ok" : "warn";
+  const rows = arts.map(a => {
+    const on = !!pack[a.key];
+    return `<li class="rd-pack-row ${on ? "on" : "off"}">` +
+      `<span class="rd-pack-tick" aria-hidden="true">${on ? "✓" : "·"}</span>` +
+      `<span class="rd-pack-label">${a.label}</span>` +
+    `</li>`;
+  }).join("");
   body.innerHTML =
     `<div class="rd-pack-status">` +
       `<span class="rd-pack-status-label ${statusClass}">${statusLabel}</span>` +
+      `<span class="rd-pack-count">${presentCount}/${arts.length}</span>` +
     `</div>` +
-    `<div class="rd-pack-artefacts">${chips}</div>`;
+    `<ul class="rd-pack-rows">${rows}</ul>`;
 }
 
 let _dashboardHandlersWired = false;

@@ -4,6 +4,16 @@
  * Sibling of #homeSections (the list) under <section id="homeSection">.
  * ───────────────────────────────────────────────────────────── */
 
+/* Thin themed scrollbar for the Journal section's scroll container. Matches
+ * the 6px + var(--border) thumb pattern used across the app (memory_bank.css,
+ * llm.css, graph.css, schematic.css, brd.css) so the dashboard doesn't
+ * expose the chunky default system scrollbar. */
+.home { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.home::-webkit-scrollbar { width: 6px; height: 6px; }
+.home::-webkit-scrollbar-track { background: transparent; }
+.home::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.home::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
 #repairDashboard {
   display: flex;
   flex-direction: column;
@@ -301,28 +311,57 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
   white-space: pre-wrap;
 }
 
+/* Secondary-column accents — the right sidebar gets per-block borders so
+ * the Timeline (activity, emerald) and Pack (device memory, cyan) read as
+ * distinct contexts against the primary column's neutral cards.            */
+#rdBlockTimeline { border-left: 2px solid var(--emerald); }
+#rdBlockPack     { border-left: 2px solid var(--cyan); }
+
 /* Timeline ─────────────────────────────────────────────────── */
+/* Vertical rail behind the nodes + halo dots. Node sits on the rail line;
+ * the box-shadow creates a 2px panel-colored "cut-out" that isolates the
+ * dot from the rail so the color stays readable at small sizes.           */
 .rd-timeline {
   list-style: none;
-  padding: 0;
+  padding: 0 0 0 18px;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  position: relative;
+}
+.rd-timeline::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: var(--border-soft);
 }
 .rd-timeline-item {
+  position: relative;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 4px;
   font-size: 13px;
   color: var(--text);
+  transition: background .15s;
 }
+.rd-timeline-item:hover { background: var(--panel-2); }
 .rd-timeline-node {
-  width: 6px;
-  height: 6px;
+  position: absolute;
+  left: -15px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--cyan);
-  margin-top: 6px;
+  box-shadow: 0 0 0 2px var(--panel);
   flex-shrink: 0;
 }
 .rd-timeline-node.emerald { background: var(--emerald); }
@@ -333,38 +372,68 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
   font-size: 11px;
   color: var(--text-3);
   min-width: 8ch;
+  flex-shrink: 0;
 }
 .rd-timeline-label { color: var(--text-2); }
+.rd-timeline-item:hover .rd-timeline-label { color: var(--text); }
 
 /* Pack status ──────────────────────────────────────────────── */
+/* Big status pill + N/5 counter at the top, then a stacked artefact list
+ * (one row per artefact, ✓ in emerald when present / · in text-3 when not).
+ * Reads as a progress list more than a chip cloud.                         */
 .rd-pack-status {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
 }
 .rd-pack-status-label {
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: .4px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .5px;
   text-transform: uppercase;
 }
 .rd-pack-status-label.ok    { color: var(--emerald); }
 .rd-pack-status-label.warn  { color: var(--amber); }
-.rd-pack-artefacts {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.rd-pack-artefact {
+.rd-pack-count {
+  margin-left: auto;
   font-family: var(--mono);
-  font-size: 10.5px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--bg-2);
-  border: 1px solid var(--border-soft);
+  font-size: 11px;
   color: var(--text-3);
+  letter-spacing: .3px;
 }
-.rd-pack-artefact.present { color: var(--emerald); border-color: var(--emerald); }
+.rd-pack-rows {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rd-pack-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 4px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  transition: background .15s;
+}
+.rd-pack-row:hover { background: var(--panel-2); }
+.rd-pack-tick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.rd-pack-row.on  .rd-pack-tick  { color: var(--emerald); }
+.rd-pack-row.off .rd-pack-tick  { color: var(--text-3); }
+.rd-pack-row.on  .rd-pack-label { color: var(--text); }
+.rd-pack-row.off .rd-pack-label { color: var(--text-3); }
 
 /* ─────────────────────────────────────────────────────────────
  * Session pill — topbar indicator of an active session.
