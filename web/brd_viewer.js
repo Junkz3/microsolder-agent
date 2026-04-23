@@ -1,16 +1,22 @@
-// Board fixture selection via `?board=<slug>` query param. Default = MNT Reform.
-// Known slugs map to files under /boards/. Unknown slugs fall back to default.
+// Board fixture selection. Reads `?device=<slug>` first (matches the WS
+// device_slug the backend uses) so navigating from a repair card stays in
+// sync, then falls back to `?board=<slug>` (legacy dev override). Unknown
+// slugs fall back to DEFAULT_BOARD.
 const BOARD_FIXTURES = {
-  'mnt-reform':     '/boards/mnt-reform-motherboard.kicad_pcb',
-  'mnt-reform-brd': '/boards/mnt-reform-motherboard.brd',
-  'bilayer':        '/boards/bilayer_minimal.brd',
+  // Backend slug (same string used by /ws/diagnostic/{device_slug}).
+  'mnt-reform-motherboard': '/boards/mnt-reform-motherboard.kicad_pcb',
+  // Short aliases for dev-mode `?board=` override.
+  'mnt-reform':             '/boards/mnt-reform-motherboard.kicad_pcb',
+  'mnt-reform-brd':         '/boards/mnt-reform-motherboard.brd',
+  'bilayer':                '/boards/bilayer_minimal.brd',
   // 0BSD reference fixture from whitequark/kicad-boardview — 245 parts,
   // 165 top + 80 bottom, canonical production-grade bilayer test board.
-  'whitequark':     '/boards/whitequark-example.brd',
+  'whitequark':             '/boards/whitequark-example.brd',
 };
-const DEFAULT_BOARD = 'mnt-reform';
+const DEFAULT_BOARD = 'mnt-reform-motherboard';
 function resolveBoardUrl() {
-  const slug = new URLSearchParams(window.location.search).get('board');
+  const qs = new URLSearchParams(window.location.search);
+  const slug = qs.get('device') || qs.get('board');
   return BOARD_FIXTURES[slug] || BOARD_FIXTURES[DEFAULT_BOARD];
 }
 
@@ -24,11 +30,24 @@ const state = {
   pinsByNet: null,        // Map<netName, number[]>  pin indices grouped by net
   netCategory: null,      // Map<netName, 'power' | 'ground' | 'signal'>
   partByRefdes: null,     // Map<refdes, Part>  — lookup from pin.part_refdes
-  selectedPinIdx: null,   // currently highlighted pin (index into board.pins)
-  selectedPart: null,     // currently highlighted part (object or null)
   hoveredPinIdx: null,    // pin under the cursor (for click-affordance outline)
   netColorHex: null,      // { signal, power, ground, clock, reset, 'no-net' } → "#rrggbb"
   pinPalette: null,       // rebuilt rgba palette derived from netColorHex
+  // User-origin interactive state (mouse/keyboard) — previously flat.
+  user: {
+    selectedPart: null,     // currently highlighted part (object or null)
+    selectedPinIdx: null,   // currently highlighted pin (index into board.pins)
+  },
+  // Agent-origin state (WS events from dispatch_bv). Independent from user.
+  agent: {
+    highlights: new Set(),   // Set<refdes> — cyan stroke on these parts
+    focused: null,            // refdes string or null — primary focus target
+    dimmed: false,            // when true, non-highlighted parts render faded
+    annotations: new Map(),   // id → {refdes, label}
+    arrows: new Map(),        // id → {from: [x,y], to: [x,y]}  — mils coords
+    net: null,                // agent-highlighted net name or null
+    filter: null,             // agent-filter refdes prefix or null
+  },
 };
 
 const RATNEST_MAX_PINS = 50;  // skip drawing fly-lines for huge nets (GND has ~500)
@@ -393,6 +412,22 @@ function screenToMils(sx, sy) {
   return { x: mx, y: my };
 }
 
+// Choose an overlay stroke for a part based on user + agent state.
+// Precedence: user selection (violet) > agent focused (cyan strong)
+// > agent highlighted (cyan normal) > null.
+function _partStrokeOverlay(part) {
+  if (state.user.selectedPart && state.user.selectedPart.refdes === part.refdes) {
+    return { color: cssVar('--violet') || '#c084fc', width: 2.4 };
+  }
+  if (state.agent.focused === part.refdes) {
+    return { color: cssVar('--cyan') || '#38bdf8', width: 2.4 };
+  }
+  if (state.agent.highlights.has(part.refdes)) {
+    return { color: cssVar('--cyan') || '#38bdf8', width: 1.8 };
+  }
+  return null;
+}
+
 // --- drawing ---
 function draw() {
   animFrame = null;
@@ -460,19 +495,69 @@ function draw() {
     const rw = Math.abs(b.x - a.x);
     const rh = Math.abs(b.y - a.y);
 
-    const isSelected = state.selectedPart && state.selectedPart.refdes === part.refdes;
-    if (isSelected) {
-      ctx.fillStyle   = 'rgba(56,189,248,0.22)';
-      ctx.strokeStyle = 'rgba(56,189,248,1)';
-      ctx.lineWidth   = 2;
-    } else {
+    // Agent dim: fade unrelated parts when state.agent.dimmed is set.
+    const isUserSelected = state.user.selectedPart && state.user.selectedPart.refdes === part.refdes;
+    const isAgentActive  = state.agent.highlights.has(part.refdes) || state.agent.focused === part.refdes;
+    const shouldDim = state.agent.dimmed && !isUserSelected && !isAgentActive;
+
+    ctx.save();
+    try {
+      if (shouldDim) ctx.globalAlpha = 0.18;
+
       ctx.fillStyle   = 'rgba(56,189,248,0.12)';
       ctx.strokeStyle = 'rgba(56,189,248,0.7)';
       ctx.lineWidth   = 1;
+      ctx.fillRect(rx, ry, rw, rh);
+      ctx.strokeRect(rx, ry, rw, rh);
+
+      // Overlay stroke: user selection (violet) > agent focused (cyan strong)
+      // > agent highlighted (cyan normal). Replaces the old isSelected branch.
+      const overlay = _partStrokeOverlay(part);
+      if (overlay) {
+        ctx.strokeStyle = overlay.color;
+        ctx.lineWidth   = overlay.width;
+        // For user-selected parts also use a tinted fill to match prior look.
+        if (isUserSelected) ctx.fillStyle = 'rgba(56,189,248,0.22)';
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeRect(rx, ry, rw, rh);
+      }
+    } finally {
+      ctx.restore();
     }
-    ctx.fillRect(rx, ry, rw, rh);
-    ctx.strokeRect(rx, ry, rw, rh);
     ctx.lineWidth = 1;
+  }
+
+  // Agent annotations: small cyan label near the part's bbox top-left.
+  for (const [, ann] of state.agent.annotations) {
+    const part = state.partByRefdes?.get(ann.refdes);
+    if (!part) continue;
+    const bbox = state.partBodyBboxes?.get(part.refdes) || part.bbox;
+    if (!bbox || bbox.length < 2) continue;
+    const { x: sx, y: sy } = milsToScreen(bbox[0].x, bbox[0].y, boardW);
+    ctx.save();
+    ctx.fillStyle = cssVar('--cyan') || '#38bdf8';
+    ctx.font = "10px 'JetBrains Mono', monospace";
+    ctx.fillText(ann.label, sx, sy - 6);
+    ctx.restore();
+  }
+
+  // Agent arrows: straight line + small arrowhead, mils → screen coords.
+  for (const [, arr] of state.agent.arrows) {
+    const { x: fx, y: fy } = milsToScreen(arr.from[0], arr.from[1], boardW);
+    const { x: tx, y: ty } = milsToScreen(arr.to[0],   arr.to[1],   boardW);
+    ctx.save();
+    ctx.strokeStyle = cssVar('--violet') || '#c084fc';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy); ctx.lineTo(tx, ty); ctx.stroke();
+    const ang = Math.atan2(ty - fy, tx - fx);
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - 8 * Math.cos(ang - 0.4), ty - 8 * Math.sin(ang - 0.4));
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - 8 * Math.cos(ang + 0.4), ty - 8 * Math.sin(ang + 0.4));
+    ctx.stroke();
+    ctx.restore();
   }
 
   // ---- pins ----
@@ -492,8 +577,8 @@ function draw() {
   const PIN_NET_SEL   = state.pinPalette.PIN_NET_SEL;
   const FLY_LINE_COLOR = state.pinPalette.FLY_LINE_COLOR;
 
-  // Determine the selected net (if any) from state.selectedPinIdx
-  const selectedPin = state.selectedPinIdx != null ? pins[state.selectedPinIdx] : null;
+  // Determine the selected net (if any) from state.user.selectedPinIdx
+  const selectedPin = state.user.selectedPinIdx != null ? pins[state.user.selectedPinIdx] : null;
   const selectedNet = selectedPin && selectedPin.net ? selectedPin.net : null;
   const netPinSet = selectedNet ? new Set(state.pinsByNet?.get(selectedNet) || []) : null;
   let selectedCat = 'signal';
@@ -526,11 +611,11 @@ function draw() {
       : 'no-net';
     // no-net pads are drawn as hollow outlines so they never blend into any
     // filled category (power / ground / signal / clock / reset).
-    const isHollow = pinCat === 'no-net' && !(netPinSet && netPinSet.has(i)) && state.selectedPinIdx !== i;
+    const isHollow = pinCat === 'no-net' && !(netPinSet && netPinSet.has(i)) && state.user.selectedPinIdx !== i;
 
     if (netPinSet && netPinSet.has(i)) {
       [ctx.fillStyle, ctx.strokeStyle] = PIN_NET_SEL[selectedCat];
-    } else if (state.selectedPinIdx === i && !netPinSet) {
+    } else if (state.user.selectedPinIdx === i && !netPinSet) {
       // Clicked a no-net pin — no fly-lines, but still highlight the pin itself
       [ctx.fillStyle, ctx.strokeStyle] = PIN_NET_SEL[selectedCat];
     } else {
@@ -570,7 +655,7 @@ function draw() {
     }
 
     // Hover affordance — same shape as the pad, inflated by a 3 px gap.
-    if (i === state.hoveredPinIdx && i !== state.selectedPinIdx) {
+    if (i === state.hoveredPinIdx && i !== state.user.selectedPinIdx) {
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';   // --cyan
       ctx.lineWidth = 1.5;
       const gap = 3;
@@ -593,15 +678,15 @@ function draw() {
   }
 
   // ---- ratnest fly-lines (selected net only, skip huge nets like GND) ----
-  if (selectedNet && netPinSet && netPinSet.size <= RATNEST_MAX_PINS && state.selectedPinIdx != null) {
-    const anchor = pins[state.selectedPinIdx];
+  if (selectedNet && netPinSet && netPinSet.size <= RATNEST_MAX_PINS && state.user.selectedPinIdx != null) {
+    const anchor = pins[state.user.selectedPinIdx];
     const anchorScr = milsToScreen(anchor.pos.x, anchor.pos.y, boardW);
     ctx.strokeStyle = FLY_LINE_COLOR[selectedCat];
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     for (const pinIdx of netPinSet) {
-      if (pinIdx === state.selectedPinIdx) continue;
+      if (pinIdx === state.user.selectedPinIdx) continue;
       const other = pins[pinIdx];
       const scr = milsToScreen(other.pos.x, other.pos.y, boardW);
       ctx.moveTo(anchorScr.x, anchorScr.y);
@@ -683,7 +768,7 @@ function updateCursorBadge(badge) {
 function updateInspector() {
   const el = document.querySelector('.brd-inspector');
   if (!el) return;
-  const part = state.selectedPart;
+  const part = state.user.selectedPart;
   if (!part) {
     el.hidden = true;
     el.innerHTML = '';
@@ -701,8 +786,8 @@ function updateInspector() {
     netCounts.set(net, (netCounts.get(net) || 0) + 1);
     if (!firstPinByNet.has(net)) firstPinByNet.set(net, pinIdx);
   }
-  const selectedNetName_hoisted = state.selectedPinIdx != null
-    ? (state.board.pins[state.selectedPinIdx]?.net || null)
+  const selectedNetName_hoisted = state.user.selectedPinIdx != null
+    ? (state.board.pins[state.user.selectedPinIdx]?.net || null)
     : null;
   // Promote the currently-selected net to the top of the list so the user
   // doesn't have to scroll past GND / power rails to find it.
@@ -743,8 +828,8 @@ function updateInspector() {
   const rot = part.rotation_deg != null ? `${Math.round(part.rotation_deg)}°` : '—';
   const smdLabel = part.is_smd ? 'SMD' : 'THT';
   const pinCount = (part.pin_refs || []).length;
-  const selectedNetName = state.selectedPinIdx != null
-    ? (state.board.pins[state.selectedPinIdx]?.net || null)
+  const selectedNetName = state.user.selectedPinIdx != null
+    ? (state.board.pins[state.user.selectedPinIdx]?.net || null)
     : null;
 
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -798,8 +883,8 @@ function updateInspector() {
 
   // Wire interactions
   el.querySelector('.brd-ins-close')?.addEventListener('click', () => {
-    state.selectedPart = null;
-    state.selectedPinIdx = null;
+    state.user.selectedPart = null;
+    state.user.selectedPinIdx = null;
     updateInspector();
     const tb = document.querySelector('.brd-toolbar');
     if (tb) updateNetReadout(tb);
@@ -809,7 +894,7 @@ function updateInspector() {
     li.addEventListener('click', () => {
       const pinIdx = parseInt(li.dataset.pin, 10);
       if (Number.isNaN(pinIdx)) return;
-      state.selectedPinIdx = pinIdx;
+      state.user.selectedPinIdx = pinIdx;
       // Keep the same part selected — user is exploring its nets
       updateInspector();
       const tb = document.querySelector('.brd-toolbar');
@@ -822,8 +907,8 @@ function updateInspector() {
       const refdes = li.dataset.refdes;
       const target = state.partByRefdes?.get(refdes);
       if (!target) return;
-      state.selectedPart = target;
-      state.selectedPinIdx = null;
+      state.user.selectedPart = target;
+      state.user.selectedPinIdx = null;
       updateInspector();
       const tb = document.querySelector('.brd-toolbar');
       if (tb) updateNetReadout(tb);
@@ -835,12 +920,12 @@ function updateInspector() {
 function updateNetReadout(toolbar) {
   const el = toolbar.querySelector('.brd-net');
   if (!el) return;
-  if (state.selectedPinIdx == null || !state.board) {
+  if (state.user.selectedPinIdx == null || !state.board) {
     el.textContent = '';
     el.style.display = 'none';
     return;
   }
-  const pin = state.board.pins[state.selectedPinIdx];
+  const pin = state.board.pins[state.user.selectedPinIdx];
   const net = pin && pin.net;
   if (!net) {
     el.textContent = `${pin.part_refdes}.${pin.index} · no-net`;
@@ -936,12 +1021,12 @@ function attachInteraction(containerEl, toolbar, badge) {
         const pinHit = hitTestPin(sx, sy);
         if (pinHit != null) {
           const pin = state.board.pins[pinHit];
-          state.selectedPinIdx = pinHit;
-          state.selectedPart   = state.partByRefdes?.get(pin.part_refdes) || null;
+          state.user.selectedPinIdx = pinHit;
+          state.user.selectedPart   = state.partByRefdes?.get(pin.part_refdes) || null;
         } else {
           const partHit = hitTestPart(sx, sy);
-          state.selectedPinIdx = null;
-          state.selectedPart   = partHit;
+          state.user.selectedPinIdx = null;
+          state.user.selectedPart   = partHit;
         }
         updateNetReadout(toolbar);
         updateInspector();
@@ -952,9 +1037,9 @@ function attachInteraction(containerEl, toolbar, badge) {
 
   // Escape clears selection
   window.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && (state.selectedPinIdx != null || state.selectedPart != null)) {
-      state.selectedPinIdx = null;
-      state.selectedPart   = null;
+    if (ev.key === 'Escape' && (state.user.selectedPinIdx != null || state.user.selectedPart != null)) {
+      state.user.selectedPinIdx = null;
+      state.user.selectedPart   = null;
       updateNetReadout(toolbar);
       updateInspector();
       requestRedraw();
@@ -1131,9 +1216,147 @@ export async function initBoardview(containerEl) {
   state.pinsByNet = computePinsByNet(board);
   state.netCategory = computeNetCategory(board);
   state.partByRefdes = computePartByRefdes(board);
-  state.selectedPinIdx = null;
-  state.selectedPart = null;
+  state.user.selectedPinIdx = null;
+  state.user.selectedPart = null;
   mountCanvas(containerEl, board);
 }
 
 window.initBoardview = initBoardview;
+
+// ---------- Public agent API ----------
+// Drain anything buffered by the early stub (installed in web/js/main.js
+// before brd_viewer loaded), then install the real Boardview object that
+// mutates state.agent and schedules a redraw.
+{
+  const pending = (window.Boardview && window.Boardview.__pending) || [];
+
+  const _applyHighlight = ({ refdes, color = 'accent', additive = false }) => {
+    const list = Array.isArray(refdes) ? refdes : [refdes];
+    if (!additive) state.agent.highlights.clear();
+    for (const r of list) state.agent.highlights.add(r);
+    requestRedraw();
+  };
+
+  const _applyFocus = ({ refdes, bbox, zoom = 2.5, auto_flipped = false }) => {
+    state.agent.focused = refdes;
+    state.agent.highlights = new Set([refdes]);
+    if (auto_flipped) activeSide = activeSide === LAYER_TOP ? LAYER_BOTTOM : LAYER_TOP;
+    // Pan/zoom the viewport to center on bbox. bbox is [[x1,y1],[x2,y2]] in mils.
+    if (bbox && canvas) {
+      const cx = (bbox[0][0] + bbox[1][0]) / 2;
+      const cy = (bbox[0][1] + bbox[1][1]) / 2;
+      vp.zoom = zoom;
+      vp.panX = canvas.clientWidth / 2 - cx * vp.zoom;
+      vp.panY = canvas.clientHeight / 2 - cy * vp.zoom;
+    }
+    requestRedraw();
+  };
+
+  const _applyReset = () => {
+    state.agent.highlights.clear();
+    state.agent.focused = null;
+    state.agent.dimmed = false;
+    state.agent.annotations.clear();
+    state.agent.arrows.clear();
+    state.agent.net = null;
+    state.agent.filter = null;
+    // Preserve state.user.* and viewport.
+    requestRedraw();
+  };
+
+  const _applyFlip = () => {
+    // Delegate to the side-toggle button if it exists; otherwise toggle activeSide directly.
+    const btn = document.querySelector('.brd-seg-btn[data-side="bottom"]');
+    if (btn && typeof btn.click === 'function') {
+      btn.click();
+    } else {
+      activeSide = activeSide === LAYER_TOP ? LAYER_BOTTOM : LAYER_TOP;
+      requestRedraw();
+    }
+  };
+
+  const _applyAnnotate = ({ refdes, label, id }) => {
+    state.agent.annotations.set(id, { refdes, label });
+    requestRedraw();
+  };
+
+  const _applyDimUnrelated = () => {
+    state.agent.dimmed = true;
+    requestRedraw();
+  };
+
+  const _applyHighlightNet = ({ net }) => {
+    state.agent.net = net;
+    requestRedraw();
+  };
+
+  const _applyShowPin = ({ refdes }) => {
+    // Simple pulse: add refdes to highlights (a real pulse animation is future polish).
+    state.agent.highlights.add(refdes);
+    requestRedraw();
+  };
+
+  const _applyDrawArrow = ({ from, to, id }) => {
+    // WS event schema sends tuples as arrays: from=[x,y], to=[x,y] (mils).
+    state.agent.arrows.set(id, { from, to });
+    requestRedraw();
+  };
+
+  const _applyFilter = ({ prefix }) => {
+    state.agent.filter = prefix || null;
+    requestRedraw();
+  };
+
+  const _applyMeasure = () => {
+    // No persistent visual state — the tech reads the distance in the agent's text answer.
+  };
+
+  const _applyLayerVisibility = () => {
+    // Not currently wired to a side-toggle in brd_viewer; future work.
+  };
+
+  const _dispatch = {
+    'boardview.highlight':        _applyHighlight,
+    'boardview.focus':            _applyFocus,
+    'boardview.reset_view':       _applyReset,
+    'boardview.flip':             _applyFlip,
+    'boardview.annotate':         _applyAnnotate,
+    'boardview.dim_unrelated':    _applyDimUnrelated,
+    'boardview.highlight_net':    _applyHighlightNet,
+    'boardview.show_pin':         _applyShowPin,
+    'boardview.draw_arrow':       _applyDrawArrow,
+    'boardview.filter':           _applyFilter,
+    'boardview.measure':          _applyMeasure,
+    'boardview.layer_visibility': _applyLayerVisibility,
+  };
+
+  window.Boardview = {
+    apply(ev) {
+      const fn = _dispatch[ev?.type];
+      if (!fn) {
+        console.warn('[Boardview] unknown event type:', ev?.type);
+        return;
+      }
+      try { fn(ev); }
+      catch (err) { console.warn('[Boardview] apply failed:', err, ev); }
+    },
+    // Convenience methods (debugging, future code).
+    highlight:        _applyHighlight,
+    focus:            _applyFocus,
+    reset:            _applyReset,
+    flip:             _applyFlip,
+    annotate:         _applyAnnotate,
+    dim_unrelated:    _applyDimUnrelated,
+    highlight_net:    _applyHighlightNet,
+    show_pin:         _applyShowPin,
+    draw_arrow:       _applyDrawArrow,
+    filter:           _applyFilter,
+    measure:          _applyMeasure,
+    layer_visibility: _applyLayerVisibility,
+  };
+
+  // Drain events buffered by the early stub (installed before this module loaded).
+  for (const ev of pending) {
+    try { window.Boardview.apply(ev); } catch (_) { /* ignore bad events */ }
+  }
+}
