@@ -85,6 +85,20 @@ def generate(slug: str, memory_root: Path, seed: int = 42) -> list[dict]:
                 state_comps: dict[str, str] = {}
                 state_rails: dict[str, str] = {}
                 for c in obs_comps:
+                    # Phase 4 — only emit observations with modes that are
+                    # valid for the target's kind. Passives can only be
+                    # observed open/short/alive; ICs dead/alive/anomalous/hot.
+                    # A tech never reports "FB12 dead"; they report the rail
+                    # death and let the engine propose the open FB.
+                    comp_kind = getattr(eg.components.get(c), "kind", "ic")
+                    if comp_kind != "ic":
+                        if c in cascade["dead_comps"]:
+                            # Passive downstream of a real kill — from the
+                            # tech's side this is silent. Skip rather than
+                            # synthesise a semantically-wrong mode.
+                            continue
+                        state_comps[c] = "alive"
+                        continue
                     if c in cascade["dead_comps"]:
                         state_comps[c] = "dead"
                     elif c in cascade["anomalous_comps"]:
