@@ -77,11 +77,31 @@ const SimulationController = {
 
   render() {
     this._ensureScrubber();
-    this._applyStateClasses();
+    // Only paint the graph with phase state when the scrubber is open —
+    // if the user dismissed the timeline, keep the graph in its default look.
+    const stored = (typeof localStorage !== "undefined" && localStorage.getItem("simScrubberVisible")) ?? "1";
+    if (stored !== "0") {
+      this._applyStateClasses();
+    } else {
+      this._clearStateClasses();
+    }
     this._updateScrubberLabel();
   },
 
   _ensureScrubber() {
+    const host = document.querySelector("#schematicSection") || document.body;
+    // Mount the toggle-to-open chip once; it's always present and flips
+    // visibility depending on whether the scrubber itself is open.
+    let chip = document.querySelector(".sim-scrubber-toggle");
+    if (!chip) {
+      chip = document.createElement("button");
+      chip.className = "sim-scrubber-toggle";
+      chip.title = "Afficher la timeline";
+      chip.textContent = "▸ Timeline";
+      host.appendChild(chip);
+      chip.addEventListener("click", () => this._setVisible(true));
+    }
+
     let el = document.querySelector(".sim-scrubber");
     if (!el) {
       el = document.createElement("div");
@@ -94,10 +114,8 @@ const SimulationController = {
         <input type="range" min="0" max="0" step="1" value="0" />
         <span class="sim-phase-label">—</span>
         <span class="sim-blocked-overlay" hidden></span>
+        <button data-act="close" class="sim-scrubber-close" title="Masquer la timeline">×</button>
       `;
-      // Mount inside the schematic section container so positioning is
-      // absolute-to-the-view, not absolute-to-the-page.
-      const host = document.querySelector("#schematicSection") || document.body;
       host.appendChild(el);
       el.addEventListener("click", (ev) => {
         const act = ev.target?.dataset?.act;
@@ -106,6 +124,7 @@ const SimulationController = {
         else if (act === "step-back") this.seek(this.cursor - 1);
         else if (act === "step-fwd") this.seek(this.cursor + 1);
         else if (act === "play-pause") this.playing ? this.pause() : this.play();
+        else if (act === "close") this._setVisible(false);
       });
       el.querySelector("input[type=range]").addEventListener("input", (ev) => {
         this.seek(Number(ev.target.value));
@@ -115,7 +134,23 @@ const SimulationController = {
     const range = el.querySelector("input[type=range]");
     range.max = Math.max(0, total);
     range.value = this.cursor;
-    el.hidden = !this.timeline || this.timeline.states.length === 0;
+    // Scrubber is shown only when there's a timeline AND the user hasn't
+    // explicitly closed it. `visible` persists across reloads via localStorage.
+    const hasTl = !!(this.timeline && this.timeline.states.length > 0);
+    const stored = (typeof localStorage !== "undefined" && localStorage.getItem("simScrubberVisible")) ?? "1";
+    const visible = hasTl && stored !== "0";
+    el.hidden = !visible;
+    chip.hidden = !hasTl || visible;
+  },
+
+  _setVisible(on) {
+    try { localStorage.setItem("simScrubberVisible", on ? "1" : "0"); } catch (_) {}
+    if (!on) {
+      this.pause();
+      this._clearStateClasses();
+    }
+    this._ensureScrubber();
+    if (on) this._applyStateClasses();
   },
 
   _updateScrubberLabel() {
@@ -134,15 +169,22 @@ const SimulationController = {
     el.querySelector("[data-act=play-pause]").textContent = this.playing ? "⏸" : "▶";
   },
 
+  _clearStateClasses() {
+    // Remove every sim-* class from the schematic DOM so the graph returns
+    // to its default appearance (no dimming, no cascade glyphs, no dead
+    // outlines). Called when the user closes the timeline toggle.
+    document.querySelectorAll(
+      ".sim-off, .sim-rising, .sim-stable, .sim-dead, .sim-signal-high, .sim-signal-low, .sim-cascade"
+    ).forEach((n) => n.classList.remove(
+      "sim-off", "sim-rising", "sim-stable", "sim-dead", "sim-signal-high", "sim-signal-low", "sim-cascade",
+    ));
+  },
+
   _applyStateClasses() {
     const state = this.timeline?.states?.[this.cursor];
     if (!state) return;
     // Clear prior classes on anything currently marked.
-    document.querySelectorAll(
-      ".sim-off, .sim-rising, .sim-stable, .sim-dead, .sim-signal-high, .sim-signal-low"
-    ).forEach((n) => n.classList.remove(
-      "sim-off", "sim-rising", "sim-stable", "sim-dead", "sim-signal-high", "sim-signal-low",
-    ));
+    this._clearStateClasses();
 
     // Nodes — we rely on the existing graph renderer having attached
     // `data-refdes` / `data-rail` / `data-signal` on each selectable element.
@@ -162,6 +204,26 @@ const SimulationController = {
       document.querySelectorAll(`[data-signal="${CSS.escape(label)}"]`).forEach((el) => {
         el.classList.add(`sim-signal-${st}`);
       });
+    }
+
+    // Overlay: cascade-dead nodes — downstream of a killed upstream rail
+    // source but NOT directly killed by the user. Timeline-wide, not
+    // phase-specific — once a cascade is computed, those nodes carry the
+    // badge for the entire playback.
+    const tl = this.timeline;
+    if (tl) {
+      const killedSet = new Set(tl.killed_refdes || []);
+      for (const refdes of (tl.cascade_dead_components || [])) {
+        if (killedSet.has(refdes)) continue;
+        document.querySelectorAll(`[data-refdes="${CSS.escape(refdes)}"]`).forEach((el) => {
+          el.classList.add("sim-cascade");
+        });
+      }
+      for (const label of (tl.cascade_dead_rails || [])) {
+        document.querySelectorAll(`[data-rail="${CSS.escape(label)}"]`).forEach((el) => {
+          el.classList.add("sim-cascade");
+        });
+      }
     }
   },
 
@@ -1373,6 +1435,13 @@ function renderNodes(model) {
         s.append("text").attr("class", "sch-spof-badge")
           .attr("y", h / 2 + 24).text(`⚠ SPOF · ${d.impactPct}%`);
       }
+      // Cascade-dead warning glyph — hidden by default, shown via .sim-cascade.
+      s.append("text")
+        .attr("class", "sch-cascade-warn")
+        .attr("x", 0)
+        .attr("y", -h / 2 - 20)
+        .attr("text-anchor", "middle")
+        .text("⚠");
       return;
     }
     // Component — try the type-specific schematic symbol first; fall back
@@ -1407,6 +1476,13 @@ function renderNodes(model) {
       s.append("text").attr("class", "sch-spof-badge")
         .attr("y", -h / 2 - 7).text(`⚠ SPOF · ${d.impactPct}%`);
     }
+    // Cascade-dead warning glyph — hidden by default, shown via .sim-cascade.
+    s.append("text")
+      .attr("class", "sch-cascade-warn")
+      .attr("x", 0)
+      .attr("y", -h / 2 - 22)
+      .attr("text-anchor", "middle")
+      .text("⚠");
     // Pin dots + leader lines for sources & consumers with showPins.
     if (d.showPins) {
       for (const side of ["left", "right", "top", "bottom"]) {
@@ -1840,6 +1916,48 @@ function updateInspector(node) {
         </table>
       </section>` : ""}
     `;
+  }
+
+  // --- Fault-injection action (behavioral simulator integration) ---
+  // Appears only on component nodes. Toggles the refdes into
+  // SimulationController.killedRefdes, re-fetches the timeline, and seeks
+  // the scrubber to the phase where the board stalls so the tech sees the
+  // cascade immediately.
+  if (node.kind !== "rail" && node.refdes) {
+    const already = SimulationController.killedRefdes.includes(node.refdes);
+    const faultBtn = document.createElement("button");
+    faultBtn.className = "sim-inspector-action sim-inspector-action--danger";
+    faultBtn.textContent = already
+      ? `Retirer la panne · ${node.refdes}`
+      : `Simuler panne · ${node.refdes}`;
+    faultBtn.addEventListener("click", async () => {
+      if (already) {
+        SimulationController.killedRefdes = SimulationController.killedRefdes.filter(r => r !== node.refdes);
+      } else {
+        SimulationController.killedRefdes.push(node.refdes);
+      }
+      await SimulationController.refresh(STATE.slug);
+      const tl = SimulationController.timeline;
+      if (tl && tl.blocked_at_phase != null) {
+        const idx = tl.states.findIndex(s => s.phase_index === tl.blocked_at_phase);
+        if (idx >= 0) SimulationController.seek(idx);
+        SimulationController.pause();
+      }
+    });
+    body.appendChild(faultBtn);
+
+    // Reset button — only when at least one fault is active.
+    if (SimulationController.killedRefdes.length > 0) {
+      const resetBtn = document.createElement("button");
+      resetBtn.className = "sim-inspector-action";
+      resetBtn.textContent = `Réinitialiser la simulation (${SimulationController.killedRefdes.length} panne(s))`;
+      resetBtn.addEventListener("click", async () => {
+        SimulationController.killedRefdes = [];
+        await SimulationController.refresh(STATE.slug);
+        SimulationController.seek(0);
+      });
+      body.appendChild(resetBtn);
+    }
   }
 
   // Wire clickable chips inside the inspector to navigate between nodes.

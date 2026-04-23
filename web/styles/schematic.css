@@ -382,7 +382,7 @@ body.llm-open .sch-root{right:420px}
 .sim-scrubber {
   position: absolute;
   left: 50%;
-  top: 12px;
+  bottom: 156px;   /* sits just above .sch-boot-timeline (148px + 8px gap) */
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -441,3 +441,115 @@ body.llm-open .sch-root{right:420px}
 .sim-scrubber .sim-blocked-overlay:not([hidden]) { visibility: visible; }
 .sim-scrubber .sim-blocked-overlay[hidden] { display: block; }
 .sim-scrubber[hidden] { display: none; }
+
+/* Fault-injection buttons — appear at the bottom of the component inspector. */
+.sim-inspector-action {
+  all: unset;
+  display: block;
+  width: calc(100% - 20px);
+  margin: 10px 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-align: center;
+  cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: var(--panel);
+  transition: color .15s, background .15s, border-color .15s;
+}
+.sim-inspector-action:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.sim-inspector-action--danger {
+  color: var(--amber);
+  border-color: color-mix(in oklch, var(--amber) 60%, transparent);
+}
+.sim-inspector-action--danger:hover {
+  color: var(--amber);
+  background: color-mix(in oklch, var(--amber) 10%, transparent);
+  border-color: var(--amber);
+}
+
+/* ---- Cascade-dead warning glyph ---------------------------------------- */
+/* Shown on components/rails downstream of a killed upstream (indirect
+   victims). Distinct from sim-dead (directly killed = red dashed) so
+   the tech can tell root cause vs collateral damage at a glance.       */
+.sch-cascade-warn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  fill: var(--amber);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  display: none;
+  pointer-events: none;
+}
+.sim-cascade .sch-cascade-warn {
+  display: block;
+  animation: cascade-flicker 1.8s ease-in-out infinite;
+}
+@keyframes cascade-flicker {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .55; }
+}
+/* Subtle amber tint on the shape so cascade nodes stand apart from the
+   "just not yet booted" sim-off nodes. */
+#schematicSection .sim-cascade .sch-shape {
+  stroke: color-mix(in oklch, var(--amber) 70%, transparent);
+  stroke-width: 2px;
+  filter: drop-shadow(0 0 4px color-mix(in oklch, var(--amber) 40%, transparent));
+}
+/* When a node is both sim-off AND sim-cascade, raise opacity so the
+   warning glyph is readable against the faded shape. */
+#schematicSection .sim-off.sim-cascade {
+  opacity: .55;
+  filter: saturate(.6);
+}
+
+/* ---- Scrubber open / close toggle --------------------------------------- */
+/* Close button lives on the right edge of the scrubber itself. */
+.sim-scrubber .sim-scrubber-close {
+  margin-left: 6px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  color: var(--text-3);
+}
+.sim-scrubber .sim-scrubber-close:hover {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+/* Re-open chip replaces the scrubber when it's hidden — same corner, same
+   glass treatment, minimal surface so it stays out of the way. */
+.sim-scrubber-toggle {
+  all: unset;
+  position: absolute;
+  left: 50%;
+  bottom: 156px;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, var(--panel) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text-2);
+  transition: color .15s, background .15s, border-color .15s;
+}
+.sim-scrubber-toggle:hover {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+.sim-scrubber-toggle[hidden] { display: none; }
