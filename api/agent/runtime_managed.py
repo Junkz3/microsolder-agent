@@ -73,97 +73,94 @@ _SUMMARY_SYSTEM = (
 async def _summarize_prior_history_for_resume(
     *,
     client: AsyncAnthropic,
-    device_slug: str,
-    repair_id: str | None,
-    conv_id: str | None,
-    memory_root: Path,
+    old_session_id: str,
     cap: int = 150,
 ) -> dict[str, Any] | None:
-    """Summarize the prior conversation history using Haiku for graceful session recovery.
+    """Summarize a dying MA session's transcript via Haiku for graceful recovery.
 
-    Reads the last `cap` turns from messages.jsonl, formats them as a compact
-    prose transcript, and calls Haiku to produce a French structured summary.
-    Returns None when there is nothing to summarize or on any error.
+    Reads events from `old_session_id` (which is still retrievable even after
+    the agent that ran it has been archived), collects user / agent / tool
+    lines, caps to the last `cap` turns, and hands the transcript to Haiku.
+    Returns `{summary, usage}` or `None` on any failure (missing SDK surface,
+    empty history, Haiku error, etc.).
+
+    Local chat_history.jsonl is NOT read here — in MANAGED mode the history
+    lives server-side on Anthropic, not on disk, so we pull it straight from
+    the source.
     """
-    if not repair_id or not conv_id:
+    if not old_session_id:
         return None
-
-    from api.agent.chat_history import load_events_with_costs
 
     try:
-        records = load_events_with_costs(
-            device_slug=device_slug,
-            repair_id=repair_id,
-            conv_id=conv_id,
-            memory_root=memory_root,
+        events_iter = client.beta.sessions.events.list(old_session_id)
+    except AttributeError:
+        logger.warning(
+            "[Diag-MA] _summarize: SDK has no beta.sessions.events.list — skipping"
         )
+        return None
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[Diag-MA] _summarize: load_events_with_costs failed: %s", exc)
+        logger.warning(
+            "[Diag-MA] _summarize: events.list(%s) failed: %s", old_session_id, exc
+        )
         return None
 
-    if not records:
+    collected: list[Any] = []
+    try:
+        if hasattr(events_iter, "__aiter__"):
+            async for ev in events_iter:
+                collected.append(ev)
+        else:
+            page = await events_iter  # type: ignore[misc]
+            data = getattr(page, "data", None) or list(page)
+            collected.extend(data)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Diag-MA] _summarize: events iterate failed: %s", exc)
         return None
 
-    # Cap to the last N records.
-    if len(records) > cap:
-        records = records[-cap:]
+    if not collected:
+        return None
 
-    # Format into a compact transcript.
     lines: list[str] = []
-    for event, _cost in records:
-        role = event.get("role")
-        content = event.get("content")
-        if role == "user":
-            text = ""
-            if isinstance(content, str):
-                text = content
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text") or ""
-                        break
-            # Strip session intro boilerplate from display.
-            if text.startswith(("[Nouvelle session", "[CONTEXTE TECHNICIEN]", "[REPRISE DE CONVERSATION")):
-                marker = "\n\n---\n\n"
-                idx = text.rfind(marker)
-                if idx >= 0:
-                    text = text[idx + len(marker):].strip()
-                else:
-                    continue  # pure intro — skip
-            if text:
-                lines.append(f"[user] {text[:300]}")
-        elif role == "assistant":
-            text = ""
-            if isinstance(content, str):
-                text = content
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text") or ""
-                        break
-            if text:
-                lines.append(f"[agent] {text[:300]}")
-            # Also capture tool_use blocks from assistant messages.
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                        name = block.get("name") or "?"
-                        inp = json.dumps(block.get("input") or {})
-                        lines.append(f"[tool] {name}({inp[:200]})")
-        elif role == "tool":
-            # Tool result records.
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        result_content = block.get("content") or ""
-                        if isinstance(result_content, list):
-                            for rb in result_content:
-                                if isinstance(rb, dict) and rb.get("type") == "text":
-                                    result_content = rb.get("text") or ""
-                                    break
-                        snippet = str(result_content)[:300]
-                        lines.append(f"[tool_result] → {snippet}")
+    for event in collected:
+        etype = getattr(event, "type", None)
+        if etype == "user.message":
+            for block in getattr(event, "content", None) or []:
+                if getattr(block, "type", None) != "text":
+                    continue
+                text = getattr(block, "text", "") or ""
+                if text.startswith(
+                    ("[Nouvelle session de diagnostic]", "[CONTEXTE TECHNICIEN]", "[REPRISE DE CONVERSATION")
+                ):
+                    marker = "\n\n---\n\n"
+                    idx = text.rfind(marker)
+                    if idx >= 0:
+                        text = text[idx + len(marker):].strip()
+                    else:
+                        continue
+                if text:
+                    lines.append(f"[user] {text[:300]}")
+        elif etype == "agent.message":
+            for block in getattr(event, "content", None) or []:
+                if getattr(block, "type", None) == "text":
+                    text = getattr(block, "text", "") or ""
+                    if text:
+                        lines.append(f"[agent] {text[:300]}")
+        elif etype == "agent.custom_tool_use":
+            name = getattr(event, "name", None) or "?"
+            inp = getattr(event, "input", None) or {}
+            try:
+                inp_str = json.dumps(inp)
+            except (TypeError, ValueError):
+                inp_str = str(inp)
+            lines.append(f"[tool] {name}({inp_str[:200]})")
+        elif etype == "user.custom_tool_result":
+            raw = getattr(event, "content", None)
+            snippet = str(raw)[:300] if raw is not None else ""
+            if snippet:
+                lines.append(f"[tool_result] → {snippet}")
 
+    if len(lines) > cap:
+        lines = lines[-cap:]
     if not lines:
         return None
 
@@ -406,13 +403,13 @@ async def run_diagnostic_session_managed(
         # The old MA session is gone (archived / expired). Before we create a
         # fresh one, synthesize a recap from the JSONL so the agent can pick up
         # the context without the full history being replayed through MA again.
-        if reused_session_id and resolved_conv_id:
+        if reused_session_id:
+            # Pull the transcript from the dying MA session itself — in managed
+            # mode nothing is persisted to disk, the source of truth lives on
+            # Anthropic's side.
             recovery_summary = await _summarize_prior_history_for_resume(
                 client=client,
-                device_slug=device_slug,
-                repair_id=repair_id,
-                conv_id=resolved_conv_id,
-                memory_root=memory_root,
+                old_session_id=reused_session_id,
             )
         try:
             session = await client.beta.sessions.create(**session_kwargs)
