@@ -58,3 +58,10 @@ def test_identity_level_override_rejects_unknown_value():
 def test_preferences_verbosity_rejects_unknown_value():
     with pytest.raises(ValidationError):
         Preferences(verbosity="verbose")
+
+
+def test_skills_dict_rejects_unknown_key():
+    with pytest.raises(ValidationError):
+        TechnicianProfile.model_validate(
+            {"skills": {"not_a_skill_id": {"usages": 1}}}
+        )
