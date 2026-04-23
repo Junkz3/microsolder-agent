@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-
 # ---------------------------------------------------------------------------
 # Thresholds — see docs/superpowers/specs/2026-04-23-technician-profile-design.md §2.3
 # ---------------------------------------------------------------------------

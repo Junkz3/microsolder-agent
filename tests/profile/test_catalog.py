@@ -2,15 +2,16 @@
 """Catalogue integrity: ids unique, requires resolve, thresholds monotonic."""
 
 from api.profile.catalog import (
+    LEARNING_THRESHOLD,
+    MASTERED_LEVEL_CONFIRMED,
+    MASTERED_LEVEL_EXPERT,
+    MASTERED_LEVEL_INTERMEDIATE,
     MASTERY_THRESHOLD,
     PRACTICED_THRESHOLD,
-    LEARNING_THRESHOLD,
-    MASTERED_LEVEL_EXPERT,
-    MASTERED_LEVEL_CONFIRMED,
-    MASTERED_LEVEL_INTERMEDIATE,
     SKILLS_CATALOG,
-    SkillId,
+    SPECIALTIES,
     TOOLS_CATALOG,
+    SkillId,
     ToolId,
 )
 
@@ -44,3 +45,9 @@ def test_level_thresholds_monotonic():
         < MASTERED_LEVEL_CONFIRMED
         < MASTERED_LEVEL_EXPERT
     )
+
+
+def test_specialty_ids_unique():
+    ids = [s[0] for s in SPECIALTIES]
+    assert len(ids) == len(set(ids)), "duplicate specialty id"
+    assert len(SPECIALTIES) >= 1
