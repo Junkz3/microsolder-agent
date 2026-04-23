@@ -108,3 +108,20 @@ class UploadError(_BVEvent):
     type: Literal["boardview.upload_error"] = "boardview.upload_error"
     reason: Literal["obfuscated", "malformed-header", "unsupported-format", "io-error"]
     message: str
+
+
+class _SimEvent(BaseModel):
+    """Base class for simulation / observation events (backend → frontend)."""
+
+    type: str
+
+
+class SimulationObservationSet(_SimEvent):
+    type: Literal["simulation.observation_set"] = "simulation.observation_set"
+    target: str  # e.g. "rail:+3V3" | "comp:U7" | "pin:U7:3"
+    mode: str    # ComponentMode | RailMode | "unknown"
+    measurement: dict[str, Any] | None = None
+
+
+class SimulationObservationClear(_SimEvent):
+    type: Literal["simulation.observation_clear"] = "simulation.observation_clear"
