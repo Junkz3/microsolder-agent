@@ -41,7 +41,7 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from api.agent.manifest import BV_TOOLS, MB_TOOLS
+from api.agent.manifest import BV_TOOLS, MB_TOOLS, PROFILE_TOOLS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IDS_FILE = REPO_ROOT / "managed_ids.json"
@@ -80,10 +80,31 @@ mis à disposition :
     ("Je peux étendre la mémoire avec un Scout ciblé — ~30s, ~0.40$. Go ?")
     et attends son accord explicite ("oui" / "go" / "lance" / "ok"). Après
     son go, appelle le tool puis re-call mb_get_rules_for_symptoms.
+  - profile_get() — lit le profil du technicien en face de toi : identité,
+    niveau (beginner/intermediate/confirmed/expert), verbosité cible,
+    outils dispos (soldering_iron, hot_air, microscope, scope, etc.),
+    compétences maîtrisées / pratiquées / en apprentissage. Appelle-le en
+    début de session si le bloc <technician_profile> du contexte initial
+    manque, ou quand tu as un doute. Adapte ta verbosité et TES PROPOSITIONS
+    à ce profil : jamais d'action qui requiert un outil absent.
+  - profile_check_skills(candidate_skills) — pour une liste de skill_ids
+    (reflow_bga, short_isolation, jumper_wire…), retourne status + usages
+    + tools_ok par skill. **Appelle ce tool AVANT de proposer un plan
+    d'action** pour vérifier que le tech a les outils et adapter la
+    profondeur des explications (skill mastered → brief, learning ou
+    unlearned → pas-à-pas avec risques).
+  - profile_track_skill(skill_id, evidence) — incrémente le compteur
+    d'usage d'une skill. Appelle UNIQUEMENT après confirmation explicite
+    du tech qu'il a exécuté l'action ("fait, ça boot"). evidence doit
+    inclure repair_id, device_slug, symptom, action_summary (min 20
+    caractères citant refdes + geste + outcome), date. Jamais d'evidence
+    vague.
 
 Le device en cours est fourni dans le premier message user (slug +
-display name). Quand l'utilisateur décrit des symptômes, consulte
-d'abord mb_list_findings puis enchaîne mb_get_rules_for_symptoms.
+display name), ainsi que le bloc <technician_profile> décrivant le tech.
+LIS ce bloc avant ta première réponse et adapte-toi à lui. Quand
+l'utilisateur décrit des symptômes, consulte d'abord mb_list_findings
+puis enchaîne mb_get_rules_for_symptoms.
 Si 0 résultat → **PROPOSE** mb_expand_knowledge (jamais autonome)
 et attends le go du tech. Quand il demande un composant par refdes,
 valide-le.
@@ -91,7 +112,29 @@ Privilégie les causes à haute probabilité et les étapes de diagnostic
 concrètes (mesurer tel voltage sur tel test point).
 """
 
-TOOLS = MB_TOOLS + BV_TOOLS
+# Anthropic Managed Agents cap tool descriptions at 1024 chars. Any tool in
+# the shared manifest that exceeds that is filtered out here with a warning,
+# so a single over-budget tool doesn't block refreshing the whole agent set.
+# The DIRECT runtime (runtime_direct.py) still sees the full manifest — only
+# the MA bootstrap is affected.
+_MA_DESC_MAX = 1024
+
+
+def _ma_filter(tools: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for t in tools:
+        if len(t.get("description", "")) > _MA_DESC_MAX:
+            print(
+                f"⚠️  Skipping tool {t['name']!r} — description is "
+                f"{len(t['description'])} chars (MA limit = {_MA_DESC_MAX}). "
+                "Shorten it or trim inside bootstrap_managed_agent.py to include it."
+            )
+            continue
+        out.append(t)
+    return out
+
+
+TOOLS = _ma_filter(MB_TOOLS + BV_TOOLS + PROFILE_TOOLS)
 
 TIERS = {
     "fast":   {"model": "claude-haiku-4-5",  "name": "microsolder-coordinator-fast"},

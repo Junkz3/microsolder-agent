@@ -111,7 +111,14 @@ MB_TOOLS: list[dict] = [
             "ranked by blast_radius (how many nodes die if X fails) plus the "
             "critical gate at each boot phase. Use BEFORE telling the tech "
             "which component to measure first when a rail is absent — the "
-            "top SPOF is usually the highest-leverage probe point. "
+            "top SPOF is usually the highest-leverage probe point; "
+            "query='net' with label returns the net's classified domain + "
+            "description + touching components; "
+            "query='net_domain' with domain (e.g. 'hdmi', 'usb', 'audio') "
+            "returns every net in that functional domain + top-3 suspect "
+            "components ranked by touch_count + blast_radius. Use when the "
+            "technician describes a symptom by function ('HDMI écran noir', "
+            "'USB-C dead') — it surfaces the exact refdes to probe first. "
             "Returns {found: false, reason: 'no_schematic_graph'} if the "
             "schematic hasn't been ingested yet — don't retry, just proceed "
             "without rail context."
@@ -129,15 +136,21 @@ MB_TOOLS: list[dict] = [
                         "list_rails",
                         "list_boot",
                         "critical_path",
+                        "net",
+                        "net_domain",
                     ],
                 },
                 "label": {
                     "type": "string",
-                    "description": "Rail label, e.g. '+5V', '+3V3', '24V_IN'. Required for query=rail.",
+                    "description": "Rail or net label, e.g. '+5V', '+3V3', '24V_IN', 'HDMI_HPD'. Required for query=rail or query=net.",
                 },
                 "refdes": {
                     "type": "string",
                     "description": "Component refdes, e.g. 'U7'. Required for query=component or query=downstream.",
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Functional domain for query=net_domain. Canonical values: hdmi, usb, pcie, ethernet, audio, display, storage, debug, power_seq, power_rail, clock, reset, control, ground. Free-form accepted.",
                 },
                 "index": {
                     "type": "integer",
@@ -334,7 +347,7 @@ PROFILE_TOOLS: list[dict] = [
             "Call once at session start if the system prompt context is stale, "
             "or when the tech reports having updated their profile."
         ),
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "type": "custom",
