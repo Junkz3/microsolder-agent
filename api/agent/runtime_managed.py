@@ -451,6 +451,21 @@ async def _forward_ws_to_session(
             payload = json.loads(raw)
         except json.JSONDecodeError:
             payload = {"text": raw}
+
+        # Tech pressed Stop — forward as a user.interrupt MA event so the
+        # agent halts any in-flight turn. Session stays alive; the tech can
+        # keep typing afterwards.
+        if payload.get("type") == "interrupt":
+            try:
+                await client.beta.sessions.events.send(
+                    session_id,
+                    events=[{"type": "user.interrupt"}],
+                )
+                logger.info("[Diag-MA] Forwarded user.interrupt for session=%s", session_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[Diag-MA] interrupt failed: %s", exc)
+            continue
+
         text = (payload.get("text") or "").strip()
         if not text:
             continue
