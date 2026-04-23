@@ -76,8 +76,116 @@ const SimulationController = {
   },
 
   render() {
-    // No-op — scrubber UI lands in the next commit. The timeline is
-    // already stashed on `this.timeline` for future use.
+    this._ensureScrubber();
+    this._applyStateClasses();
+    this._updateScrubberLabel();
+  },
+
+  _ensureScrubber() {
+    let el = document.querySelector(".sim-scrubber");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "sim-scrubber";
+      el.innerHTML = `
+        <button data-act="rewind" title="Début">⏮</button>
+        <button data-act="step-back" title="Phase précédente">◀</button>
+        <button data-act="play-pause">▶</button>
+        <button data-act="step-fwd" title="Phase suivante">▶</button>
+        <input type="range" min="0" max="0" step="1" value="0" />
+        <span class="sim-phase-label">—</span>
+        <span class="sim-blocked-overlay" hidden></span>
+      `;
+      // Mount inside the schematic section container so positioning is
+      // absolute-to-the-view, not absolute-to-the-page.
+      const host = document.querySelector("#schematicSection") || document.body;
+      host.appendChild(el);
+      el.addEventListener("click", (ev) => {
+        const act = ev.target?.dataset?.act;
+        if (!act) return;
+        if (act === "rewind") this.seek(0);
+        else if (act === "step-back") this.seek(this.cursor - 1);
+        else if (act === "step-fwd") this.seek(this.cursor + 1);
+        else if (act === "play-pause") this.playing ? this.pause() : this.play();
+      });
+      el.querySelector("input[type=range]").addEventListener("input", (ev) => {
+        this.seek(Number(ev.target.value));
+      });
+    }
+    const total = (this.timeline?.states?.length ?? 1) - 1;
+    const range = el.querySelector("input[type=range]");
+    range.max = Math.max(0, total);
+    range.value = this.cursor;
+    el.hidden = !this.timeline || this.timeline.states.length === 0;
+  },
+
+  _updateScrubberLabel() {
+    const el = document.querySelector(".sim-scrubber");
+    if (!el) return;
+    const state = this.timeline?.states?.[this.cursor];
+    const label = state ? `Φ${state.phase_index} · ${state.phase_name}` : "—";
+    el.querySelector(".sim-phase-label").textContent = label;
+    const overlay = el.querySelector(".sim-blocked-overlay");
+    if (state?.blocked) {
+      overlay.textContent = `BLOQUÉE — ${state.blocked_reason ?? "cascade"}`;
+      overlay.hidden = false;
+    } else {
+      overlay.hidden = true;
+    }
+    el.querySelector("[data-act=play-pause]").textContent = this.playing ? "⏸" : "▶";
+  },
+
+  _applyStateClasses() {
+    const state = this.timeline?.states?.[this.cursor];
+    if (!state) return;
+    // Clear prior classes on anything currently marked.
+    document.querySelectorAll(
+      ".sim-off, .sim-rising, .sim-stable, .sim-dead, .sim-signal-high, .sim-signal-low"
+    ).forEach((n) => n.classList.remove(
+      "sim-off", "sim-rising", "sim-stable", "sim-dead", "sim-signal-high", "sim-signal-low",
+    ));
+
+    // Nodes — we rely on the existing graph renderer having attached
+    // `data-refdes` / `data-rail` / `data-signal` on each selectable element.
+    // If the attributes aren't wired yet (Task 13), this is a no-op for those
+    // classes; the scrubber itself still renders.
+    for (const [refdes, st] of Object.entries(state.components || {})) {
+      document.querySelectorAll(`[data-refdes="${CSS.escape(refdes)}"]`).forEach((el) => {
+        el.classList.add(`sim-${st}`);
+      });
+    }
+    for (const [label, st] of Object.entries(state.rails || {})) {
+      document.querySelectorAll(`[data-rail="${CSS.escape(label)}"]`).forEach((el) => {
+        el.classList.add(`sim-${st}`);
+      });
+    }
+    for (const [label, st] of Object.entries(state.signals || {})) {
+      document.querySelectorAll(`[data-signal="${CSS.escape(label)}"]`).forEach((el) => {
+        el.classList.add(`sim-signal-${st}`);
+      });
+    }
+  },
+
+  seek(idx) {
+    const max = (this.timeline?.states?.length ?? 1) - 1;
+    this.cursor = Math.max(0, Math.min(idx, max));
+    this.render();
+  },
+  play() {
+    if (!this.timeline || this.timeline.states.length === 0) return;
+    this.playing = true;
+    clearInterval(this._timer);
+    this._timer = setInterval(() => {
+      const max = this.timeline.states.length - 1;
+      if (this.cursor >= max) { this.pause(); return; }
+      this.seek(this.cursor + 1);
+    }, this.speedMs);
+    this._updateScrubberLabel();
+  },
+  pause() {
+    this.playing = false;
+    clearInterval(this._timer);
+    this._timer = null;
+    this._updateScrubberLabel();
   },
 };
 
