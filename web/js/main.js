@@ -3,7 +3,7 @@
 // and a section-agnostic wiring block for the Tweaks panel + boardview
 // colour pickers.
 
-import { APP_VERSION, currentSection, navigate, wireRouter, currentSession } from './router.js';
+import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession } from './router.js';
 import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
@@ -139,5 +139,28 @@ if (!window.Boardview) {
       if (++tries < 40) requestAnimationFrame(tick);
     };
     tick();
+  }
+
+  // Session pill — click body to go to dashboard, click [×] to quit session.
+  const sessionPill = document.getElementById("sessionPill");
+  const sessionPillClose = document.getElementById("sessionPillClose");
+  if (sessionPill) {
+    sessionPill.addEventListener("click", (ev) => {
+      if (sessionPillClose && sessionPillClose.contains(ev.target)) return;
+      window.location.hash = "#home";
+    });
+    sessionPill.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        if (sessionPillClose && sessionPillClose.contains(document.activeElement)) return;
+        window.location.hash = "#home";
+      }
+    });
+  }
+  if (sessionPillClose) {
+    sessionPillClose.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      leaveSession();
+    });
   }
 })();

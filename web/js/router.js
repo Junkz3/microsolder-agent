@@ -94,6 +94,21 @@ function updateChrome(section, deviceSlug, pack) {
   pill.className = `mode-pill ${mode.color}`;
   document.getElementById("modePillText").textContent = `${mode.tag} · ${mode.sub}`;
 
+  // Session pill — persistent across sections when a session is active.
+  const sessionPill = document.getElementById("sessionPill");
+  if (sessionPill) {
+    const sess = currentSession();
+    if (sess) {
+      sessionPill.classList.remove("hidden");
+      const devEl = document.getElementById("sessionPillDevice");
+      const ridEl = document.getElementById("sessionPillRid");
+      if (devEl) devEl.textContent = prettifySlug(sess.device);
+      if (ridEl) ridEl.textContent = sess.repair.slice(0, 8);
+    } else {
+      sessionPill.classList.add("hidden");
+    }
+  }
+
   // Breadcrumbs
   const crumbs = ["microsolder-agent"];
   if (section === "graphe" && deviceSlug) {

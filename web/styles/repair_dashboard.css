@@ -365,3 +365,67 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
   color: var(--text-3);
 }
 .rd-pack-artefact.present { color: var(--emerald); border-color: var(--emerald); }
+
+/* ─────────────────────────────────────────────────────────────
+ * Session pill — topbar indicator of an active session.
+ * Visible wherever currentSession() returns non-null.
+ * ───────────────────────────────────────────────────────────── */
+
+.session-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--cyan);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .15s;
+  user-select: none;
+}
+.session-pill.hidden { display: none; }
+.session-pill:hover { background: var(--panel); transform: translateY(-1px); }
+.session-pill:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+.session-pill-dot {
+  width: 12px;
+  height: 12px;
+  color: var(--cyan);
+  flex-shrink: 0;
+}
+
+.session-pill-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.session-pill-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .4px;
+  color: var(--cyan);
+}
+.session-pill-device { color: var(--text); font-weight: 500; }
+.session-pill-sep { color: var(--text-3); }
+.session-pill-rid { color: var(--text-2); font-size: 10.5px; }
+
+.session-pill-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-left: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.session-pill-close:hover { background: var(--panel); color: var(--amber); }

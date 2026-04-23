@@ -37,6 +37,27 @@
   <div class="crumbs" id="crumbs"><span class="active">microsolder-agent</span></div>
   <div class="spacer"></div>
   <div class="mode-pill" id="modePill"><span class="dot"></span><span id="modePillText"></span></div>
+  <div class="session-pill hidden" id="sessionPill" role="button" tabindex="0"
+       aria-label="Session active — clic pour ouvrir le dashboard"
+       title="Revenir au dashboard de la session">
+    <svg class="session-pill-dot" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/>
+    </svg>
+    <span class="session-pill-text">
+      <span class="session-pill-tag mono">SESSION</span>
+      <span class="session-pill-device" id="sessionPillDevice">—</span>
+      <span class="session-pill-sep">·</span>
+      <span class="session-pill-rid mono" id="sessionPillRid">—</span>
+    </span>
+    <button type="button" class="session-pill-close" id="sessionPillClose"
+            aria-label="Quitter la session" title="Quitter la session">
+      <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
+    </button>
+  </div>
   <button class="top-btn"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>Importer CAO</button>
   <button class="top-btn" id="tweaksToggle" title="Réglages">
     <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
