@@ -46,3 +46,13 @@ def test_block_always_contains_rules_preamble():
     p = TechnicianProfile.default()
     block = render_technician_block(p)
     assert "profile_track_skill" in block
+
+
+def test_system_prompt_includes_technician_block():
+    from api.agent.manifest import render_system_prompt
+    from api.session.state import SessionState
+
+    prompt = render_system_prompt(SessionState(), device_slug="demo-pi")
+    assert "<technician_profile>" in prompt
+    assert "profile_check_skills" in prompt
+    assert "profile_track_skill" in prompt
