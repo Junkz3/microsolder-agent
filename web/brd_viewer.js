@@ -1353,6 +1353,36 @@ window.initBoardview = initBoardview;
     filter:           _applyFilter,
     measure:          _applyMeasure,
     layer_visibility: _applyLayerVisibility,
+
+    // Lookups used by the chat panel to decide whether a refdes/net in
+    // agent text should be rendered as a clickable chip. No-op when no
+    // board is loaded. Case-sensitive match — the board parser preserves
+    // original casing, and agent text tends to cite the canonical form.
+    hasBoard() { return !!state.board; },
+    hasRefdes(refdes) {
+      return !!(state.partByRefdes && state.partByRefdes.get(String(refdes).trim()));
+    },
+    hasNet(name) {
+      return !!(state.pinsByNet && state.pinsByNet.has(String(name).trim()));
+    },
+
+    // Chip-compatible focus: the existing `focus` ({refdes, bbox, zoom})
+    // needs the caller to supply a bbox (backend-only info in the event
+    // envelope). The frontend has the bbox locally in `partBodyBboxes`,
+    // so this wrapper resolves it from the loaded board and delegates.
+    focusRefdes(refdes) {
+      const r = String(refdes).trim();
+      if (!state.partByRefdes || !state.partByRefdes.get(r)) return;
+      const bb = (state.partBodyBboxes && state.partBodyBboxes.get(r))
+                 || state.partByRefdes.get(r).bbox;
+      _applyFocus({ refdes: r, bbox: bb, zoom: 2.5 });
+    },
+
+    // Chip-compatible net highlight. The existing `highlight_net` already
+    // takes {net}; this is a named alias for readability at the call site.
+    highlightNet(name) {
+      _applyHighlightNet({ net: String(name).trim() });
+    },
   };
 
   // Drain events buffered by the early stub (installed before this module loaded).
