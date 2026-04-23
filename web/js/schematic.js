@@ -33,6 +33,54 @@ const STATE = {
   layoutMode: (typeof localStorage !== "undefined" && localStorage.getItem("schLayoutMode")) || "powertree",
 };
 
+/* ---------------------------------------------------------------------- *
+ * SIMULATION                                                             *
+ * Drives the behavioral simulator UI: fetches a SimulationTimeline from  *
+ * POST /pipeline/packs/{slug}/schematic/simulate, exposes playback       *
+ * controls, and applies sim-* CSS classes to nodes/rails for each phase. *
+ * Scaffold for now — scrubber UI and state-class propagation land in     *
+ * subsequent commits.                                                    *
+ * ---------------------------------------------------------------------- */
+
+const SimulationController = {
+  timeline: null,          // server response
+  killedRefdes: [],        // user-injected faults
+  playing: false,
+  speedMs: 800,            // ms per phase at 1×
+  cursor: 0,               // current phase index within timeline.states
+  _timer: null,
+
+  async refresh(slug) {
+    if (!slug) return;
+    try {
+      const res = await fetch(
+        `/pipeline/packs/${encodeURIComponent(slug)}/schematic/simulate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ killed_refdes: this.killedRefdes }),
+        },
+      );
+      if (!res.ok) {
+        console.warn("[simulator] fetch failed", res.status);
+        this.timeline = null;
+        return;
+      }
+      this.timeline = await res.json();
+      this.cursor = 0;
+      this.render();
+    } catch (err) {
+      console.warn("[simulator] fetch error", err);
+      this.timeline = null;
+    }
+  },
+
+  render() {
+    // No-op — scrubber UI lands in the next commit. The timeline is
+    // already stashed on `this.timeline` for future use.
+  },
+};
+
 function getDeviceSlug() {
   const params = new URLSearchParams(window.location.search);
   return params.get("device") || null;
@@ -1963,6 +2011,11 @@ export async function loadSchematic() {
   if (res.error) { showEmptyState("Erreur de chargement", res.error); return; }
   STATE.graph = res.graph;
   fullRender(res.graph);
+  // Trigger the simulator fetch — the endpoint is fast (< 10ms server-side);
+  // we do it unconditionally when a graph has boot_sequence + power_rails.
+  if (STATE.graph && STATE.graph.boot_sequence?.length && Object.keys(STATE.graph.power_rails || {}).length) {
+    SimulationController.refresh(STATE.slug);
+  }
   wireControls();
 }
 
