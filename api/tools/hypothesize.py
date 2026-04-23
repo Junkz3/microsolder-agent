@@ -123,4 +123,17 @@ def mb_hypothesize(
     )
     payload = result.model_dump()
     payload["found"] = True
+
+    # Best-effort append to the diagnosis log for field corpus calibration.
+    if repair_id:
+        from api.agent.diagnosis_log import append_diagnosis
+        append_diagnosis(
+            memory_root=memory_root,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            observations=payload["observations_echo"],
+            hypotheses_top5=payload["hypotheses"][:5],
+            pruning_stats=payload["pruning"],
+        )
+
     return payload

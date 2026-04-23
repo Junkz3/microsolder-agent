@@ -142,6 +142,32 @@ def test_mb_hypothesize_empty_inputs(memory_root: Path, graph: ElectricalGraph):
     assert result["hypotheses"] == []
 
 
+def test_mb_hypothesize_writes_diagnosis_log(memory_root: Path, graph: ElectricalGraph):
+    from api.agent.diagnosis_log import load_diagnosis_log
+    _write_graph(memory_root, graph)
+    result = mb_hypothesize(
+        device_slug=SLUG, memory_root=memory_root, repair_id="r42",
+        state_rails={"+5V": "dead"},
+    )
+    assert result["found"] is True
+    entries = load_diagnosis_log(memory_root=memory_root, device_slug=SLUG, repair_id="r42")
+    assert len(entries) == 1
+    assert entries[0].observations["state_rails"] == {"+5V": "dead"}
+    assert entries[0].hypotheses_top5[0]["kill_refdes"] == ["U7"]
+
+
+def test_mb_hypothesize_no_log_when_no_repair_id(memory_root: Path, graph: ElectricalGraph):
+    from api.agent.diagnosis_log import load_diagnosis_log
+    _write_graph(memory_root, graph)
+    result = mb_hypothesize(
+        device_slug=SLUG, memory_root=memory_root,
+        state_rails={"+5V": "dead"},
+    )
+    assert result["found"] is True
+    # No repair_id → no diagnosis log entry written anywhere.
+    assert load_diagnosis_log(memory_root=memory_root, device_slug=SLUG, repair_id="anything") == []
+
+
 def test_mb_hypothesize_manifest_exposes_new_signature():
     from api.agent import manifest
     # Use MB_TOOLS directly (always present, no session needed).
