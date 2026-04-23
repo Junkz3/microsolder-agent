@@ -1,0 +1,50 @@
+# Phase 4 hand-written scenarios — anti-auto-referential corpus.
+# Each scenario encodes an observation shape a technician would report,
+# with a physically-motivated ground truth. If the named refdes is absent
+# from the compiled graph, the scenario is SKIPPED (warning, not failure)
+# so the file remains valid across graph regenerations.
+
+scenarios:
+  - id: mnt-reform-c-decoupling-short
+    description: |
+      +3V3 rail measures shorted to GND, U7 (LPC) dead. A decoupling cap
+      on +3V3 is the likely root cause. Ground truth: any passive_c with
+      role=decoupling on +3V3.
+    device_slug: mnt-reform-motherboard
+    observations:
+      state_rails: { "+3V3": "shorted" }
+      state_comps: { "U7": "dead" }
+    ground_truth_match:
+      kind: passive_c
+      role: decoupling
+      expected_mode: short
+    accept_in_top_n: 5
+
+  - id: mnt-reform-r-feedback-overvolt
+    description: |
+      +5V measures 7.2 V (overvoltage encoded as rail `shorted` per Phase 1).
+      A feedback divider R open is the likely root cause. Ground truth: any
+      passive_r with role=feedback connected to the +5V regulator's feedback
+      net.
+    device_slug: mnt-reform-motherboard
+    observations:
+      state_rails: { "+5V": "shorted" }
+    ground_truth_match:
+      kind: passive_r
+      role: feedback
+      expected_mode: open
+    accept_in_top_n: 10
+
+  - id: mnt-reform-fb-filter-open
+    description: |
+      LPC_VCC rail entirely dead, U7 dead. A ferrite bead open between
+      +3V3 and LPC_VCC is the likely root cause.
+    device_slug: mnt-reform-motherboard
+    observations:
+      state_rails: { "LPC_VCC": "dead" }
+      state_comps: { "U7": "dead" }
+    ground_truth_match:
+      kind: passive_fb
+      role: filter
+      expected_mode: open
+    accept_in_top_n: 5
