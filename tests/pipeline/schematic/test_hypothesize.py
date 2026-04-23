@@ -188,11 +188,6 @@ def test_simulate_failure_unknown_mode_raises():
         _simulate_failure(_mini_graph(), _mini_boot(), "U7", "bogus")
 
 
-def test_simulate_failure_shorted_pending():
-    with pytest.raises(NotImplementedError):
-        _simulate_failure(_mini_graph(), _mini_boot(), "U7", "shorted")
-
-
 from api.pipeline.schematic.hypothesize import _propagate_signal_downstream
 from api.pipeline.schematic.schemas import TypedEdge
 
@@ -271,3 +266,27 @@ def test_simulate_failure_hot_is_self_only():
     assert c["dead_rails"] == frozenset()
     assert c["anomalous_comps"] == frozenset()
     assert c["shorted_rails"] == frozenset()
+
+
+def test_simulate_failure_shorted_consumer_kills_rail_stresses_source():
+    g = _mini_graph()
+    # U12 is consumer of +5V. Shorting U12 shorts +5V to GND.
+    c = _simulate_failure(g, _mini_boot(), "U12", "shorted")
+    # The shorted rail is tagged separately (NOT in dead_rails).
+    assert "+5V" in c["shorted_rails"]
+    assert "+5V" not in c["dead_rails"]
+    # The source of +5V (U7) goes into hot_comps (current-limit stress).
+    assert "U7" in c["hot_comps"]
+    # Downstream of the killed source propagates as dead (U19, +3V3, U12's own downstream).
+    assert "+3V3" in c["dead_rails"]
+    assert "U19" in c["dead_comps"]
+
+
+def test_simulate_failure_shorted_orphan_consumer_returns_self_dead():
+    g = _mini_graph()
+    # A refdes with NO input power rail (no consumer record) falls back to self-dead.
+    g.components["U99"] = ComponentNode(refdes="U99", type="ic", pins=[])
+    c = _simulate_failure(g, _mini_boot(), "U99", "shorted")
+    assert c["dead_comps"] == frozenset({"U99"})
+    assert c["shorted_rails"] == frozenset()
+    assert c["hot_comps"] == frozenset()
