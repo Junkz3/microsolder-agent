@@ -4,16 +4,25 @@
 <aside class="llm-panel" id="llmPanel" aria-hidden="true" aria-label="Agent diagnostic">
   <header class="llm-head">
     <span class="type-badge action">Agent</span>
-    <h3>Diagnostic <span class="llm-model" id="llmModel">—</span></h3>
-    <button class="close-x" id="llmClose" aria-label="Fermer le panel" type="button">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
-    </button>
+    <div class="title-col">
+      <h3 id="llmTitle">Diagnostic</h3>
+      <div class="llm-subline" id="llmSubline">—</div>
+    </div>
+    <div class="llm-head-actions">
+      <button class="llm-tier-chip" id="llmTierChip" data-tier="fast" aria-haspopup="menu" aria-expanded="false" title="Tier de modèle">
+        <span class="tier-label">FAST</span>
+        <svg class="chevron-down" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="llm-tier-popover" id="llmTierPopover" role="menu" hidden>
+        <button role="menuitem" data-tier="fast" class="on">Fast · Haiku 4.5</button>
+        <button role="menuitem" data-tier="normal">Normal · Sonnet 4.6</button>
+        <button role="menuitem" data-tier="deep">Deep · Opus 4.7</button>
+      </div>
+      <button class="close-x" id="llmClose" aria-label="Fermer le panel" type="button">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
   </header>
-  <div class="llm-tiers" role="tablist" aria-label="Tier de modèle">
-    <button class="llm-tier on" data-tier="fast" role="tab" aria-selected="true">Fast · Haiku</button>
-    <button class="llm-tier" data-tier="normal" role="tab" aria-selected="false">Normal · Sonnet</button>
-    <button class="llm-tier" data-tier="deep" role="tab" aria-selected="false">Deep · Opus</button>
-  </div>
   <div class="llm-status" id="llmStatus">
     <span class="dot"></span>
     <span id="llmStatusText">inactif</span>
@@ -22,11 +31,13 @@
   </div>
   <div class="llm-log" id="llmLog" aria-live="polite"></div>
   <form class="llm-input" id="llmForm">
-    <input id="llmInput" type="text" placeholder="Pose ta question à l'agent…" autocomplete="off" spellcheck="false" />
-    <button type="button" class="llm-stop" id="llmStop" title="Interrompre l'agent (Esc)" disabled>
-      <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
-      Stop
-    </button>
-    <button type="submit" id="llmSend" disabled>Envoyer</button>
+    <textarea id="llmInput" rows="1" placeholder="Pose ta question à l'agent… (Enter pour envoyer, Shift+Enter pour un retour à la ligne)" autocomplete="off" spellcheck="false"></textarea>
+    <div class="llm-input-actions">
+      <button type="button" class="llm-stop" id="llmStop" title="Interrompre l'agent (Esc)" disabled>
+        <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        Stop
+      </button>
+      <button type="submit" id="llmSend" disabled>Envoyer</button>
+    </div>
   </form>
 </aside>

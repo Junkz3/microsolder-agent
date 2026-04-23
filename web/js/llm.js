@@ -20,6 +20,7 @@ let currentTier = "fast";
 // recent assistant message and bump the running total in the status bar.
 let sessionCostUsd = 0;
 let sessionTurns = 0;
+let lastTurnCostUsd = 0;
 
 // Turn-block state machine.
 // currentTurn is the DOM node receiving the next incoming thinking / tool_use /
@@ -145,22 +146,9 @@ function updateCostTotal() {
     return;
   }
   el2.style.display = "";
-  el2.textContent = `${fmtUsd(sessionCostUsd)} · ${sessionTurns} turn${sessionTurns > 1 ? "s" : ""}`;
-  el2.classList.toggle("hot", sessionCostUsd >= 0.50);
-}
-
-function attachCostChipToLastAssistant(payload) {
-  const log = el("llmLog");
-  const messages = log.querySelectorAll(".msg.assistant:not(.replay)");
-  const target = messages[messages.length - 1];
-  if (!target || target.querySelector(".cost-chip")) return;
-  const chip = document.createElement("span");
-  chip.className = "cost-chip";
-  const tokensLabel = `${(payload.input_tokens || 0) + (payload.cache_read_input_tokens || 0) + (payload.cache_creation_input_tokens || 0)}→${payload.output_tokens || 0} tok`;
-  const modelLabel = payload.model ? payload.model.replace("claude-", "") : "?";
-  const priceLabel = payload.priced ? fmtUsd(payload.cost_usd) : "—";
-  chip.textContent = `${modelLabel} · ${tokensLabel} · ${priceLabel}`;
-  target.appendChild(chip);
+  const deltaPart = lastTurnCostUsd > 0 ? ` · +${fmtUsd(lastTurnCostUsd)} dernier` : "";
+  el2.textContent = `${fmtUsd(sessionCostUsd)} · ${sessionTurns} turn${sessionTurns > 1 ? "s" : ""}${deltaPart}`;
+  el2.classList.toggle("hot", sessionCostUsd >= 0.50 || lastTurnCostUsd >= 0.10);
 }
 
 function el(id) { return document.getElementById(id); }
@@ -484,10 +472,16 @@ function connect() {
   const repairId = currentRepairId();
   el("llmDevice").textContent = repairId ? `${slug} · ${repairId.slice(0, 8)}` : slug;
   el("llmDevice").style.display = "";
+  const title = el("llmTitle");
+  if (title) {
+    const human = slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    title.textContent = human;
+  }
   // New connection = new cost scope. Replayed history doesn't re-bill so we
   // reset here and let live turns accumulate fresh.
   sessionCostUsd = 0;
   sessionTurns = 0;
+  lastTurnCostUsd = 0;
   currentTurn = null;
   updateCostTotal();
   const url = wsURL(slug, currentTier, repairId);
@@ -532,8 +526,9 @@ function connect() {
       case "session_ready": {
         const model = payload.model || "claude";
         const mode = payload.mode || "managed";
-        el("llmModel").textContent = `${model} · ${mode}`;
         const rid = payload.repair_id ? ` · repair ${payload.repair_id.slice(0, 8)}` : "";
+        const sub = el("llmSubline");
+        if (sub) sub.textContent = `${model} · ${mode}${rid}`;
         logSys(`session prête — ${mode} · ${model}${rid}`);
         break;
       }
@@ -582,7 +577,8 @@ function connect() {
         break;
       }
       case "turn_cost":
-        sessionCostUsd += Number(payload.cost_usd || 0);
+        lastTurnCostUsd = Number(payload.cost_usd || 0);
+        sessionCostUsd += lastTurnCostUsd;
         sessionTurns += 1;
         updateCostTotal();
         if (currentTurn) appendTurnFoot(currentTurn, payload);
@@ -624,13 +620,16 @@ function togglePanel() {
 function switchTier(newTier) {
   if (newTier === currentTier) return;
   currentTier = newTier;
-  document.querySelectorAll(".llm-tier").forEach(btn => {
-    const isOn = btn.dataset.tier === newTier;
-    btn.classList.toggle("on", isOn);
-    btn.setAttribute("aria-selected", isOn ? "true" : "false");
+  const chip = el("llmTierChip");
+  if (chip) {
+    chip.dataset.tier = newTier;
+    const label = chip.querySelector(".tier-label");
+    if (label) label.textContent = newTier.toUpperCase();
+  }
+  document.querySelectorAll(".llm-tier-popover button[data-tier]").forEach(btn => {
+    btn.classList.toggle("on", btn.dataset.tier === newTier);
   });
   logSys(`→ changement de tier : ${newTier}. Nouvelle conversation.`);
-  // Drop current WS and reconnect — explicit new session on the tier's agent.
   if (ws && ws.readyState <= 1) {
     try { ws.close(); } catch (_) { /* ignore */ }
   }
@@ -677,14 +676,68 @@ export async function initLLMPanel() {
   el("llmClose")?.addEventListener("click", closePanel);
   el("llmStop")?.addEventListener("click", interruptAgent);
 
-  document.querySelectorAll(".llm-tier").forEach(btn => {
-    btn.addEventListener("click", () => switchTier(btn.dataset.tier));
+  // Tier chip → popover → switchTier.
+  const tierChip = el("llmTierChip");
+  const tierPopover = el("llmTierPopover");
+  function openTierPopover() {
+    if (!tierChip || !tierPopover) return;
+    tierPopover.hidden = false;
+    tierChip.setAttribute("aria-expanded", "true");
+  }
+  function closeTierPopover() {
+    if (!tierChip || !tierPopover) return;
+    tierPopover.hidden = true;
+    tierChip.setAttribute("aria-expanded", "false");
+  }
+  function toggleTierPopover() {
+    if (!tierPopover) return;
+    if (tierPopover.hidden) openTierPopover(); else closeTierPopover();
+  }
+  tierChip?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleTierPopover();
+  });
+  tierPopover?.querySelectorAll("button[data-tier]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const t = btn.dataset.tier;
+      switchTier(t);
+      closeTierPopover();
+    });
+  });
+  document.addEventListener("click", (e) => {
+    if (tierPopover && !tierPopover.hidden &&
+        !tierPopover.contains(e.target) && e.target !== tierChip &&
+        !tierChip?.contains(e.target)) {
+      closeTierPopover();
+    }
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && tierPopover && !tierPopover.hidden) {
+      closeTierPopover();
+    }
   });
 
-  el("llmForm")?.addEventListener("submit", e => {
+  const input = el("llmInput");
+  const form = el("llmForm");
+
+  function autoGrow() {
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 120) + "px";
+  }
+  input?.addEventListener("input", autoGrow);
+
+  input?.addEventListener("keydown", (e) => {
+    // Enter (without Shift) → submit. Shift+Enter → newline (default).
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form?.requestSubmit();
+    }
+  });
+
+  form?.addEventListener("submit", (e) => {
     e.preventDefault();
-    const input = el("llmInput");
-    const text = input.value.trim();
+    const text = (input?.value || "").trim();
     if (!text) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       logSys("impossible d'envoyer : socket non ouvert", true);
@@ -692,7 +745,10 @@ export async function initLLMPanel() {
     }
     logMessage("user", text);
     ws.send(JSON.stringify({ type: "message", text }));
-    input.value = "";
+    if (input) {
+      input.value = "";
+      autoGrow();
+    }
   });
 
   document.addEventListener("keydown", e => {
