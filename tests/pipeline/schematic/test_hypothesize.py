@@ -408,3 +408,62 @@ def test_hypothesize_respects_max_results():
         max_results=1,
     )
     assert len(r.hypotheses) == 1
+
+
+def test_hypothesize_rejects_ic_observation_with_passive_mode():
+    """state_comps[U7] = "open" is meaningless — U7 is an IC."""
+    from api.pipeline.schematic.hypothesize import Observations, hypothesize
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, ElectricalGraph, SchematicQualityReport,
+    )
+    graph = ElectricalGraph(
+        device_slug="coh-test",
+        components={"U7": ComponentNode(refdes="U7", type="ic", kind="ic")},
+        nets={}, power_rails={}, typed_edges=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1, confidence_global=1.0),
+    )
+    with pytest.raises(ValueError, match="U7.*not a valid IC mode"):
+        hypothesize(graph, observations=Observations(state_comps={"U7": "open"}))
+
+
+def test_hypothesize_rejects_passive_observation_with_ic_mode():
+    from api.pipeline.schematic.hypothesize import Observations, hypothesize
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, ElectricalGraph, SchematicQualityReport,
+    )
+    graph = ElectricalGraph(
+        device_slug="coh-test",
+        components={
+            "C156": ComponentNode(
+                refdes="C156", type="capacitor",
+                kind="passive_c", role="decoupling",
+            ),
+        },
+        nets={}, power_rails={}, typed_edges=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1, confidence_global=1.0),
+    )
+    with pytest.raises(ValueError, match="C156.*not a passive mode"):
+        hypothesize(graph, observations=Observations(state_comps={"C156": "anomalous"}))
+
+
+def test_hypothesize_accepts_coherent_observations():
+    from api.pipeline.schematic.hypothesize import Observations, hypothesize
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, ElectricalGraph, SchematicQualityReport,
+    )
+    graph = ElectricalGraph(
+        device_slug="coh-test",
+        components={
+            "U7":   ComponentNode(refdes="U7", type="ic", kind="ic"),
+            "C156": ComponentNode(
+                refdes="C156", type="capacitor",
+                kind="passive_c", role="decoupling",
+            ),
+        },
+        nets={}, power_rails={}, typed_edges=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1, confidence_global=1.0),
+    )
+    # Should not raise.
+    hypothesize(graph, observations=Observations(
+        state_comps={"U7": "dead", "C156": "short"},
+    ))

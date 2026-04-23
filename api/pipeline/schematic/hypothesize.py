@@ -38,13 +38,24 @@ MAX_PAIRS: int = 100                          # 2-fault pair cap (safety net, ra
 # Mode vocabulary — imported by tools, HTTP, tests, UI JSON.
 # ---------------------------------------------------------------------------
 
-ComponentMode = Literal["dead", "alive", "anomalous", "hot"]
+ComponentMode = Literal[
+    "dead", "alive", "anomalous", "hot",
+    "open", "short",
+]
 RailMode = Literal["dead", "alive", "shorted"]
+
 # Failure modes that can be attributed to a component as the root-cause kill.
 # `alive` is omitted (a live component is not a failure). `shorted` is a rail
 # observation but it's produced by a shorted component pulling its input rail
 # to GND, so it's a legitimate component-level failure mode in this engine.
-FailureMode = Literal["dead", "anomalous", "hot", "shorted"]
+# `open` / `short` are the Phase 4 additions for passives.
+FailureMode = Literal[
+    "dead", "anomalous", "hot", "shorted",
+    "open", "short",
+]
+
+_IC_MODES: frozenset[str] = frozenset({"dead", "alive", "anomalous", "hot"})
+_PASSIVE_MODES: frozenset[str] = frozenset({"open", "short", "alive"})
 
 
 class ObservedMetric(BaseModel):
@@ -589,6 +600,33 @@ def _enumerate_two_fault(
     return pairs_tested, ranked
 
 
+def _validate_obs_against_graph(
+    electrical: ElectricalGraph, observations: Observations,
+) -> None:
+    """Cross-check each observation's mode against the target's ComponentKind.
+
+    Raises ValueError with a specific target-and-mode message. The Pydantic
+    shape accepts any value in the unified ComponentMode Literal; this
+    function is the source of truth for `(kind, mode)` coherence.
+    """
+    for refdes, mode in observations.state_comps.items():
+        comp = electrical.components.get(refdes)
+        if comp is None:
+            # Unknown refdes — no kind info; allow and let scoring drop it.
+            continue
+        kind = getattr(comp, "kind", "ic")
+        if kind == "ic" and mode not in _IC_MODES:
+            raise ValueError(
+                f"Observation for {refdes!r} uses {mode!r} — not a valid IC mode "
+                f"(expected one of {sorted(_IC_MODES)})."
+            )
+        if kind != "ic" and mode not in _PASSIVE_MODES:
+            raise ValueError(
+                f"Observation for {refdes!r} (kind={kind}) uses {mode!r} — "
+                f"not a passive mode (expected one of {sorted(_PASSIVE_MODES)})."
+            )
+
+
 def hypothesize(
     electrical: ElectricalGraph,
     *,
@@ -598,6 +636,7 @@ def hypothesize(
 ) -> HypothesizeResult:
     """Rank candidate (refdes, mode) kills that explain `observations`."""
     t0 = time.perf_counter()
+    _validate_obs_against_graph(electrical, observations)
     if observations.is_empty():
         return HypothesizeResult(
             device_slug=electrical.device_slug,
