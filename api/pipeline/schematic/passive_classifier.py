@@ -118,21 +118,89 @@ def _classify_resistor(
 def _classify_capacitor(
     graph: ElectricalGraph, comp: ComponentNode,
 ) -> tuple[str | None, float]:
-    # Filled in T3.
+    # Evidence 1 — explicit `decouples` edge pointing at this cap.
+    for edge in graph.typed_edges:
+        if edge.kind == "decouples" and edge.dst == comp.refdes:
+            return "decoupling", 0.85
+
+    nets = _pin_nets(comp)
+    if len(nets) < 2:
+        return None, 0.0
+    n1, n2 = nets[0], nets[1]
+    rail1 = _is_power_rail(graph, n1)
+    rail2 = _is_power_rail(graph, n2)
+    gnd1 = _is_ground_net(n1)
+    gnd2 = _is_ground_net(n2)
+
+    # Evidence 2 — rail-to-GND near a consumer IC on the same rail.
+    if (rail1 and gnd2) or (rail2 and gnd1):
+        rail_label = n1 if rail1 else n2
+        rail = graph.power_rails.get(rail_label)
+        if rail and rail.consumers:
+            # Large-value caps classify as bulk; without value info we default
+            # to decoupling. `value.primary` parsing left to the LLM pass.
+            return "decoupling", 0.65
+        # Rail with no consumers found — fall back to filter.
+        return "filter", 0.45
+
+    # Evidence 3 — signal-to-signal (both non-power, non-GND) = AC coupling.
+    if not rail1 and not rail2 and not gnd1 and not gnd2:
+        return "ac_coupling", 0.55
+
     return None, 0.0
 
 
 def _classify_diode(
     graph: ElectricalGraph, comp: ComponentNode,
 ) -> tuple[str | None, float]:
-    # Filled in T3.
+    nets = _pin_nets(comp)
+    if len(nets) < 2:
+        return None, 0.0
+    n1, n2 = sorted(nets)  # sort to make the inductor lookup symmetric
+    gnd1 = _is_ground_net(n1)
+    gnd2 = _is_ground_net(n2)
+    rail1 = _is_power_rail(graph, n1)
+    rail2 = _is_power_rail(graph, n2)
+
+    # Evidence 1 — flyback: an inductor spans the same two nets.
+    my_nets = set(nets)
+    for other in graph.components.values():
+        if other.refdes == comp.refdes or other.type != "inductor":
+            continue
+        other_nets = set(_pin_nets(other))
+        if my_nets == other_nets:
+            return "flyback", 0.75
+
+    # Evidence 2 — signal to GND = ESD clamp.
+    if gnd1 or gnd2:
+        # One end GND, other end a non-rail net → ESD.
+        other = n2 if gnd1 else n1
+        if not _is_power_rail(graph, other):
+            return "esd", 0.6
+
+    # Evidence 3 — rail to rail = rectifier-ish.
+    if rail1 and rail2:
+        return "rectifier", 0.5
+
     return None, 0.0
 
 
 def _classify_ferrite(
     graph: ElectricalGraph, comp: ComponentNode,
 ) -> tuple[str | None, float]:
-    # Filled in T3.
+    """A ferrite bead's only practical role is `filter` — between a
+    rail and a filtered variant of it (`+3V3` → `+3V3_AUDIO`)."""
+    nets = _pin_nets(comp)
+    if len(nets) < 2:
+        return None, 0.0
+    n1, n2 = nets[0], nets[1]
+    rail1 = _is_power_rail(graph, n1)
+    rail2 = _is_power_rail(graph, n2)
+    if rail1 and rail2:
+        return "filter", 0.85
+    # One side rail, other side a net-not-yet-promoted-to-rail is still filter.
+    if rail1 or rail2:
+        return "filter", 0.65
     return None, 0.0
 
 

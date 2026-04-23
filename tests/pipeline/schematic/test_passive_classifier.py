@@ -117,3 +117,122 @@ def test_heuristic_classifier_assigns_every_passive():
     assert "R43" in result
     assert result["R43"][0] == "passive_r"
     assert "U1" not in result
+
+
+# --------- capacitors ---------
+
+def test_capacitor_decoupling_explicit_edge():
+    graph = _graph_with_rails("+3V3")
+    graph.nets["GND"] = NetNode(label="GND", is_global=True)
+    c = ComponentNode(
+        refdes="C156", type="capacitor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="+3V3"),
+            PagePin(number="2", role="unknown", net_label="GND"),
+        ],
+    )
+    graph.components["C156"] = c
+    graph.typed_edges.append(TypedEdge(src="+3V3", dst="C156", kind="decouples"))
+    kind, role, _ = classify_passive_refdes(graph, c)
+    assert kind == "passive_c"
+    assert role == "decoupling"
+
+
+def test_capacitor_rail_to_gnd_heuristic_decoupling():
+    """Without an explicit edge, a rail-to-GND cap still counts as decoupling
+    when a consumer IC sits on the same rail."""
+    graph = _graph_with_rails("+3V3")
+    graph.nets["GND"] = NetNode(label="GND")
+    graph.components["U7"] = ComponentNode(
+        refdes="U7", type="ic",
+        pins=[PagePin(number="1", role="power_in", net_label="+3V3")],
+    )
+    graph.power_rails["+3V3"].consumers = ["U7"]
+    c = ComponentNode(
+        refdes="C29", type="capacitor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="+3V3"),
+            PagePin(number="2", role="unknown", net_label="GND"),
+        ],
+    )
+    graph.components["C29"] = c
+    kind, role, _ = classify_passive_refdes(graph, c)
+    assert kind == "passive_c"
+    assert role == "decoupling"
+
+
+def test_capacitor_signal_to_signal_is_ac_coupling():
+    graph = _graph_with_rails()
+    graph.nets["AUDIO_L"] = NetNode(label="AUDIO_L")
+    graph.nets["AUDIO_L_AC"] = NetNode(label="AUDIO_L_AC")
+    c = ComponentNode(
+        refdes="C77", type="capacitor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="AUDIO_L"),
+            PagePin(number="2", role="unknown", net_label="AUDIO_L_AC"),
+        ],
+    )
+    graph.components["C77"] = c
+    kind, role, _ = classify_passive_refdes(graph, c)
+    assert kind == "passive_c"
+    assert role == "ac_coupling"
+
+
+# --------- diodes ---------
+
+def test_diode_flyback_edge_wins():
+    graph = _graph_with_rails()
+    d = ComponentNode(
+        refdes="D5", type="diode",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="SW_NODE"),
+            PagePin(number="2", role="unknown", net_label="VBAT"),
+        ],
+    )
+    graph.components["D5"] = d
+    # Flyback convention — cathode on the inductor output, anode on return.
+    # We detect it via the presence of an inductor across the same nets.
+    graph.components["L2"] = ComponentNode(
+        refdes="L2", type="inductor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="SW_NODE"),
+            PagePin(number="2", role="unknown", net_label="VBAT"),
+        ],
+    )
+    kind, role, _ = classify_passive_refdes(graph, d)
+    assert kind == "passive_d"
+    assert role == "flyback"
+
+
+def test_diode_signal_to_gnd_is_esd():
+    graph = _graph_with_rails()
+    graph.nets["USB_DP"] = NetNode(label="USB_DP")
+    graph.nets["GND"] = NetNode(label="GND")
+    d = ComponentNode(
+        refdes="D9", type="diode",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="USB_DP"),
+            PagePin(number="2", role="unknown", net_label="GND"),
+        ],
+    )
+    graph.components["D9"] = d
+    kind, role, _ = classify_passive_refdes(graph, d)
+    assert kind == "passive_d"
+    assert role == "esd"
+
+
+# --------- ferrites ---------
+
+def test_ferrite_between_rail_and_variant_is_filter():
+    graph = _graph_with_rails("+3V3", "+3V3_AUDIO")
+    fb = ComponentNode(
+        refdes="FB2", type="ferrite",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="+3V3"),
+            PagePin(number="2", role="unknown", net_label="+3V3_AUDIO"),
+        ],
+    )
+    graph.components["FB2"] = fb
+    kind, role, _ = classify_passive_refdes(graph, fb)
+    assert kind == "passive_fb"
+    assert role == "filter"
