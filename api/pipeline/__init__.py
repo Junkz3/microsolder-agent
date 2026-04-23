@@ -10,6 +10,7 @@ Exposes:
     GET  /pipeline/packs/{slug}/full              — every JSON artefact in one payload.
     GET  /pipeline/packs/{slug}/schematic         — compiled electrical graph.
     GET  /pipeline/packs/{slug}/schematic/boot    — boot_sequence + power_rails subset.
+    POST /pipeline/packs/{slug}/schematic/simulate — run behavioral simulator, returns full timeline.
 """
 
 from __future__ import annotations
@@ -33,7 +34,11 @@ from api.pipeline.expansion import expand_pack
 from api.pipeline.graph_transform import pack_to_graph_payload
 from api.pipeline.orchestrator import _slugify, generate_knowledge_pack
 from api.pipeline.schemas import PipelineResult
+from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence
+from api.pipeline.schematic.net_classifier import classify_nets
 from api.pipeline.schematic.orchestrator import ingest_schematic
+from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
+from api.pipeline.schematic.simulator import SimulationEngine
 
 logger = logging.getLogger("microsolder.pipeline.api")
 
@@ -46,6 +51,10 @@ class GenerateRequest(BaseModel):
         max_length=200,
         description="Human-readable device identifier (e.g. 'MNT Reform motherboard').",
     )
+
+
+class SimulateRequest(BaseModel):
+    killed_refdes: list[str] = Field(default_factory=list)
 
 
 @router.post("/generate", response_model=PipelineResult)
@@ -701,6 +710,11 @@ async def get_pack_schematic(device_slug: str) -> dict:
     404 when either the pack directory or `electrical_graph.json` is missing.
     The payload matches `api.pipeline.schematic.schemas.ElectricalGraph` —
     consumed by the Memory Bank UI for the D3 rail / boot-phase view.
+
+    When `boot_sequence_analyzed.json` exists (Opus post-pass), we merge it
+    into the payload under key `analyzed_boot_sequence` and also surface a
+    `boot_sequence_source` flag (`"analyzer"` or `"compiler"`) so the UI can
+    badge the timeline appropriately.
     """
     settings = get_settings()
     slug = _slugify(device_slug)
@@ -714,12 +728,150 @@ async def get_pack_schematic(device_slug: str) -> dict:
             detail=f"No schematic ingested yet for device_slug={slug!r}",
         )
     try:
-        return json.loads(graph_path.read_text())
+        payload = json.loads(graph_path.read_text())
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=422,
             detail=f"Malformed electrical_graph.json for {slug!r}: {exc}",
         ) from exc
+
+    # Opt-in overlay: Opus-refined boot sequence lives in its own file so we
+    # can re-run the analyzer without re-doing the vision pass.
+    analyzed_path = pack_dir / "boot_sequence_analyzed.json"
+    if analyzed_path.exists():
+        try:
+            payload["analyzed_boot_sequence"] = json.loads(analyzed_path.read_text())
+            payload["boot_sequence_source"] = "analyzer"
+        except json.JSONDecodeError:
+            payload["boot_sequence_source"] = "compiler"
+            logger.warning(
+                "boot_sequence_analyzed.json malformed for %s, falling back to compiler",
+                slug,
+            )
+    else:
+        payload["boot_sequence_source"] = "compiler"
+
+    # Same pattern for the net classifier — nets_classified.json when
+    # present, fallback to an empty state (UI can still run the regex
+    # classifier in-browser if needed).
+    classified_path = pack_dir / "nets_classified.json"
+    if classified_path.exists():
+        try:
+            classification = json.loads(classified_path.read_text())
+            payload["net_classification"] = classification
+            payload["net_domains_source"] = classification.get("model_used", "regex")
+        except json.JSONDecodeError:
+            payload["net_domains_source"] = "none"
+            logger.warning(
+                "nets_classified.json malformed for %s", slug,
+            )
+    else:
+        payload["net_domains_source"] = "none"
+
+    return payload
+
+
+async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> None:
+    """Background task — load the electrical graph, run Opus, persist analyzer output."""
+    t0 = time.monotonic()
+    graph_path = pack_dir / "electrical_graph.json"
+    try:
+        graph = ElectricalGraph.model_validate_json(graph_path.read_text())
+    except Exception:
+        logger.exception(
+            "[API] analyze-boot: failed to load electrical_graph for %s", device_slug
+        )
+        return
+    client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+    try:
+        analyzed = await analyze_boot_sequence(graph, client=client)
+        (pack_dir / "boot_sequence_analyzed.json").write_text(
+            analyzed.model_dump_json(indent=2)
+        )
+        logger.info(
+            "[API] analyze-boot finished for %s in %.1fs (phases=%d conf=%.2f)",
+            device_slug, time.monotonic() - t0,
+            len(analyzed.phases), analyzed.global_confidence,
+        )
+    except Exception:
+        logger.exception(
+            "[API] analyze-boot failed for %s", device_slug
+        )
+
+
+@router.post("/packs/{device_slug}/schematic/analyze-boot", status_code=202)
+async def post_analyze_boot(device_slug: str) -> dict:
+    """Kick off an Opus boot-sequence analysis in the background.
+
+    Re-runnable independently of the full schematic ingestion — useful when
+    the prompt is improved or a newer model is available. Returns 202 with
+    `{device_slug, started}`; the client polls `GET /packs/{slug}/schematic`
+    to observe `boot_sequence_source` flipping from `compiler` to `analyzer`.
+    """
+    settings = get_settings()
+    slug = _slugify(device_slug)
+    pack_dir = Path(settings.memory_root) / slug
+    if not pack_dir.exists():
+        raise HTTPException(status_code=404, detail=f"No pack for device_slug={slug!r}")
+    if not (pack_dir / "electrical_graph.json").exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No schematic ingested yet for device_slug={slug!r}",
+        )
+    logger.info("[API] /packs/%s/schematic/analyze-boot · queued", slug)
+    asyncio.create_task(_run_boot_analyzer_in_background(slug, pack_dir))
+    return {"device_slug": slug, "started": True}
+
+
+async def _run_net_classifier_in_background(device_slug: str, pack_dir: Path) -> None:
+    """Background task — run Opus net classifier and persist."""
+    t0 = time.monotonic()
+    graph_path = pack_dir / "electrical_graph.json"
+    try:
+        graph = ElectricalGraph.model_validate_json(graph_path.read_text())
+    except Exception:
+        logger.exception(
+            "[API] classify-nets: failed to load electrical_graph for %s", device_slug
+        )
+        return
+    client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+    try:
+        classification = await classify_nets(graph, client=client)
+        (pack_dir / "nets_classified.json").write_text(
+            classification.model_dump_json(indent=2)
+        )
+        logger.info(
+            "[API] classify-nets finished for %s in %.1fs (nets=%d model=%s)",
+            device_slug, time.monotonic() - t0,
+            len(classification.nets), classification.model_used,
+        )
+    except Exception:
+        logger.exception(
+            "[API] classify-nets failed for %s", device_slug
+        )
+
+
+@router.post("/packs/{device_slug}/schematic/classify-nets", status_code=202)
+async def post_classify_nets(device_slug: str) -> dict:
+    """Kick off an Opus net classification in the background.
+
+    Re-runnable independently — useful when the prompt improves or a new
+    model drops. Returns 202; client polls `GET /packs/{slug}/schematic`
+    and sees `net_domains_source` flip from 'regex' to 'opus'.
+    """
+    settings = get_settings()
+    slug = _slugify(device_slug)
+    pack_dir = Path(settings.memory_root) / slug
+    if not pack_dir.exists():
+        raise HTTPException(status_code=404, detail=f"No pack for device_slug={slug!r}")
+    if not (pack_dir / "electrical_graph.json").exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No schematic ingested yet for device_slug={slug!r}",
+        )
+    logger.info("[API] /packs/%s/schematic/classify-nets · queued", slug)
+    asyncio.create_task(_run_net_classifier_in_background(slug, pack_dir))
+    return {"device_slug": slug, "started": True}
 
 
 @router.get("/packs/{device_slug}/schematic/boot")
@@ -752,6 +904,54 @@ async def get_pack_schematic_boot(device_slug: str) -> dict:
         "power_rails": graph.get("power_rails", {}),
         "quality": graph.get("quality"),
     }
+
+
+@router.post("/packs/{device_slug}/schematic/simulate")
+async def post_simulate(device_slug: str, request: SimulateRequest) -> dict:
+    """Run the behavioral simulator on the compiled electrical graph.
+
+    Synchronous (simulator completes in < 10ms on MNT-class boards), so
+    the response is the full SimulationTimeline inline. 400 when any
+    refdes in killed_refdes is unknown; 404 when no electrical_graph
+    exists for the slug.
+    """
+    settings = get_settings()
+    slug = _slugify(device_slug)
+    pack_dir = Path(settings.memory_root) / slug
+    graph_path = pack_dir / "electrical_graph.json"
+    if not pack_dir.exists() or not graph_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No schematic ingested yet for device_slug={slug!r}",
+        )
+
+    try:
+        electrical = ElectricalGraph.model_validate_json(graph_path.read_text())
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Malformed electrical_graph for {slug!r}: {exc}",
+        ) from exc
+
+    invalid = [r for r in request.killed_refdes if r not in electrical.components]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown refdes in killed_refdes: {invalid}",
+        )
+
+    analyzed: AnalyzedBootSequence | None = None
+    ab_path = pack_dir / "boot_sequence_analyzed.json"
+    if ab_path.exists():
+        try:
+            analyzed = AnalyzedBootSequence.model_validate_json(ab_path.read_text())
+        except Exception:
+            analyzed = None
+
+    tl = SimulationEngine(
+        electrical, analyzed_boot=analyzed, killed_refdes=list(request.killed_refdes)
+    ).run()
+    return tl.model_dump()
 
 
 __all__ = ["router"]
