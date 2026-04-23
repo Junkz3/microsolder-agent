@@ -48,6 +48,13 @@ const STATE = {
 const SimulationController = {
   timeline: null,          // server response
   killedRefdes: [],        // user-injected faults
+  observations: {
+    dead_comps:  new Set(),
+    alive_comps: new Set(),
+    dead_rails:  new Set(),
+    alive_rails: new Set(),
+  },
+  hypotheses: null,          // latest HypothesizeResult.hypotheses (array)
   playing: false,
   speedMs: 800,            // ms per phase at 1×
   cursor: 0,               // current phase index within timeline.states
@@ -251,6 +258,114 @@ const SimulationController = {
     clearInterval(this._timer);
     this._timer = null;
     this._updateScrubberLabel();
+  },
+
+  // ---- Observations ----
+  setObservation(kind, key, state) {
+    // kind: "comp" | "rail"    state: "dead" | "alive" | "unknown"
+    const deadSet  = kind === "comp" ? this.observations.dead_comps  : this.observations.dead_rails;
+    const aliveSet = kind === "comp" ? this.observations.alive_comps : this.observations.alive_rails;
+    deadSet.delete(key);
+    aliveSet.delete(key);
+    if (state === "dead")  deadSet.add(key);
+    else if (state === "alive") aliveSet.add(key);
+    this._applyObservationClasses();
+  },
+  clearObservations() {
+    for (const s of Object.values(this.observations)) s.clear();
+    this.hypotheses = null;
+    this._applyObservationClasses();
+    document.querySelectorAll(".sim-hypotheses-panel").forEach(p => p.remove());
+  },
+  _applyObservationClasses() {
+    document.querySelectorAll(".obs-dead, .obs-alive").forEach(n =>
+      n.classList.remove("obs-dead", "obs-alive")
+    );
+    for (const ref of this.observations.dead_comps) {
+      document.querySelectorAll(`[data-refdes="${CSS.escape(ref)}"]`).forEach(el => el.classList.add("obs-dead"));
+    }
+    for (const ref of this.observations.alive_comps) {
+      document.querySelectorAll(`[data-refdes="${CSS.escape(ref)}"]`).forEach(el => el.classList.add("obs-alive"));
+    }
+    for (const lbl of this.observations.dead_rails) {
+      document.querySelectorAll(`[data-rail="${CSS.escape(lbl)}"]`).forEach(el => el.classList.add("obs-dead"));
+    }
+    for (const lbl of this.observations.alive_rails) {
+      document.querySelectorAll(`[data-rail="${CSS.escape(lbl)}"]`).forEach(el => el.classList.add("obs-alive"));
+    }
+  },
+
+  // ---- Reverse-diagnostic: hypothesize + results panel ----
+  async hypothesize(slug) {
+    const obs = this.observations;
+    const body = {
+      dead_comps:  [...obs.dead_comps],
+      alive_comps: [...obs.alive_comps],
+      dead_rails:  [...obs.dead_rails],
+      alive_rails: [...obs.alive_rails],
+      max_results: 5,
+    };
+    const total = body.dead_comps.length + body.alive_comps.length
+                + body.dead_rails.length + body.alive_rails.length;
+    if (total === 0) return;
+    try {
+      const res = await fetch(
+        `/pipeline/packs/${encodeURIComponent(slug)}/schematic/hypothesize`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      );
+      if (!res.ok) {
+        console.warn("[hypothesize] HTTP", res.status, await res.text());
+        return;
+      }
+      const payload = await res.json();
+      this.hypotheses = payload.hypotheses || [];
+      this._renderHypothesesPanel();
+    } catch (err) {
+      console.warn("[hypothesize] fetch error", err);
+    }
+  },
+
+  _renderHypothesesPanel() {
+    document.querySelectorAll(".sim-hypotheses-panel").forEach(p => p.remove());
+    if (!this.hypotheses || this.hypotheses.length === 0) return;
+    const panel = document.createElement("div");
+    panel.className = "sim-hypotheses-panel";
+    panel.innerHTML = `
+      <div class="sim-hyp-head">
+        <span class="sim-hyp-title">Hypothèses (top ${this.hypotheses.length})</span>
+        <button class="sim-hyp-close" title="Fermer">×</button>
+      </div>
+      <div class="sim-hyp-body"></div>
+    `;
+    panel.querySelector(".sim-hyp-close").addEventListener("click", () => panel.remove());
+
+    const body = panel.querySelector(".sim-hyp-body");
+    this.hypotheses.forEach((h, i) => {
+      const card = document.createElement("div");
+      card.className = "sim-hyp-card";
+      const chips = h.kill_refdes.map(r => `<span class="sim-hyp-chip">${escHtml(r)}</span>`).join(" + ");
+      const contradictions = (h.diff.contradictions || []).map(c => `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(c)}</span>`).join(" ");
+      const missing = (h.diff.under_explained || []).map(c => `<span class="sim-hyp-tag sim-hyp-tag-fn">${escHtml(c)}</span>`).join(" ");
+      card.innerHTML = `
+        <div class="sim-hyp-card-head">
+          <span class="sim-hyp-rank">#${i + 1}</span>
+          <span class="sim-hyp-kills">${chips}</span>
+          <span class="sim-hyp-score">score ${h.score.toFixed(1)}</span>
+        </div>
+        <div class="sim-hyp-narr">${escHtml(h.narrative)}</div>
+        ${contradictions ? `<div class="sim-hyp-diff"><span class="k">contredit</span> ${contradictions}</div>` : ""}
+        ${missing ? `<div class="sim-hyp-diff"><span class="k">ne couvre pas</span> ${missing}</div>` : ""}
+      `;
+      card.addEventListener("click", () => {
+        // Preview the cascade by injecting this kill set into the simulator.
+        SimulationController.killedRefdes = [...h.kill_refdes];
+        SimulationController.refresh(STATE.slug);
+      });
+      body.appendChild(card);
+    });
+
+    const host = document.querySelector("#schematicSection") || document.body;
+    host.appendChild(panel);
   },
 };
 
@@ -2236,6 +2351,54 @@ function updateInspector(node) {
         </table>
       </section>` : ""}
     `;
+  }
+
+  // --- Observation toggles (reverse-diagnostic input) ---
+  // Appears on component and rail nodes. Sets the 3-state observation
+  // (dead / unknown / alive) feeding the hypothesize endpoint.
+  const obsKind = node.kind === "component" ? "comp" : node.kind === "rail" ? "rail" : null;
+  const obsKey  = node.kind === "component" ? node.refdes : node.kind === "rail" ? node.label : null;
+  if (obsKind && obsKey) {
+    const deadSet  = obsKind === "comp" ? SimulationController.observations.dead_comps  : SimulationController.observations.dead_rails;
+    const aliveSet = obsKind === "comp" ? SimulationController.observations.alive_comps : SimulationController.observations.alive_rails;
+    const current  = deadSet.has(obsKey) ? "dead" : aliveSet.has(obsKey) ? "alive" : "unknown";
+
+    const row = document.createElement("div");
+    row.className = "sim-obs-row";
+    row.innerHTML = `
+      <span class="sim-obs-label">Observation</span>
+      <button data-obs="dead"    class="${current === "dead"    ? "active" : ""}">❌ mort</button>
+      <button data-obs="unknown" class="${current === "unknown" ? "active" : ""}">⚪ inconnu</button>
+      <button data-obs="alive"   class="${current === "alive"   ? "active" : ""}">✅ vivant</button>
+    `;
+    row.addEventListener("click", (ev) => {
+      const next = ev.target?.dataset?.obs;
+      if (!next) return;
+      SimulationController.setObservation(obsKind, obsKey, next);
+      updateInspector(node);  // re-render to flip active state
+    });
+    body.appendChild(row);
+  }
+
+  // --- Diagnostiquer / Réinitialiser buttons (reverse-diagnostic) ---
+  // Shown whenever at least one observation is recorded, regardless of
+  // which node is currently selected in the inspector.
+  const obsCount = Object.values(SimulationController.observations).reduce((sum, s) => sum + s.size, 0);
+  if (obsCount > 0) {
+    const diagBtn = document.createElement("button");
+    diagBtn.className = "sim-inspector-action sim-inspector-action--diag";
+    diagBtn.textContent = `Diagnostiquer (${obsCount} observation${obsCount > 1 ? "s" : ""})`;
+    diagBtn.addEventListener("click", () => SimulationController.hypothesize(STATE.slug));
+    body.appendChild(diagBtn);
+
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "sim-inspector-action";
+    clearBtn.textContent = "Réinitialiser observations";
+    clearBtn.addEventListener("click", () => {
+      SimulationController.clearObservations();
+      updateInspector(node);
+    });
+    body.appendChild(clearBtn);
   }
 
   // --- Fault-injection action (behavioral simulator integration) ---
