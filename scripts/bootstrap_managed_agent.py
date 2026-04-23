@@ -7,8 +7,8 @@ Creates **three tier-scoped agents** that differ only by `model`:
     normal  — claude-sonnet-4-6 (balanced)
     deep    — claude-opus-4-7   (deep reasoning)
 
-All three share the **same** system prompt and the **same** two custom
-tools (`mb_get_component`, `mb_get_rules_for_symptoms`). No escalation /
+All three share the **same** system prompt and the **same** 16 tools
+(4 `mb_*` + 12 `bv_*` sourced from `api/agent/manifest`). No escalation /
 handoff tool — tier selection is a user-driven choice surfaced in the
 frontend (segmented control in the LLM panel).
 
@@ -32,6 +32,7 @@ Idempotent: re-running reads existing IDs and creates only missing tiers.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -39,6 +40,8 @@ from pathlib import Path
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
+
+from api.agent.manifest import BV_TOOLS, MB_TOOLS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IDS_FILE = REPO_ROOT / "managed_ids.json"
@@ -78,85 +81,7 @@ causes à haute probabilité et les étapes de diagnostic concrètes
 (mesurer tel voltage sur tel test point).
 """
 
-TOOLS = [
-    {
-        "type": "custom",
-        "name": "mb_get_component",
-        "description": (
-            "Look up a component by refdes on the current device. Returns "
-            "role/package/typical_failure_modes if found, otherwise "
-            "{found: false, closest_matches: [...]}."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "refdes": {"type": "string", "description": "e.g. U7, C29, J3100"},
-            },
-            "required": ["refdes"],
-        },
-    },
-    {
-        "type": "custom",
-        "name": "mb_get_rules_for_symptoms",
-        "description": (
-            "Find diagnostic rules matching a list of symptoms, ranked by "
-            "overlap + confidence."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "symptoms": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "minItems": 1,
-                },
-                "max_results": {"type": "integer", "default": 5},
-            },
-            "required": ["symptoms"],
-        },
-    },
-    {
-        "type": "custom",
-        "name": "mb_list_findings",
-        "description": (
-            "Return prior confirmed findings (field reports) for the current "
-            "device, newest first. Cross-session memory that every session "
-            "should check on open."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100},
-                "filter_refdes": {
-                    "type": "string",
-                    "description": "When set, return only findings for this refdes.",
-                },
-            },
-        },
-    },
-    {
-        "type": "custom",
-        "name": "mb_record_finding",
-        "description": (
-            "Persist a confirmed repair finding so future sessions see it. "
-            "Call only when the technician explicitly confirms the cause."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "refdes": {"type": "string", "description": "e.g. U7, C29"},
-                "symptom": {"type": "string"},
-                "confirmed_cause": {"type": "string"},
-                "mechanism": {
-                    "type": "string",
-                    "description": "Optional short phrase (e.g. 'short-to-ground').",
-                },
-                "notes": {"type": "string", "description": "Optional free-form notes."},
-            },
-            "required": ["refdes", "symptom", "confirmed_cause"],
-        },
-    },
-]
+TOOLS = MB_TOOLS + BV_TOOLS
 
 TIERS = {
     "fast":   {"model": "claude-haiku-4-5",  "name": "microsolder-coordinator-fast"},
@@ -205,18 +130,21 @@ def _ensure_environment(client: Anthropic, data: dict) -> str:
     return env.id
 
 
-def _ensure_agent(client: Anthropic, tier: str, spec: dict, data: dict) -> None:
+def _ensure_agent(
+    client: Anthropic, tier: str, spec: dict, data: dict, *, refresh_tools: bool = False
+) -> None:
     existing = data["agents"].get(tier)
-    if existing and not existing.get("legacy"):
+    if existing and not existing.get("legacy") and not refresh_tools:
         print(
             f"✅ Existing agent [{tier}]: {existing['id']} "
             f"(v{existing['version']}, {existing['model']})"
         )
         return
-    if existing and existing.get("legacy"):
+    if existing and (existing.get("legacy") or refresh_tools):
+        reason = "legacy agent" if existing.get("legacy") else "refresh requested"
         print(
-            f"⚠️  Legacy agent found at tier [{tier}] ({existing['id']}). "
-            "Archiving and replacing with a fresh one."
+            f"♻️  Replacing agent at tier [{tier}] ({existing['id']}) — {reason}. "
+            "Archiving and re-creating with current TOOLS."
         )
         try:
             client.beta.agents.archive(existing["id"])
@@ -241,6 +169,19 @@ def _ensure_agent(client: Anthropic, tier: str, spec: dict, data: dict) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Bootstrap or refresh MA agents for microsolder-agent."
+    )
+    parser.add_argument(
+        "--refresh-tools",
+        action="store_true",
+        help=(
+            "Archive existing non-legacy agents and recreate them with the current TOOLS set. "
+            "Use after updating the tool manifest."
+        ),
+    )
+    args = parser.parse_args()
+
     load_dotenv(REPO_ROOT / ".env")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit(
@@ -252,7 +193,7 @@ def main() -> None:
 
     _ensure_environment(client, data)
     for tier, spec in TIERS.items():
-        _ensure_agent(client, tier, spec, data)
+        _ensure_agent(client, tier, spec, data, refresh_tools=args.refresh_tools)
 
     print(f"\n✅ managed_ids.json up-to-date at {IDS_FILE.name}")
     print(f"   environment: {data['environment_id']}")
