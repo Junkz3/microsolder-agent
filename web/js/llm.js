@@ -214,13 +214,18 @@ function closeTurn() {
   currentTurn = null;
 }
 
-function ensurePendingNode(turn) {
+function ensurePendingNode(turn, label = "l'agent réfléchit") {
   const rail = turn.querySelector(".turn-rail");
   if (!rail || rail.querySelector(".step.pending")) return;
   const step = document.createElement("div");
   step.className = "step pending";
-  step.innerHTML = `<span class="node"></span><span class="step-phrase">l'agent travaille…</span>`;
+  step.innerHTML =
+    `<span class="node"></span>` +
+    `<span class="step-phrase">${escapeHTML(label)}` +
+    `<span class="pending-dots"><span>.</span><span>.</span><span>.</span></span>` +
+    `</span>`;
   rail.appendChild(step);
+  el("llmLog").scrollTop = el("llmLog").scrollHeight;
 }
 
 function clearPendingNode(turn) {
@@ -745,6 +750,12 @@ export async function initLLMPanel() {
     }
     logMessage("user", text);
     ws.send(JSON.stringify({ type: "message", text }));
+    // Immediate feedback: open a fresh turn and show the pending indicator
+    // before the backend has produced its first event. Subsequent tool_use /
+    // thinking / message events reuse this turn via ensureTurn().
+    closeTurn();
+    const turn = ensureTurn();
+    ensurePendingNode(turn);
     if (input) {
       input.value = "";
       autoGrow();
