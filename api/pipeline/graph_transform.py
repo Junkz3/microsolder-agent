@@ -5,8 +5,13 @@ Carries component / net / symptom nodes and their relations from
 knowledge_graph verbatim (symptom IDs use the Cartographe's `sym:<slug>`
 convention), enriches component nodes with dictionary / registry metadata,
 and back-fills any rule-only symptom that the Cartographe missed so no
-rule goes orphan in the UI. `action` nodes will land once the diagnostic
-agent starts persisting recommended actions.
+rule goes orphan in the UI.
+
+Synthesizes one `action` node per rule — the concrete microsoldering
+intervention (Replace / Reflow / Jumper / Lift / Reball / Hunt short)
+derived from the rule's highest-probability cause mechanism. Actions
+link to the rule's symptoms via `resolves` edges, completing the narrative
+Actions → Components → Nets → Symptoms on the frontend.
 """
 
 from __future__ import annotations
@@ -151,4 +156,114 @@ def pack_to_graph_payload(
                     }
                 )
 
+    # 5. Synthesize action nodes — one per rule, labelled from the top cause's
+    #    mechanism. Actions sit in the leftmost column of the visual narrative
+    #    and `resolves` the rule's symptoms. Edges use the `resolves` relation
+    #    which the frontend renders as a violet dotted arrow.
+    for rule in rules.get("rules", []):
+        rule_id = rule.get("id", "")
+        if not rule_id:
+            continue
+        action_id = f"act:{rule_id}"
+        label, top_mechanism = _derive_action_label(rule)
+        nodes.append(
+            {
+                "id": action_id,
+                "type": "action",
+                "label": label,
+                "description": top_mechanism,
+                "confidence": rule.get("confidence", 0.6),
+                "meta": {"rule_id": rule_id},
+            }
+        )
+        for symptom_text in rule.get("symptoms", []):
+            sid = symptom_id_by_label.get(symptom_text)
+            if sid is None:
+                continue
+            edges.append(
+                {
+                    "source": action_id,
+                    "target": sid,
+                    "relation": "resolves",
+                    "label": "resolves",
+                    "weight": float(rule.get("confidence", 0.6)),
+                }
+            )
+
     return {"nodes": nodes, "edges": edges}
+
+
+_ACTION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "Jumper",
+        ("jumper", "torn flex", "broken trace", "pad lift", "pad-lift", "trace cut", "trace break"),
+    ),
+    (
+        "Reball",
+        ("reball", "bga ball", "perimeter ball", "cracked ball", "cracked bga", "ball array"),
+    ),
+    ("Reflow", ("reflow", "cold joint", "cracked solder", "cracked joint")),
+    (
+        "Lift",
+        (
+            "leaky", "shorted cap", "shorted decoupling", "shorted mlcc", "leaky mlcc",
+            "lift cap", "lift the", "shorted capacitor", "nand-adjacent cap",
+            "decoupling cap",
+        ),
+    ),
+    (
+        "Replace",
+        (
+            "replace", "die failure", "damaged", "blown", "swap", "burn",
+            "internal failure", "regulator failure", "die damage", "internal gpu",
+            "internal regulator", "chip failure",
+        ),
+    ),
+    (
+        "Hunt short on",
+        ("short to ground", "short to gnd", "shorted to gnd", "shorted to ground"),
+    ),
+)
+
+
+_REFDES_PREFIX_VERBS: dict[str, str] = {
+    "C": "Lift",      # capacitor — almost always lifted when shorted/leaky
+    "U": "Replace",   # IC
+    "Q": "Replace",   # MOSFET / transistor
+    "L": "Replace",   # inductor
+    "R": "Replace",   # resistor
+    "D": "Replace",   # diode
+    "J": "Jumper",    # connector — typically pad-repair / jumper
+}
+
+
+def _derive_action_label(rule: dict[str, Any]) -> tuple[str, str]:
+    """Pick a short imperative microsoldering action label from a rule.
+
+    Returns `(label, top_mechanism)`. The label uses the top-probability
+    cause's refdes, preceded by a verb inferred from the cause's mechanism
+    string. When no mechanism keyword fires, the refdes's PCB prefix
+    (C/U/Q/L/R/D/J) chooses a reasonable default. `top_mechanism` is kept
+    for the node's description.
+    """
+    causes = rule.get("likely_causes") or []
+    if not causes:
+        return (f"Investigate — {rule.get('id', 'rule')}", "")
+
+    sorted_causes = sorted(
+        causes,
+        key=lambda c: c.get("probability", 0.0),
+        reverse=True,
+    )
+    top = sorted_causes[0]
+    refdes = top.get("refdes") or "component"
+    mechanism = top.get("mechanism") or ""
+    mech_lower = mechanism.lower()
+
+    for verb, keywords in _ACTION_KEYWORDS:
+        if any(kw in mech_lower for kw in keywords):
+            return (f"{verb} {refdes}", mechanism)
+
+    prefix = refdes[:1].upper() if refdes else ""
+    verb = _REFDES_PREFIX_VERBS.get(prefix, "Repair")
+    return (f"{verb} {refdes}", mechanism)
