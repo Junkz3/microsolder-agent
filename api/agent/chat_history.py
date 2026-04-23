@@ -128,6 +128,67 @@ def load_events(
     return events
 
 
+def load_repair_metadata(
+    *,
+    device_slug: str,
+    repair_id: str | None,
+    memory_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the JSON payload of memory/{slug}/repairs/{repair_id}.json, or None."""
+    if not repair_id:
+        return None
+    settings = get_settings()
+    memory_root = memory_root or Path(settings.memory_root)
+    path = _metadata_file(memory_root, device_slug, repair_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "[ChatHistory] load_repair_metadata failed for repair=%s: %s",
+            repair_id,
+            exc,
+        )
+        return None
+
+
+def build_session_intro(
+    *,
+    device_slug: str,
+    repair_id: str | None,
+    memory_root: Path | None = None,
+) -> str | None:
+    """Compose the hidden bootstrap message the agent sees on session open.
+
+    Carries the device identity and the client's reported symptom so the
+    agent can immediately query `mb_list_findings` / `mb_get_rules_for_symptoms`
+    without asking "which device are you on?". Returns None when there's
+    nothing to tell (no repair_id given).
+    """
+    if not repair_id:
+        return None
+    meta = load_repair_metadata(
+        device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
+    )
+    if not meta:
+        # Still worth surfacing the device slug even if the repair file is gone.
+        return f"[Nouvelle session · device_slug: {device_slug}]"
+    label = meta.get("device_label") or device_slug
+    symptom = (meta.get("symptom") or "").strip()
+    lines = [
+        "[Nouvelle session de diagnostic]",
+        f"Device: {label} (slug: {device_slug})",
+    ]
+    if symptom:
+        lines.append(f"Symptôme signalé par le technicien: {symptom}")
+    lines.append(
+        "Commence par mb_list_findings pour voir les réparations passées, "
+        "puis mb_get_rules_for_symptoms pour les règles applicables."
+    )
+    return "\n".join(lines)
+
+
 def touch_status(
     *,
     device_slug: str,

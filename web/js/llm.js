@@ -146,6 +146,12 @@ function connect() {
       case "history_replay_end":
         logSys("replay terminé — reprends où tu t'étais arrêté");
         break;
+      case "context_loaded":
+        // Backend just injected the repair's device + symptom context into
+        // the agent's first user message. Explain why the agent is about to
+        // reply without a preceding user bubble.
+        logSys("contexte auto-chargé · l'agent consulte les field reports…");
+        break;
       case "message":
         logMessage(payload.role || "assistant", payload.text || "", payload.replay === true);
         break;

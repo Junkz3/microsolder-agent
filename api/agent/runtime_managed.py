@@ -26,6 +26,7 @@ from typing import Any, Literal
 from anthropic import AsyncAnthropic
 from fastapi import WebSocket, WebSocketDisconnect
 
+from api.agent.chat_history import build_session_intro
 from api.agent.dispatch_bv import dispatch_bv
 from api.agent.managed_ids import get_agent, load_managed_ids
 from api.agent.memory_stores import ensure_memory_store
@@ -180,8 +181,39 @@ async def run_diagnostic_session_managed(
             "tier": tier,
             "model": agent_info["model"],
             "board_loaded": session_state.board is not None,
+            "repair_id": repair_id,
         }
     )
+
+    # Bootstrap the MA session with a hidden first user message carrying the
+    # device identity + reported symptom. The MA system prompt instructs the
+    # agent that the device arrives in the first user message, so this fills
+    # that contract and spares the tech from retyping the info they already
+    # entered in the "Nouvelle réparation" modal.
+    intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
+    if intro:
+        # Tell the client first so it can render a sys line explaining WHY
+        # the agent is about to speak unprompted.
+        await ws.send_json({
+            "type": "context_loaded",
+            "device_slug": device_slug,
+            "repair_id": repair_id,
+        })
+        try:
+            await client.beta.sessions.events.send(
+                session.id,
+                events=[
+                    {
+                        "type": "user.message",
+                        "content": [{"type": "text", "text": intro}],
+                    }
+                ],
+            )
+            logger.info("[Diag-MA] Injected session intro for repair=%s", repair_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[Diag-MA] failed to inject session intro: %s", exc
+            )
 
     # Cache: agent.custom_tool_use events by event.id, so we can look up
     # name+input when `requires_action` arrives and only hands us event_ids.

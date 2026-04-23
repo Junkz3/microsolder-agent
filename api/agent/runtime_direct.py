@@ -17,7 +17,12 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.agent.chat_history import append_event, load_events, touch_status
+from api.agent.chat_history import (
+    append_event,
+    build_session_intro,
+    load_events,
+    touch_status,
+)
 from api.agent.dispatch_bv import dispatch_bv
 from api.agent.manifest import build_tools_manifest, render_system_prompt
 from api.agent.sanitize import sanitize_agent_text
@@ -55,6 +60,96 @@ def _normalize_message(msg: Any) -> dict[str, Any]:
     if hasattr(msg, "model_dump"):
         return msg.model_dump(mode="json")
     return msg  # type: ignore[return-value]
+
+
+async def _run_agent_turn(
+    *,
+    ws: WebSocket,
+    client: AsyncAnthropic,
+    model: str,
+    system_prompt: str,
+    tools: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+    session: SessionState,
+    device_slug: str,
+    repair_id: str | None,
+    memory_root: Path,
+) -> None:
+    """Drive the model-call / tool-dispatch inner loop until the agent stops.
+
+    Extracted so it can be called from two places: (a) automatically right
+    after we inject the session intro (fresh session on a known repair), and
+    (b) after each user input in the main WS loop. Both paths mutate the
+    caller's `messages` list in place.
+    """
+    while True:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=8000,
+            system=system_prompt,
+            messages=messages,
+            tools=tools,
+        )
+
+        # Two passes over response.content are intentional: emit every
+        # text block first so the user reads the narrative before the
+        # canvas animates, THEN dispatch tool_use blocks (which fire
+        # boardview.* events). Block-level ordering matches the model's
+        # output order, just grouped by kind.
+        for block in response.content:
+            if block.type == "text":
+                clean, unknown = sanitize_agent_text(block.text, session.board)
+                if unknown:
+                    logger.warning("sanitizer wrapped unknown refdes: %s", unknown)
+                await ws.send_json(
+                    {"type": "message", "role": "assistant", "text": clean}
+                )
+
+        assistant_msg = _normalize_message(
+            {"role": "assistant", "content": response.content}
+        )
+
+        if response.stop_reason != "tool_use":
+            messages.append(assistant_msg)
+            append_event(
+                device_slug=device_slug, repair_id=repair_id, event=assistant_msg
+            )
+            return
+
+        messages.append(assistant_msg)
+        append_event(
+            device_slug=device_slug, repair_id=repair_id, event=assistant_msg
+        )
+        tool_results: list[dict] = []
+        for block in response.content:
+            if block.type != "tool_use":
+                continue
+            await ws.send_json(
+                {"type": "tool_use", "name": block.name, "input": block.input}
+            )
+            if block.name.startswith("bv_"):
+                result = dispatch_bv(session, block.name, block.input or {})
+            else:
+                result = await _dispatch_mb_tool(
+                    block.name, block.input or {}, device_slug,
+                    memory_root, client, session,
+                )
+            event = result.get("event")
+            if result.get("ok") and event is not None:
+                await ws.send_json(event.model_dump(by_alias=True))
+            result_for_agent = {k: v for k, v in result.items() if k != "event"}
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result_for_agent, default=str),
+                }
+            )
+        tool_results_msg = {"role": "user", "content": tool_results}
+        messages.append(tool_results_msg)
+        append_event(
+            device_slug=device_slug, repair_id=repair_id, event=tool_results_msg
+        )
 
 
 async def _replay_history_to_ws(
@@ -204,6 +299,35 @@ async def run_diagnostic_session_direct(
             len(messages),
         )
         await _replay_history_to_ws(ws, messages)
+    elif repair_id:
+        # Fresh session on a known repair — bootstrap the agent with the
+        # device identity + reported symptom so it can call mb_* tools
+        # without asking "which device are you on?", THEN run one agent
+        # turn so the tech lands on an informed opening reply.
+        intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
+        if intro:
+            intro_msg = {"role": "user", "content": intro}
+            messages.append(intro_msg)
+            append_event(
+                device_slug=device_slug, repair_id=repair_id, event=intro_msg
+            )
+            await ws.send_json({
+                "type": "context_loaded",
+                "device_slug": device_slug,
+                "repair_id": repair_id,
+            })
+            touch_status(
+                device_slug=device_slug, repair_id=repair_id, status="in_progress"
+            )
+            logger.info("[Diag-Direct] Injected session intro for repair=%s", repair_id)
+            await _run_agent_turn(
+                ws=ws, client=client, model=model,
+                system_prompt=system_prompt, tools=tools,
+                messages=messages, session=session,
+                device_slug=device_slug, repair_id=repair_id,
+                memory_root=memory_root,
+            )
+
     try:
         while True:
             raw = await ws.receive_text()
@@ -225,82 +349,12 @@ async def run_diagnostic_session_direct(
             messages.append(user_msg)
             append_event(device_slug=device_slug, repair_id=repair_id, event=user_msg)
 
-            while True:
-                response = await client.messages.create(
-                    model=model,
-                    max_tokens=8000,
-                    system=system_prompt,
-                    messages=messages,
-                    tools=tools,
-                )
-
-                # Two passes over response.content are intentional: emit every
-                # text block first so the user reads the narrative before the
-                # canvas animates, THEN dispatch tool_use blocks (which fire
-                # boardview.* events). Block-level ordering matches the model's
-                # output order, just grouped by kind.
-                for block in response.content:
-                    if block.type == "text":
-                        clean, unknown = sanitize_agent_text(block.text, session.board)
-                        if unknown:
-                            logger.warning(
-                                "sanitizer wrapped unknown refdes: %s", unknown
-                            )
-                        await ws.send_json(
-                            {"type": "message", "role": "assistant", "text": clean}
-                        )
-
-                assistant_msg = _normalize_message(
-                    {"role": "assistant", "content": response.content}
-                )
-
-                if response.stop_reason != "tool_use":
-                    messages.append(assistant_msg)
-                    append_event(
-                        device_slug=device_slug, repair_id=repair_id, event=assistant_msg
-                    )
-                    break
-
-                messages.append(assistant_msg)
-                append_event(
-                    device_slug=device_slug, repair_id=repair_id, event=assistant_msg
-                )
-                tool_results: list[dict] = []
-                for block in response.content:
-                    if block.type != "tool_use":
-                        continue
-                    await ws.send_json(
-                        {"type": "tool_use", "name": block.name, "input": block.input}
-                    )
-                    # Route mb_* vs bv_*.
-                    if block.name.startswith("bv_"):
-                        result = dispatch_bv(session, block.name, block.input or {})
-                    else:
-                        result = await _dispatch_mb_tool(
-                            block.name, block.input or {}, device_slug,
-                            memory_root, client, session,
-                        )
-                    # Emit the WS event if the dispatch succeeded and produced one.
-                    event = result.get("event")
-                    if result.get("ok") and event is not None:
-                        await ws.send_json(event.model_dump(by_alias=True))
-                    # tool_result to the agent: strip `event` (visual-only).
-                    result_for_agent = {k: v for k, v in result.items() if k != "event"}
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            # default=str is a safety net — `event` is already
-                            # stripped, but mb_* tools may evolve and surface
-                            # typed values (datetime, Path, …). A TypeError
-                            # mid-loop would abort the session.
-                            "content": json.dumps(result_for_agent, default=str),
-                        }
-                    )
-                tool_results_msg = {"role": "user", "content": tool_results}
-                messages.append(tool_results_msg)
-                append_event(
-                    device_slug=device_slug, repair_id=repair_id, event=tool_results_msg
-                )
+            await _run_agent_turn(
+                ws=ws, client=client, model=model,
+                system_prompt=system_prompt, tools=tools,
+                messages=messages, session=session,
+                device_slug=device_slug, repair_id=repair_id,
+                memory_root=memory_root,
+            )
     except WebSocketDisconnect:
         logger.info("[Diag-Direct] WS closed for device=%s repair=%s", device_slug, repair_id)
