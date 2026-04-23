@@ -74,9 +74,8 @@ def test_module_constants_present():
     assert TOP_K_SINGLE == 20
 
 
-def test_hypothesize_stub_raises_not_implemented(tmp_path):
-    # Until Task 3, the public `hypothesize` function raises — shape tests
-    # alone must still pass independently.
+def test_hypothesize_empty_graph_returns_empty():
+    # Task 3: hypothesize is now implemented. Empty graph + empty obs = empty result.
     from api.pipeline.schematic.schemas import ElectricalGraph, SchematicQualityReport
     eg = ElectricalGraph(
         device_slug="demo",
@@ -84,8 +83,9 @@ def test_hypothesize_stub_raises_not_implemented(tmp_path):
         boot_sequence=[], designer_notes=[], ambiguities=[],
         quality=SchematicQualityReport(total_pages=0, pages_parsed=0),
     )
-    with pytest.raises(NotImplementedError):
-        hypothesize(eg, observations=Observations())
+    result = hypothesize(eg, observations=Observations())
+    assert result.hypotheses == []
+    assert result.pruning.single_candidates_tested == 0
 
 
 def test_score_perfect_match():
@@ -174,3 +174,139 @@ def test_score_empty_observations_gives_zero():
     score, metrics, diff = _score_candidate(predicted, obs)
     assert score == 0.0
     assert metrics.tp_comps == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — single-fault enumeration tests
+# ---------------------------------------------------------------------------
+
+from api.pipeline.schematic.schemas import (
+    AnalyzedBootPhase,
+    AnalyzedBootSequence,
+    AnalyzedBootTrigger,
+    ComponentNode,
+    ElectricalGraph,
+    NetNode,
+    PagePin,
+    PowerRail,
+    SchematicQualityReport,
+)
+
+
+def _mini_graph() -> ElectricalGraph:
+    """Same shape as tests/pipeline/schematic/test_simulator.py::_mnt_like_graph."""
+    components = {
+        "U18": ComponentNode(refdes="U18", type="ic", pins=[
+            PagePin(number="1", name="VIN", role="power_in", net_label="LPC_VCC"),
+        ]),
+        "U7": ComponentNode(refdes="U7", type="ic", pins=[
+            PagePin(number="1", name="VIN", role="power_in", net_label="VIN"),
+            PagePin(number="2", name="VOUT", role="power_out", net_label="+5V"),
+        ]),
+        "U12": ComponentNode(refdes="U12", type="ic", pins=[
+            PagePin(number="1", name="VIN", role="power_in", net_label="+5V"),
+            PagePin(number="2", name="VOUT", role="power_out", net_label="+3V3"),
+        ]),
+        "U19": ComponentNode(refdes="U19", type="ic", pins=[
+            PagePin(number="1", name="VIN", role="power_in", net_label="+5V"),
+        ]),
+    }
+    return ElectricalGraph(
+        device_slug="demo",
+        components=components,
+        nets={
+            "VIN": NetNode(label="VIN", is_power=True, is_global=True),
+            "LPC_VCC": NetNode(label="LPC_VCC", is_power=True, is_global=True),
+            "+5V": NetNode(label="+5V", is_power=True, is_global=True),
+            "+3V3": NetNode(label="+3V3", is_power=True, is_global=True),
+        },
+        power_rails={
+            "VIN": PowerRail(label="VIN", source_refdes=None, consumers=["U18"]),
+            "LPC_VCC": PowerRail(label="LPC_VCC", source_refdes="U14", consumers=["U18"]),
+            "+5V": PowerRail(label="+5V", source_refdes="U7", enable_net="5V_PWR_EN", consumers=["U12", "U19"]),
+            "+3V3": PowerRail(label="+3V3", source_refdes="U12", enable_net="3V3_PWR_EN"),
+        },
+        typed_edges=[], boot_sequence=[], designer_notes=[], ambiguities=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
+    )
+
+
+def _mini_analyzed() -> AnalyzedBootSequence:
+    return AnalyzedBootSequence(
+        device_slug="demo",
+        phases=[
+            AnalyzedBootPhase(
+                index=0, name="Standby", kind="always-on",
+                rails_stable=["VIN", "LPC_VCC"],
+                components_entering=["U18"],
+                triggers_next=[
+                    AnalyzedBootTrigger(net_label="5V_PWR_EN", from_refdes="U18", rationale="LPC asserts 5V"),
+                ],
+            ),
+            AnalyzedBootPhase(
+                index=1, name="LPC asserts +5V", kind="sequenced",
+                rails_stable=["+5V"],
+                components_entering=["U7"],
+                triggers_next=[
+                    AnalyzedBootTrigger(net_label="3V3_PWR_EN", from_refdes="U18", rationale="LPC asserts 3V3"),
+                ],
+            ),
+            AnalyzedBootPhase(
+                index=2, name="+3V3", kind="sequenced",
+                rails_stable=["+3V3"],
+                components_entering=["U12", "U19"],
+                triggers_next=[],
+            ),
+        ],
+        sequencer_refdes="U18",
+        global_confidence=0.9,
+        model_used="test",
+    )
+
+
+def test_hypothesize_single_fault_recovers_kill_from_observations():
+    """When the tech observes what U7-dead produces, U7 should rank #1."""
+    # Observation: +5V rail dead, U12 and U19 observed cold, U7 NOT checked
+    obs = Observations(
+        dead_comps=frozenset({"U12", "U19"}),
+        dead_rails=frozenset({"+5V"}),
+    )
+    result = hypothesize(
+        _mini_graph(),
+        analyzed_boot=_mini_analyzed(),
+        observations=obs,
+    )
+    assert len(result.hypotheses) >= 1
+    # Top-1 should be U7 — it's the only single-fault that explains both obs.
+    assert result.hypotheses[0].kill_refdes == ["U7"]
+    assert result.hypotheses[0].score > 0
+    assert result.pruning.single_candidates_tested >= 1
+    # 2-fault disabled until Task 5, so pairs_tested must be 0 at this point.
+    assert result.pruning.two_fault_pairs_tested == 0
+
+
+def test_hypothesize_empty_observations_returns_empty():
+    result = hypothesize(
+        _mini_graph(),
+        analyzed_boot=_mini_analyzed(),
+        observations=Observations(),
+    )
+    assert result.hypotheses == []
+    assert result.pruning.single_candidates_tested == 0
+
+
+def test_hypothesize_pruning_skips_irrelevant_candidates():
+    """A component whose cascade intersects nothing in obs must be skipped."""
+    obs = Observations(dead_rails=frozenset({"+5V"}))
+    result = hypothesize(
+        _mini_graph(),
+        analyzed_boot=_mini_analyzed(),
+        observations=obs,
+    )
+    # Only U7 (+5V source) and ancestors affecting +5V should be tested.
+    # Of our 4 components, only U7 could produce this cascade.
+    kills_tested = {tuple(h.kill_refdes) for h in result.hypotheses}
+    assert ("U7",) in kills_tested
+    # We shouldn't explode: pruning must have eliminated U19 (a consumer) as
+    # it can't kill +5V.
+    assert result.pruning.single_candidates_tested <= 4

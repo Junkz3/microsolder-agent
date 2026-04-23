@@ -14,9 +14,12 @@ ElectricalGraph + SimulationEngine.
 
 from __future__ import annotations
 
+import time
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
+from api.pipeline.schematic.simulator import SimulationEngine
 
 # ---------------------------------------------------------------------------
 # Tunable constants — exported so tests and scripts can override without
@@ -173,7 +176,66 @@ def _score_candidate(
 
 
 # ---------------------------------------------------------------------------
-# Public entry point — stub until Task 3
+# Forward-simulation helpers
+# ---------------------------------------------------------------------------
+
+
+def _simulate_kill(
+    electrical: ElectricalGraph,
+    analyzed_boot: AnalyzedBootSequence | None,
+    killed: list[str],
+) -> dict:
+    """Run the forward simulator and return the compact cascade dict used here."""
+    tl = SimulationEngine(
+        electrical, analyzed_boot=analyzed_boot, killed_refdes=killed,
+    ).run()
+    return {
+        "dead_comps": frozenset(set(tl.cascade_dead_components) | set(killed)),
+        "dead_rails": frozenset(tl.cascade_dead_rails),
+        "final_verdict": tl.final_verdict,
+        "blocked_at_phase": tl.blocked_at_phase,
+    }
+
+
+def _relevant_to_observations(
+    cascade: dict, observations: Observations
+) -> bool:
+    """Pruning gate — keep the candidate only if its cascade touches an obs."""
+    if cascade["dead_comps"] & observations.dead_comps:
+        return True
+    if cascade["dead_rails"] & observations.dead_rails:
+        return True
+    return False
+
+
+def _enumerate_single_fault(
+    electrical: ElectricalGraph,
+    analyzed_boot: AnalyzedBootSequence | None,
+    observations: Observations,
+) -> tuple[dict[str, dict], list[tuple[str, float, HypothesisMetrics, HypothesisDiff]]]:
+    """Run single-fault enumeration with pruning.
+
+    Returns:
+      - cascades_cache: {refdes: cascade_dict}  — ALL tested cascades, even
+        those that scored < 0. Reused by 2-fault as the "c1" candidate pool.
+      - ranked: list of (refdes, score, metrics, diff) for candidates that
+        passed the relevance gate, score-sorted descending.
+    """
+    cascades_cache: dict[str, dict] = {}
+    ranked: list[tuple[str, float, HypothesisMetrics, HypothesisDiff]] = []
+    for refdes in electrical.components:
+        cascade = _simulate_kill(electrical, analyzed_boot, [refdes])
+        cascades_cache[refdes] = cascade
+        if not _relevant_to_observations(cascade, observations):
+            continue
+        score, metrics, diff = _score_candidate(cascade, observations)
+        ranked.append((refdes, score, metrics, diff))
+    ranked.sort(key=lambda t: -t[1])
+    return cascades_cache, ranked
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
 # ---------------------------------------------------------------------------
 
 
@@ -185,4 +247,54 @@ def hypothesize(
     max_results: int = MAX_RESULTS_DEFAULT,
 ) -> HypothesizeResult:
     """Rank candidate refdes-kills that explain `observations`."""
-    raise NotImplementedError
+    t0 = time.perf_counter()
+    has_any = bool(
+        observations.dead_comps
+        or observations.alive_comps
+        or observations.dead_rails
+        or observations.alive_rails
+    )
+    if not has_any:
+        return HypothesizeResult(
+            device_slug=electrical.device_slug,
+            observations_echo=observations,
+            hypotheses=[],
+            pruning=PruningStats(
+                single_candidates_tested=0,
+                two_fault_pairs_tested=0,
+                wall_ms=(time.perf_counter() - t0) * 1000,
+            ),
+        )
+
+    cascades_cache, single_ranked = _enumerate_single_fault(
+        electrical, analyzed_boot, observations,
+    )
+
+    # Assemble Hypothesis objects from the ranked list.
+    hypotheses: list[Hypothesis] = []
+    for refdes, score, metrics, diff in single_ranked:
+        cascade = cascades_cache[refdes]
+        hypotheses.append(Hypothesis(
+            kill_refdes=[refdes],
+            score=score,
+            metrics=metrics,
+            diff=diff,
+            narrative="",  # filled in Task 4
+            cascade_preview={
+                "dead_rails": sorted(cascade["dead_rails"]),
+                "dead_comps_count": len(cascade["dead_comps"]),
+            },
+        ))
+
+    # Top-N slicing.
+    hypotheses = hypotheses[:max_results]
+    return HypothesizeResult(
+        device_slug=electrical.device_slug,
+        observations_echo=observations,
+        hypotheses=hypotheses,
+        pruning=PruningStats(
+            single_candidates_tested=len(cascades_cache),
+            two_fault_pairs_tested=0,
+            wall_ms=(time.perf_counter() - t0) * 1000,
+        ),
+    )
