@@ -189,6 +189,76 @@ def test_simulate_failure_unknown_mode_raises():
 
 
 def test_simulate_failure_anomalous_and_hot_pending():
-    for mode in ("anomalous", "hot", "shorted"):
+    for mode in ("hot", "shorted"):
         with pytest.raises(NotImplementedError):
             _simulate_failure(_mini_graph(), _mini_boot(), "U7", mode)
+
+
+from api.pipeline.schematic.hypothesize import _propagate_signal_downstream
+from api.pipeline.schematic.schemas import TypedEdge
+
+
+def _mini_graph_with_signal_edges() -> ElectricalGraph:
+    """MNT-like mini graph with signal edges: U10 → U11 → U17 chain."""
+    g = _mini_graph()
+    # Add 3 components in a signal chain on the DSI path.
+    g.components["U10"] = ComponentNode(refdes="U10", type="ic", pins=[
+        PagePin(number="1", name="DSI_IN", role="signal_in", net_label="DSI_D0"),
+        PagePin(number="2", name="EDP_OUT", role="signal_out", net_label="EDP_D0"),
+    ])
+    g.components["U11"] = ComponentNode(refdes="U11", type="ic", pins=[
+        PagePin(number="1", name="EDP_IN", role="signal_in", net_label="EDP_D0"),
+        PagePin(number="2", name="PANEL_OUT", role="signal_out", net_label="PANEL_D0"),
+    ])
+    g.components["U17"] = ComponentNode(refdes="U17", type="ic", pins=[
+        PagePin(number="1", name="PANEL_IN", role="signal_in", net_label="PANEL_D0"),
+    ])
+    g.typed_edges = [
+        TypedEdge(src="U10", dst="EDP_D0", kind="produces_signal", page=1),
+        TypedEdge(src="U11", dst="EDP_D0", kind="consumes_signal", page=1),
+        TypedEdge(src="U11", dst="PANEL_D0", kind="produces_signal", page=1),
+        TypedEdge(src="U17", dst="PANEL_D0", kind="consumes_signal", page=1),
+        # Unrelated power edge — must NOT appear in anomalous BFS.
+        TypedEdge(src="U10", dst="+5V", kind="powered_by", page=1),
+        # Clock edge — included (`clocks` kind is in the allow-list).
+        TypedEdge(src="U11", dst="CLK_P", kind="clocks", page=1),
+    ]
+    return g
+
+
+def test_propagate_signal_downstream_reaches_consumers():
+    g = _mini_graph_with_signal_edges()
+    reached = _propagate_signal_downstream(g, "U10")
+    # From U10 we reach EDP_D0 consumers (U11), then PANEL_D0 consumers (U17).
+    assert "U11" in reached
+    assert "U17" in reached
+    # Clock target (U11 already reached, but CLK_P itself is a net not a comp)
+    assert reached == {"U11", "U17"}  # no net names — we return refdes only
+
+
+def test_propagate_signal_downstream_excludes_power_kinds():
+    g = _mini_graph_with_signal_edges()
+    # Add a power-only edge that should be IGNORED by the anomalous BFS.
+    g.typed_edges.append(TypedEdge(src="U10", dst="+3V3", kind="powered_by", page=1))
+    reached = _propagate_signal_downstream(g, "U10")
+    # +3V3's consumers (U12, U19) must NOT appear — they're on the power side.
+    assert "U12" not in reached
+    assert "U19" not in reached
+
+
+def test_simulate_failure_anomalous_contains_downstream_signal_comps():
+    g = _mini_graph_with_signal_edges()
+    c = _simulate_failure(g, _mini_boot(), "U10", "anomalous")
+    assert "U10" in c["anomalous_comps"]
+    assert "U11" in c["anomalous_comps"]
+    assert "U17" in c["anomalous_comps"]
+    # Power unaffected.
+    assert c["dead_comps"] == frozenset()
+    assert c["dead_rails"] == frozenset()
+
+
+def test_simulate_failure_anomalous_isolated_component():
+    g = _mini_graph()  # No signal edges at all.
+    c = _simulate_failure(g, _mini_boot(), "U7", "anomalous")
+    # U7 alone (no downstream signal) — only itself marked.
+    assert c["anomalous_comps"] == frozenset({"U7"})

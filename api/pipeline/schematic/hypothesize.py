@@ -168,6 +168,52 @@ def _simulate_dead(
     return c
 
 
+SIGNAL_EDGE_KINDS: frozenset[str] = frozenset(
+    {"produces_signal", "consumes_signal", "clocks", "depends_on"}
+)
+
+
+def _propagate_signal_downstream(
+    electrical: ElectricalGraph, origin_refdes: str,
+) -> set[str]:
+    """BFS downstream on signal-typed edges, returning reachable REFDES.
+
+    Uses an intermediate net layer: a refdes produces a signal onto a net;
+    the net's consumers (refdes that consume that signal) become anomalous.
+    The allow-set (`SIGNAL_EDGE_KINDS`) intentionally excludes `powered_by`,
+    `enables`, `decouples`, `filters`, and `feedback_in` — those represent
+    power topology or decoupling passives, both out of scope for anomalous
+    propagation.
+    """
+    # Build a net → consumers map once (refdes that consume a signal on a net).
+    net_consumers: dict[str, set[str]] = {}
+    # Build a refdes → produced nets map (signals the refdes drives).
+    produces_by: dict[str, set[str]] = {}
+    for edge in electrical.typed_edges:
+        if edge.kind not in SIGNAL_EDGE_KINDS:
+            continue
+        if edge.kind in ("consumes_signal", "depends_on"):
+            # refdes consumes a signal on net `dst`
+            net_consumers.setdefault(edge.dst, set()).add(edge.src)
+        elif edge.kind in ("produces_signal", "clocks"):
+            produces_by.setdefault(edge.src, set()).add(edge.dst)
+
+    # BFS: starting from origin's produced signals, fan out via consumers.
+    reached: set[str] = set()
+    frontier: list[str] = sorted(produces_by.get(origin_refdes, set()))
+    while frontier:
+        net = frontier.pop()
+        for consumer in sorted(net_consumers.get(net, set())):
+            if consumer == origin_refdes or consumer in reached:
+                continue
+            reached.add(consumer)
+            # Chain: the consumer may produce further signals downstream.
+            for next_net in sorted(produces_by.get(consumer, set())):
+                if next_net not in frontier:
+                    frontier.append(next_net)
+    return reached
+
+
 def _simulate_failure(
     electrical: ElectricalGraph,
     analyzed_boot: AnalyzedBootSequence | None,
@@ -182,7 +228,10 @@ def _simulate_failure(
     if mode == "dead":
         return _simulate_dead(electrical, analyzed_boot, [refdes])
     if mode == "anomalous":
-        raise NotImplementedError("anomalous lands in Task 3")
+        downstream = _propagate_signal_downstream(electrical, refdes)
+        c = _empty_cascade()
+        c["anomalous_comps"] = frozenset({refdes} | downstream)
+        return c
     if mode == "hot":
         raise NotImplementedError("hot lands in Task 4")
     if mode == "shorted":
