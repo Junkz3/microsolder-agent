@@ -35,7 +35,7 @@ class MeasurementEvent(BaseModel):
 
     timestamp: str
     target: str
-    value: float
+    value: float | None = None   # None = placeholder event from mb_set_observation
     unit: Unit
     nominal: float | None = None
     note: str | None = None
@@ -240,6 +240,9 @@ def compare_measurements(
         after = events[-1]
     if before.timestamp == after.timestamp:
         return None
+    # Skip placeholder events (value=None) for numeric diff.
+    if before.value is None or after.value is None:
+        return None
     delta = after.value - before.value
     delta_pct = None
     if before.value:
@@ -284,19 +287,24 @@ def synthesise_observations(
             kind, name = parse_target(target)
         except ValueError:
             continue
-        metric = ObservedMetric(
-            measured=ev.value,
-            unit=ev.unit,  # type: ignore[arg-type]
-            nominal=ev.nominal,
-        )
         if kind == "comp":
             if ev.auto_classified_mode in ("dead", "alive", "anomalous", "hot"):
                 state_comps[name] = ev.auto_classified_mode
-            metrics_comps[name] = metric
+            if ev.value is not None:
+                metrics_comps[name] = ObservedMetric(
+                    measured=ev.value,
+                    unit=ev.unit,  # type: ignore[arg-type]
+                    nominal=ev.nominal,
+                )
         elif kind == "rail":
             if ev.auto_classified_mode in ("dead", "alive", "shorted"):
                 state_rails[name] = ev.auto_classified_mode
-            metrics_rails[name] = metric
+            if ev.value is not None:
+                metrics_rails[name] = ObservedMetric(
+                    measured=ev.value,
+                    unit=ev.unit,  # type: ignore[arg-type]
+                    nominal=ev.nominal,
+                )
         # pin-level: store nothing — pin measurements don't map to refdes modes.
     return Observations(
         state_comps=state_comps,
