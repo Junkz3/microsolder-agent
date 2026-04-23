@@ -408,6 +408,23 @@ function decorateOneTextNode(textNode, hasBoard) {
   textNode.parentNode.replaceChild(frag, textNode);
 }
 
+// Chip-click target: switch the main view to #pcb if we're not already there,
+// then run the boardview action. The panel is push-mode so the board shows
+// to the left while the chat stays visible on the right (420 px strip). When
+// we have to navigate, wait two animation frames so the section becomes
+// visible and brd_viewer's ResizeObserver sees non-zero canvas dimensions —
+// otherwise the focus pan would compute against a 0×0 canvas and end up off
+// screen (the ResizeObserver now flushes any pending focus on its own, but
+// the nav-then-apply ordering also lets non-focus actions see the real DOM).
+function gotoBoardviewThen(fn) {
+  if (window.location.hash === "#pcb") {
+    fn();
+    return;
+  }
+  window.location.hash = "#pcb";
+  requestAnimationFrame(() => requestAnimationFrame(fn));
+}
+
 function makeChipNode(match) {
   if (match.kind === "refdes") {
     const btn = document.createElement("button");
@@ -416,9 +433,7 @@ function makeChipNode(match) {
     btn.dataset.refdes = match.raw;
     btn.textContent = match.raw;
     btn.addEventListener("click", () => {
-      if (window.Boardview && window.Boardview.focusRefdes) {
-        window.Boardview.focusRefdes(match.raw);
-      }
+      gotoBoardviewThen(() => window.Boardview?.focusRefdes?.(match.raw));
     });
     return btn;
   }
@@ -429,9 +444,7 @@ function makeChipNode(match) {
     btn.dataset.net = match.raw;
     btn.textContent = match.raw;
     btn.addEventListener("click", () => {
-      if (window.Boardview && window.Boardview.highlightNet) {
-        window.Boardview.highlightNet(match.raw);
-      }
+      gotoBoardviewThen(() => window.Boardview?.highlightNet?.(match.raw));
     });
     return btn;
   }

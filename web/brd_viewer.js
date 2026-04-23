@@ -341,8 +341,39 @@ const LAYER_TOP    = 1;
 const LAYER_BOTTOM = 2;
 const LAYER_BOTH   = 3;
 
+// Center the viewport on a bbox (mils) at the requested zoom. Returns false
+// when the canvas is currently 0×0 (section hidden) so callers can queue
+// the focus for a later flush. Accepts both bbox flavours used across the
+// codebase: [[x,y],[x,y]] (WS Focus events — tuples) and [{x,y},{x,y}]
+// (in-memory partBodyBboxes / part.bbox from the parsed board).
+function _computeFocusPan(bbox, zoom) {
+  if (!bbox || !canvas) return false;
+  const cw = canvas.clientWidth;
+  const ch = canvas.clientHeight;
+  if (cw === 0 || ch === 0) return false;
+  const a = bbox[0], b = bbox[1];
+  if (!a || !b) return false;
+  const ax = Array.isArray(a) ? a[0] : a.x;
+  const ay = Array.isArray(a) ? a[1] : a.y;
+  const bx = Array.isArray(b) ? b[0] : b.x;
+  const by = Array.isArray(b) ? b[1] : b.y;
+  if (!Number.isFinite(ax) || !Number.isFinite(ay) ||
+      !Number.isFinite(bx) || !Number.isFinite(by)) return false;
+  const cx = (ax + bx) / 2;
+  const cy = (ay + by) / 2;
+  vp.zoom = zoom;
+  vp.panX = cw / 2 - cx * vp.zoom;
+  vp.panY = ch / 2 - cy * vp.zoom;
+  return true;
+}
+
 // viewport: mils-to-pixel transform
 const vp = { panX: 0, panY: 0, zoom: 1 };
+
+// Focus request deferred because the canvas was hidden (clientWidth === 0)
+// at the time _applyFocus ran. Flushed by the ResizeObserver as soon as
+// the canvas gains non-zero dimensions (i.e. the user navigates to #pcb).
+let pendingFocus = null;
 
 // render state
 let canvas = null, ctx = null;
@@ -1196,8 +1227,14 @@ function mountCanvas(containerEl, board) {
     window.dispatchEvent(new CustomEvent('bv:minimap-toggle', { detail: { enabled: mmEnabled } }));
   });
 
-  // ResizeObserver — keeps canvas sharp on window resize
+  // ResizeObserver — keeps canvas sharp on window resize. Also flushes any
+  // focus request that was deferred while the canvas was hidden (e.g. a
+  // chat-chip click on refdes while the user was on #agent) — once the
+  // canvas gains dimensions here, the pan math finally has real numbers.
   const ro = new ResizeObserver(() => {
+    if (pendingFocus && _computeFocusPan(pendingFocus.bbox, pendingFocus.zoom)) {
+      pendingFocus = null;
+    }
     requestRedraw();
   });
   ro.observe(containerEl);
@@ -1284,12 +1321,14 @@ window.initBoardview = initBoardview;
     state.agent.highlights = new Set([refdes]);
     if (auto_flipped) activeSide = activeSide === LAYER_TOP ? LAYER_BOTTOM : LAYER_TOP;
     // Pan/zoom the viewport to center on bbox. bbox is [[x1,y1],[x2,y2]] in mils.
-    if (bbox && canvas) {
-      const cx = (bbox[0][0] + bbox[1][0]) / 2;
-      const cy = (bbox[0][1] + bbox[1][1]) / 2;
-      vp.zoom = zoom;
-      vp.panX = canvas.clientWidth / 2 - cx * vp.zoom;
-      vp.panY = canvas.clientHeight / 2 - cy * vp.zoom;
+    if (bbox) {
+      if (_computeFocusPan(bbox, zoom)) {
+        pendingFocus = null;
+      } else {
+        // Canvas hidden (e.g. user is on #agent / #graphe) — defer the pan
+        // until the ResizeObserver sees non-zero dimensions on section show.
+        pendingFocus = { bbox, zoom };
+      }
     }
     requestRedraw();
   };
@@ -1329,6 +1368,30 @@ window.initBoardview = initBoardview;
 
   const _applyHighlightNet = ({ net }) => {
     state.agent.net = net;
+    // The pin/fly-line render path keys off `state.user.selectedPinIdx`, so
+    // emulate "user clicked on the first pin of this net" — same visual as a
+    // real pin click: net pads rendered in the selected-net colour, fly-lines
+    // drawn from the anchor to every sibling pin (when the net is under the
+    // RATNEST_MAX_PINS cap), inspector + toolbar net readout populated.
+    const netPinIdxs = state.pinsByNet?.get(net);
+    if (netPinIdxs && netPinIdxs.length > 0 && state.board?.pins) {
+      const firstIdx = netPinIdxs[0];
+      const firstPin = state.board.pins[firstIdx];
+      state.user.selectedPinIdx = firstIdx;
+      state.user.selectedPart = firstPin
+        ? (state.partByRefdes?.get(firstPin.part_refdes) || null)
+        : null;
+      updateInspector();
+      const tb = document.querySelector('.brd-toolbar');
+      if (tb) updateNetReadout(tb);
+      window.dispatchEvent(new CustomEvent('bv:selection', { detail: {
+        refdes:    firstPin?.part_refdes ?? null,
+        pinIdx:    firstIdx,
+        pinNumber: firstPin?.number ?? null,
+        pinName:   firstPin?.name ?? null,
+        pinNet:    firstPin?.net ?? null,
+      }}));
+    }
     requestRedraw();
   };
 
@@ -1417,7 +1480,23 @@ window.initBoardview = initBoardview;
       if (!state.partByRefdes || !state.partByRefdes.get(r)) return;
       const bb = (state.partBodyBboxes && state.partBodyBboxes.get(r))
                  || state.partByRefdes.get(r).bbox;
-      _applyFocus({ refdes: r, bbox: bb, zoom: 2.5 });
+      // Adaptive zoom so a connector like J10 doesn't end up filling the
+      // whole canvas while a 0402 still gets visibly enlarged. Target: the
+      // part's long edge occupies ~35 % of the canvas's smallest dimension.
+      // Clamped to a sane range — prevents extreme values when a bbox is
+      // degenerate (0-pin footprint or single pad).
+      const ax = Array.isArray(bb[0]) ? bb[0][0] : bb[0].x;
+      const ay = Array.isArray(bb[0]) ? bb[0][1] : bb[0].y;
+      const bx = Array.isArray(bb[1]) ? bb[1][0] : bb[1].x;
+      const by = Array.isArray(bb[1]) ? bb[1][1] : bb[1].y;
+      const wMils = Math.max(Math.abs(bx - ax), 40);
+      const hMils = Math.max(Math.abs(by - ay), 40);
+      const cw = canvas?.clientWidth  || 800;
+      const ch = canvas?.clientHeight || 600;
+      const target = 0.35 * Math.min(cw, ch);
+      const adaptive = target / Math.max(wMils, hMils);
+      const zoom = Math.max(0.4, Math.min(adaptive, 3.0));
+      _applyFocus({ refdes: r, bbox: bb, zoom });
     },
 
     // Chip-compatible net highlight. The existing `highlight_net` already
