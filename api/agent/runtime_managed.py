@@ -169,9 +169,10 @@ async def run_diagnostic_session_managed(
         ]
 
     # Reuse the repair's previously-persisted MA session when possible —
-    # that's how conversation context survives a WS close/reopen.
+    # that's how conversation context survives a WS close/reopen. Sessions
+    # are keyed BY TIER because each tier uses a different MA agent.
     reused_session_id = load_ma_session_id(
-        device_slug=device_slug, repair_id=repair_id
+        device_slug=device_slug, repair_id=repair_id, tier=tier
     )
     session = None
     resumed = False
@@ -202,7 +203,8 @@ async def run_diagnostic_session_managed(
             await ws.close()
             return
         save_ma_session_id(
-            device_slug=device_slug, repair_id=repair_id, session_id=session.id
+            device_slug=device_slug, repair_id=repair_id,
+            session_id=session.id, tier=tier,
         )
 
     logger.info(

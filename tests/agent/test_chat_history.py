@@ -130,7 +130,7 @@ def test_touch_status_noop_when_file_missing(tmp_path, monkeypatch):
     )
 
 
-def test_save_and_load_ma_session_id(tmp_path, monkeypatch):
+def test_save_and_load_ma_session_id_per_tier(tmp_path, monkeypatch):
     from api.agent.chat_history import load_ma_session_id, save_ma_session_id
 
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
@@ -144,20 +144,39 @@ def test_save_and_load_ma_session_id(tmp_path, monkeypatch):
         "symptom": "no boot",
         "status": "open",
         "created_at": "2026-04-22T12:00:00+00:00",
+        "ma_session_id": "legacy_session_pre_tier_storage",
     }))
 
+    # Legacy top-level ma_session_id is IGNORED by the new loader.
     assert load_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", tier="fast", memory_root=tmp_path
     ) is None
 
     save_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", session_id="sesn_abc123",
+        device_slug="demo-pi", repair_id="r1",
+        session_id="sesn_fast_A", tier="fast",
         memory_root=tmp_path,
     )
+    save_ma_session_id(
+        device_slug="demo-pi", repair_id="r1",
+        session_id="sesn_normal_B", tier="normal",
+        memory_root=tmp_path,
+    )
+
     assert load_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", memory_root=tmp_path
-    ) == "sesn_abc123"
+        device_slug="demo-pi", repair_id="r1", tier="fast", memory_root=tmp_path
+    ) == "sesn_fast_A"
+    assert load_ma_session_id(
+        device_slug="demo-pi", repair_id="r1", tier="normal", memory_root=tmp_path
+    ) == "sesn_normal_B"
+    assert load_ma_session_id(
+        device_slug="demo-pi", repair_id="r1", tier="deep", memory_root=tmp_path
+    ) is None
 
     updated = json.loads(meta_path.read_text())
-    assert updated["ma_session_id"] == "sesn_abc123"
-    assert "ma_session_linked_at" in updated
+    assert updated["ma_sessions"] == {
+        "fast": "sesn_fast_A",
+        "normal": "sesn_normal_B",
+    }
+    # Legacy field is wiped on the first save.
+    assert "ma_session_id" not in updated

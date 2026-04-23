@@ -133,13 +133,20 @@ def save_ma_session_id(
     device_slug: str,
     repair_id: str | None,
     session_id: str,
+    tier: str,
     memory_root: Path | None = None,
 ) -> None:
-    """Persist the MA session_id on the repair's metadata so we can resume it
-    on the next WS open — otherwise every reopen creates a fresh MA session
-    and the conversation context is lost. Silent no-op on any error.
+    """Persist the MA session_id for this repair AND tier combo.
+
+    Each tier (fast / normal / deep) has its own MA agent, therefore its
+    own session_id. Storing a single ma_session_id at the repair level
+    would confuse tier switches (resuming a fast session on the normal
+    agent, etc.). We keep a map `ma_sessions: {fast: …, normal: …,
+    deep: …}` instead.
+
+    Silent no-op on any error.
     """
-    if not repair_id or not session_id:
+    if not repair_id or not session_id or not tier:
         return
     settings = get_settings()
     memory_root = memory_root or Path(settings.memory_root)
@@ -148,18 +155,25 @@ def save_ma_session_id(
         return
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("ma_session_id") == session_id:
+        sessions = payload.get("ma_sessions")
+        if not isinstance(sessions, dict):
+            sessions = {}
+        if sessions.get(tier) == session_id:
             return
-        payload["ma_session_id"] = session_id
+        sessions[tier] = session_id
+        payload["ma_sessions"] = sessions
         payload["ma_session_linked_at"] = datetime.now(UTC).isoformat()
+        # Drop the legacy top-level field if present (pre-tier storage).
+        payload.pop("ma_session_id", None)
         path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning(
-            "[ChatHistory] save_ma_session_id failed for repair=%s: %s",
+            "[ChatHistory] save_ma_session_id failed for repair=%s tier=%s: %s",
             repair_id,
+            tier,
             exc,
         )
 
@@ -168,15 +182,26 @@ def load_ma_session_id(
     *,
     device_slug: str,
     repair_id: str | None,
+    tier: str,
     memory_root: Path | None = None,
 ) -> str | None:
-    """Return the persisted MA session_id for a repair, or None."""
+    """Return the persisted MA session_id for a (repair, tier) pair, or None.
+
+    Ignores the legacy untyped `ma_session_id` field on purpose: that field
+    was written before tier-scoped storage and is tied to whichever tier
+    happened to be active at creation — which we can't recover now.
+    """
+    if not tier:
+        return None
     meta = load_repair_metadata(
         device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
     )
     if not meta:
         return None
-    sid = meta.get("ma_session_id")
+    sessions = meta.get("ma_sessions")
+    if not isinstance(sessions, dict):
+        return None
+    sid = sessions.get(tier)
     return sid if isinstance(sid, str) and sid else None
 
 
