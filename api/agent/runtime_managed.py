@@ -27,6 +27,7 @@ from anthropic import AsyncAnthropic
 from fastapi import WebSocket, WebSocketDisconnect
 
 from api.agent.chat_history import (
+    append_event,
     build_session_intro,
     ensure_conversation,
     list_conversations,
@@ -809,7 +810,33 @@ async def _forward_ws_to_session(
                 logger.warning("[Diag-MA] interrupt failed: %s", exc)
             continue
 
-        text = (payload.get("text") or "").strip()
+        # Intercept validation trigger events before they reach the agent as
+        # ordinary messages. Synthesise a user-role prompt that asks the agent
+        # to summarise fixes and call mb_validate_finding.
+        if payload.get("type") == "validation.start":
+            trig_repair_id = payload.get("repair_id") or repair_id or ""
+            text = (
+                "[Action tech — Marquer fix] "
+                f"L'utilisateur vient de confirmer que la repair {trig_repair_id} est résolue. "
+                "Relis l'historique du chat + les mesures récentes, résume en une phrase "
+                "les composants remplacés / réparés, puis appelle `mb_validate_finding` "
+                "avec les `fixes` confirmés. Si ambigu, demande clarification au tech "
+                "avant d'appeler l'outil."
+            )
+            if repair_id and conv_id and device_slug and memory_root:
+                append_event(
+                    device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                    memory_root=memory_root,
+                    event={
+                        "role": "user",
+                        "content": text,
+                        "source": "trigger",
+                        "trigger_kind": "validation.start",
+                    },
+                )
+        else:
+            text = (payload.get("text") or "").strip()
+
         if not text:
             continue
 

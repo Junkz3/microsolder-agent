@@ -538,9 +538,38 @@ async def run_diagnostic_session_direct(
         while True:
             raw = await ws.receive_text()
             try:
-                user_text = (json.loads(raw).get("text") or "").strip()
+                incoming = json.loads(raw)
             except json.JSONDecodeError:
-                user_text = raw.strip()
+                incoming = {"text": raw}
+
+            # Intercept validation trigger events before they reach the agent
+            # as ordinary messages. Synthesise a user-role prompt that asks
+            # the agent to summarise fixes and call mb_validate_finding.
+            if isinstance(incoming, dict) and incoming.get("type") == "validation.start":
+                trig_repair_id = incoming.get("repair_id") or repair_id or ""
+                user_text = (
+                    "[Action tech — Marquer fix] "
+                    f"L'utilisateur vient de confirmer que la repair {trig_repair_id} est résolue. "
+                    "Relis l'historique du chat + les mesures récentes, résume en une phrase "
+                    "les composants remplacés / réparés, puis appelle `mb_validate_finding` "
+                    "avec les `fixes` confirmés. Si ambigu, demande clarification au tech "
+                    "avant d'appeler l'outil."
+                )
+                if resolved_conv_id:
+                    append_event(
+                        device_slug=device_slug, repair_id=repair_id,
+                        conv_id=resolved_conv_id,
+                        memory_root=memory_root,
+                        event={
+                            "role": "user",
+                            "content": user_text,
+                            "source": "trigger",
+                            "trigger_kind": "validation.start",
+                        },
+                    )
+            else:
+                user_text = (incoming.get("text") or "").strip()
+
             if not user_text:
                 continue
 
