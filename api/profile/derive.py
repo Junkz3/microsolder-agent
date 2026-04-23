@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Literal
 
 from api.profile.catalog import (
@@ -14,7 +15,7 @@ from api.profile.catalog import (
     PRACTICED_THRESHOLD,
     SKILLS_CATALOG,
 )
-from api.profile.model import TechnicianProfile
+from api.profile.model import LevelValue, TechnicianProfile, VerbosityValue
 
 SkillStatus = Literal["unlearned", "learning", "practiced", "mastered"]
 
@@ -29,7 +30,7 @@ def skill_status(usages: int) -> SkillStatus:
     return "unlearned"
 
 
-def global_level(profile: TechnicianProfile) -> str:
+def global_level(profile: TechnicianProfile) -> LevelValue:
     if profile.identity.level_override is not None:
         return profile.identity.level_override
     mastered_count = sum(
@@ -44,15 +45,15 @@ def global_level(profile: TechnicianProfile) -> str:
     return "beginner"
 
 
-_LEVEL_TO_VERBOSITY = {
+_LEVEL_TO_VERBOSITY: MappingProxyType[str, VerbosityValue] = MappingProxyType({
     "beginner": "teaching",
     "intermediate": "teaching",
     "confirmed": "normal",
     "expert": "concise",
-}
+})
 
 
-def effective_verbosity(profile: TechnicianProfile) -> str:
+def effective_verbosity(profile: TechnicianProfile) -> VerbosityValue:
     declared = profile.preferences.verbosity
     if declared != "auto":
         return declared
