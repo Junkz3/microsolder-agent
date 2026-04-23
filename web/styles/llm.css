@@ -93,22 +93,11 @@ body.llm-open .stub{right:420px}
 }
 .llm-log .msg.user{background:rgba(56,189,248,.08);border-left:2px solid var(--cyan);color:var(--text)}
 .llm-log .msg.user .role{color:var(--cyan)}
-.llm-log .msg.assistant{background:var(--panel);border-left:2px solid var(--border);color:var(--text)}
-.llm-log .msg.assistant .role{color:var(--text-2)}
 .llm-log .msg.replay,.llm-log .tool.replay{opacity:.55}
 .llm-log .msg.replay .role{letter-spacing:.4px}
 .llm-log .msg .cost-chip{display:inline-block;margin-top:6px;padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;font-family:var(--mono);font-size:9.5px;color:var(--text-3);letter-spacing:.3px}
 .llm-status .cost-total{margin-left:auto;padding:1px 6px;border:1px solid var(--border-soft);border-radius:10px;font-family:var(--mono);font-size:10px;color:var(--text-2);letter-spacing:.3px}
 .llm-status .cost-total.hot{color:var(--amber);border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.08)}
-
-.llm-log .tool{
-  font-family:var(--mono);font-size:10.5px;
-  padding:4px 10px;color:var(--text-3);
-  display:flex;align-items:center;gap:8px;
-}
-.llm-log .tool .arrow{color:var(--violet)}
-.llm-log .tool .name{color:var(--violet);font-weight:500}
-.llm-log .tool .args{color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 
 .llm-log .sys{
   font-family:var(--mono);font-size:10.5px;color:var(--text-3);
@@ -150,3 +139,114 @@ body.llm-open .stub{right:420px}
   color:var(--violet);border-color:rgba(192,132,252,.35);
   background:rgba(192,132,252,.08);
 }
+
+/* ============ Turn-block — grouping for agent narrative ============ */
+/* A .turn wraps one agent reasoning cycle: [thinking?][tool_use*][message].
+   The left vertical rail carries the chronology; nodes are typed by color
+   (cyan = MB read, violet = BV action, grey = thinking). */
+
+.turn {
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 2px 0 10px;
+}
+.turn + .turn,
+.turn + .msg,
+.msg + .turn {
+  border-top: 1px dashed var(--border-soft);
+  margin-top: 8px;
+  padding-top: 12px;
+}
+
+.turn-rail {
+  border-left: 1px solid rgba(192,132,252,.35);
+  margin-left: 4px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+}
+.turn-rail:empty { display: none; }
+
+.turn-message {
+  padding-left: 22px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.turn-message > :first-child { margin-top: 0; }
+.turn-message > :last-child  { margin-bottom: 0; }
+.turn-message p { margin: 6px 0; }
+.turn-message ul, .turn-message ol { margin: 6px 0; padding-left: 22px; }
+.turn-message li { margin: 2px 0; }
+.turn-message code {
+  font-family: var(--mono); font-size: 11px;
+  background: rgba(148,163,184,.08);
+  padding: 1px 4px; border-radius: 3px;
+  color: var(--text-2);
+}
+.turn-message strong { font-weight: 600; color: var(--text); }
+.turn-message em { font-style: italic; color: var(--text-2); }
+
+.turn-foot {
+  padding-left: 22px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  display: flex;
+  gap: 8px;
+  letter-spacing: .3px;
+}
+.turn-foot .foot-sep { opacity: .5 }
+
+/* ----- Steps inside the rail ----- */
+.step {
+  position: relative;
+  padding: 5px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  min-height: 20px;
+}
+.step .node {
+  position: absolute;
+  left: -22px;
+  top: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.step.thinking {
+  font-style: italic;
+  color: var(--text-3);
+}
+.step.thinking .node { background: var(--text-3); }
+.step.mb .node {
+  background: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(56,189,248,.15);
+}
+.step.bv .node {
+  background: var(--violet);
+  box-shadow: 0 0 0 2px rgba(192,132,252,.15);
+}
+.step .step-phrase {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step .refdes, .step .net {
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.step.mb .refdes, .step.mb .net { color: var(--cyan); }
+.step.bv .refdes, .step.bv .net { color: var(--violet); }
+
+/* Replay dimming: whole log dims, not per-row. */
+.llm-log.replay .turn,
+.llm-log.replay .msg { opacity: .55; }

@@ -21,6 +21,13 @@ let currentTier = "fast";
 let sessionCostUsd = 0;
 let sessionTurns = 0;
 
+// Turn-block state machine.
+// currentTurn is the DOM node receiving the next incoming thinking / tool_use /
+// message event. A user.message closes it (set to null). An assistant.message
+// that arrives when currentTurn already has a .turn-message opens a new turn
+// (agent emitted two messages back-to-back without a user interjection).
+let currentTurn = null;
+
 function fmtUsd(amount) {
   if (amount >= 1) return `$${amount.toFixed(2)}`;
   if (amount >= 0.01) return `$${amount.toFixed(3)}`;
@@ -82,16 +89,6 @@ function logMessage(role, text, isReplay = false) {
   );
 }
 
-function logToolUse(name, input, isReplay = false) {
-  let args = "";
-  try { args = JSON.stringify(input ?? {}); } catch { args = String(input); }
-  const cls = `tool${isReplay ? " replay" : ""}`;
-  logRow(
-    cls,
-    `<span class="arrow">→</span><span class="name">${escapeHTML(name)}</span><span class="args">${escapeHTML(args)}</span>`,
-  );
-}
-
 function logSys(text, isErr = false) {
   logRow(isErr ? "sys err" : "sys", escapeHTML(text));
 }
@@ -103,6 +100,81 @@ function escapeHTML(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+// Create a fresh turn-block container and append it to the log.
+function createTurn() {
+  const log = el("llmLog");
+  const turn = document.createElement("div");
+  turn.className = "turn";
+  const rail = document.createElement("div");
+  rail.className = "turn-rail";
+  turn.appendChild(rail);
+  log.appendChild(turn);
+  log.scrollTop = log.scrollHeight;
+  return turn;
+}
+
+function ensureTurn() {
+  if (!currentTurn) currentTurn = createTurn();
+  return currentTurn;
+}
+
+function closeTurn() {
+  currentTurn = null;
+}
+
+// Append a .step into the turn's rail. kind ∈ {"thinking","mb","bv"}.
+// phraseHTML is trusted HTML (callers escape user-provided fragments
+// themselves — currently only tool names + refdes which are validated).
+function appendStep(turn, kind, phraseHTML) {
+  const rail = turn.querySelector(".turn-rail");
+  const step = document.createElement("div");
+  step.className = `step ${kind}`;
+  step.innerHTML = `<span class="node"></span><span class="step-phrase">${phraseHTML}</span>`;
+  rail.appendChild(step);
+  el("llmLog").scrollTop = el("llmLog").scrollHeight;
+  return step;
+}
+
+// Append the assistant text into the current turn. Plain textContent for
+// now — Task 4 will replace this with markdown + chip rendering.
+function appendTurnMessage(turn, text) {
+  let msg = turn.querySelector(".turn-message");
+  if (msg) {
+    // An assistant message already landed in this turn — open a new one.
+    closeTurn();
+    turn = ensureTurn();
+    msg = null;
+  }
+  msg = document.createElement("div");
+  msg.className = "turn-message";
+  msg.textContent = text ?? "";
+  turn.appendChild(msg);
+  el("llmLog").scrollTop = el("llmLog").scrollHeight;
+  return msg;
+}
+
+function appendTurnFoot(turn, payload) {
+  let foot = turn.querySelector(".turn-foot");
+  if (!foot) {
+    foot = document.createElement("div");
+    foot.className = "turn-foot";
+    turn.appendChild(foot);
+  }
+  const priceLabel = payload.priced ? fmtUsd(payload.cost_usd) : "—";
+  const modelLabel = payload.model ? payload.model.replace("claude-", "") : "?";
+  const tokensLabel = `${(payload.input_tokens || 0) + (payload.cache_read_input_tokens || 0) + (payload.cache_creation_input_tokens || 0)}→${payload.output_tokens || 0} tok`;
+  foot.innerHTML =
+    `<span class="foot-cost">${priceLabel}</span>` +
+    `<span class="foot-sep">·</span>` +
+    `<span class="foot-tokens">${tokensLabel}</span>` +
+    `<span class="foot-sep">·</span>` +
+    `<span class="foot-model">${escapeHTML(modelLabel)}</span>`;
+}
+
+function safeJSON(v) {
+  try { return JSON.stringify(v ?? {}); } catch { return String(v); }
 }
 
 function currentDeviceSlug() {
@@ -151,6 +223,7 @@ function connect() {
   // reset here and let live turns accumulate fresh.
   sessionCostUsd = 0;
   sessionTurns = 0;
+  currentTurn = null;
   updateCostTotal();
   const url = wsURL(slug, currentTier, repairId);
   statusTone("connecting", `connexion · ${slug} · ${currentTier}`);
@@ -200,47 +273,59 @@ function connect() {
         break;
       }
       case "history_replay_start":
+        el("llmLog").classList.add("replay");
         logSys(`replay · ${payload.count} events précédents`);
         break;
       case "history_replay_end":
+        el("llmLog").classList.remove("replay");
         logSys("replay terminé — reprends où tu t'étais arrêté");
+        closeTurn();
         break;
       case "context_loaded":
-        // Backend stashed the repair's device + symptom context; it will
-        // be prefixed to the tech's first message. The agent stays silent
-        // until the tech actually types.
         logSys("contexte device + symptôme chargé · l'agent attend ton premier message");
         break;
       case "session_resumed":
-        // Managed mode: we picked up an existing MA session so the agent
-        // remembers the conversation. A history_replay_start will follow
-        // with the past events so the chat panel also rebuilds visually.
         logSys("session reprise · historique et mémoire agent restaurés");
         break;
       case "message":
-        logMessage(payload.role || "assistant", payload.text || "", payload.replay === true);
+        if ((payload.role || "assistant") === "user") {
+          closeTurn();
+          logMessage("user", payload.text || "", payload.replay === true);
+        } else {
+          const turn = ensureTurn();
+          appendTurnMessage(turn, payload.text || "");
+        }
         break;
-      case "tool_use":
-        logToolUse(payload.name, payload.input, payload.replay === true);
+      case "tool_use": {
+        const turn = ensureTurn();
+        const name = payload.name || "?";
+        const kind = name.startsWith("bv_") ? "bv" :
+                     name.startsWith("mb_") ? "mb" : "mb";
+        const argsStr = safeJSON(payload.input);
+        appendStep(turn, kind,
+          `<span class="tool-name">${escapeHTML(name)}</span> ` +
+          `<span class="tool-args">${escapeHTML(argsStr)}</span>`);
         break;
-      case "thinking":
-        // Quieter than a full message — render as sys line.
-        logSys(`thinking · ${payload.text.slice(0, 120)}`);
+      }
+      case "thinking": {
+        const turn = ensureTurn();
+        appendStep(turn, "thinking", escapeHTML(payload.text || "…"));
         break;
+      }
       case "turn_cost":
         sessionCostUsd += Number(payload.cost_usd || 0);
         sessionTurns += 1;
         updateCostTotal();
-        attachCostChipToLastAssistant(payload);
+        if (currentTurn) appendTurnFoot(currentTurn, payload);
         break;
       case "error":
         logSys(`erreur : ${payload.text}`, true);
         break;
       case "session_terminated":
         logSys("session terminée", true);
+        closeTurn();
         break;
       default:
-        // Unknown payload — show raw for debuggability.
         logSys(`? ${JSON.stringify(payload)}`);
     }
   });
