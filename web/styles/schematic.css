@@ -95,6 +95,11 @@ body.no-metabar .sch-inspector{top:60px}
 .sch-node.t-diode .sch-shape-comp{fill:rgba(245,158,11,.10);stroke:oklch(0.75 0.14 75)}
 
 .sch-node.nostuff .sch-shape{stroke-dasharray:3 3;opacity:.55}
+/* Phase 4: passive component nodes render at 0.7 opacity — classifier role
+ * assignment is heuristic and the tint cues the tech to verify.
+ * When classifier_confidence lands on ComponentNode (Phase 4.1), replace the
+ * constant with a JS-driven inline style keyed to max(0.4, d.classifier_confidence). */
+.sch-node.passive-node{opacity:.7}
 
 /* =========== SCHEMATIC SYMBOLS (per component type) =========== */
 /* Stroke-only look, KiCad-like. Each type gets a family colour. */

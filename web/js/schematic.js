@@ -2004,7 +2004,7 @@ function renderNodes(model) {
     ? model.nodes.filter(n => n._visible)
     : model.nodes;
   const sel = g.selectAll("g.sch-node").data(nodesData, d => d.id).join("g")
-    .attr("class", d => `sch-node sch-node-${d.kind} role-${d.role || "rail"} ${d.missing ? "missing" : ""} ${d.populated === false ? "nostuff" : ""} ${d.isSpof ? "spof" : ""}`)
+    .attr("class", d => `sch-node sch-node-${d.kind} role-${d.role || "rail"} ${d.missing ? "missing" : ""} ${d.populated === false ? "nostuff" : ""} ${d.isSpof ? "spof" : ""} ${d.compKind && d.compKind.startsWith("passive") ? "passive-node" : ""}`)
     .attr("transform", d => `translate(${d.x},${d.y})`)
     .attr("data-refdes", d => d.kind === "component" ? (d.refdes ?? null) : null)
     .attr("data-rail",   d => d.kind === "rail" ? (d.label ?? d.id ?? null) : null)
