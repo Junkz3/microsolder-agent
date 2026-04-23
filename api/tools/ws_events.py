@@ -125,3 +125,9 @@ class SimulationObservationSet(_SimEvent):
 
 class SimulationObservationClear(_SimEvent):
     type: Literal["simulation.observation_clear"] = "simulation.observation_clear"
+
+
+class SimulationRepairValidated(_SimEvent):
+    type: Literal["simulation.repair_validated"] = "simulation.repair_validated"
+    repair_id: str
+    fixes_count: int
