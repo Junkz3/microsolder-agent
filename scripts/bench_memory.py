@@ -270,6 +270,7 @@ async def run_repair(
         repair_id=f"bench-repair-{repair_index}", condition=condition
     )
     events_by_id: dict[str, Any] = {}
+    dispatched_ids: set[str] = set()
     seen_event_types: dict[str, int] = {}
     current_turn: TurnMetrics | None = None
     user_idx = 0
@@ -357,7 +358,15 @@ async def run_repair(
                 stop_type = getattr(stop, "type", None) if stop else None
                 if stop_type == "requires_action":
                     event_ids = getattr(stop, "event_ids", None) or []
+                    # MA can re-emit the same event id across successive
+                    # requires_action pauses if the agent fires off a second
+                    # tool_use while we're still dispatching the first. Track
+                    # ids we've already answered so we don't send a duplicate
+                    # user.custom_tool_result and trigger a 400.
+                    pending: list[dict] = []
                     for eid in event_ids:
+                        if eid in dispatched_ids:
+                            continue
                         tool_event = events_by_id.get(eid)
                         if tool_event is None:
                             continue
@@ -370,18 +379,22 @@ async def run_repair(
                             device_slug=device_slug,
                             session_id=session.id,
                         )
-                        _ = r  # silence ruff F841 in case a noqa slips in
+                        dispatched_ids.add(eid)
+                        pending.append(
+                            {
+                                "type": "user.custom_tool_result",
+                                "custom_tool_use_id": eid,
+                                "content": [
+                                    {"type": "text", "text": json.dumps(r, default=str)}
+                                ],
+                            }
+                        )
+                    # Batch all fresh tool_results into a single send so the
+                    # server validates them together — atomic w.r.t. what it
+                    # is currently waiting on.
+                    if pending:
                         await client.beta.sessions.events.send(
-                            session.id,
-                            events=[
-                                {
-                                    "type": "user.custom_tool_result",
-                                    "custom_tool_use_id": eid,
-                                    "content": [
-                                        {"type": "text", "text": json.dumps(r, default=str)}
-                                    ],
-                                }
-                            ],
+                            session.id, events=pending
                         )
                 elif stop_type == "end_turn":
                     # Turn fully done — advance the user script.
