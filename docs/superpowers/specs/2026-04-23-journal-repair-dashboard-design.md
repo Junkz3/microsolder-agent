@@ -291,19 +291,21 @@ Une seule route à ajouter, dans `api/pipeline/__init__.py` :
 
 ```python
 @router.get("/packs/{device_slug}/findings")
-async def list_device_findings(device_slug: str) -> list[dict]:
+async def list_device_findings(device_slug: str, limit: int = 50) -> list[dict]:
     """Return every field report recorded for this device, newest first.
 
     Mirrors what `mb_list_findings` sees at agent-tool scope, but exposes it
     to the web UI so the Journal dashboard can render the cross-session
-    memory without going through a WS round-trip. No new shape: same
-    FieldReport dataclass already defined in api/agent/field_reports.py.
+    memory without going through a WS round-trip. Uses the existing
+    `list_field_reports()` helper — it already returns a list of plain
+    dicts with the public shape (`report_id`, `device_slug`, `refdes`,
+    `symptom`, `confirmed_cause`, `mechanism`, `notes`, `session_id`,
+    `created_at`). Strictly the JSON-on-disk source — no MA memory-store.
     """
-    reports = list_field_reports(device_slug=_validate_slug(device_slug))
-    return [r.to_dict() for r in reports]
+    return list_field_reports(device_slug=_validate_slug(device_slug), limit=limit)
 ```
 
-Où `list_field_reports()` existe déjà (`api/agent/field_reports.py`). `FieldReport.to_dict()` à ajouter si absent — champs publics uniquement : `report_id`, `refdes`, `symptom`, `confirmed_cause`, `mechanism`, `notes`, `session_id`, `created_at`. Pas de version MA memory-store ici — strictement la source JSON sur disque.
+Où `list_field_reports()` existe déjà (`api/agent/field_reports.py:259`). Pas de nouvelle shape à déclarer : la fonction renvoie directement `list[dict]` avec les champs publics attendus.
 
 Pas d'autre route. Le reste réutilise l'existant (`/pipeline/repairs/{rid}`, `/pipeline/repairs/{rid}/conversations`, `/pipeline/packs/{slug}`).
 
@@ -383,7 +385,7 @@ document.getElementById("sessionPillClose")?.addEventListener("click", (ev) => {
 - **`web/js/llm.js`** — ajouter un export nommé `switchConv(convId)` (la fonction existe déjà comme locale privée `switchConv` dans le module) pour que le bloc Conversations du dashboard puisse l'appeler via `import { switchConv } from './llm.js'`. Pas d'autre changement.
 - **`web/index.html`** — ajouter la pastille topbar (§6.1), ajouter le bloc `#repairDashboard` (§4.1), importer `repair_dashboard.css`.
 - **`api/pipeline/__init__.py`** — nouvelle route `GET /packs/{device_slug}/findings` (§5).
-- **`api/agent/field_reports.py`** — ajouter `FieldReport.to_dict()` si la méthode manque (vérifier avant). Shape publique seulement.
+- **`api/agent/field_reports.py`** — aucun changement ; `list_field_reports()` renvoie déjà `list[dict]` avec la shape publique. Référence seulement.
 
 ### 7.3 Fichiers **non** touchés
 
