@@ -32,11 +32,12 @@
 - `.gitignore` — add `memory/_profile/`.
 
 **Created (frontend):**
+- `web/profil.html` — full HTML markup of the profile section (head + blocks + drawer + identity modal). Fetched as a partial at section init and injected into the mount point in `index.html`.
 - `web/js/profile.js` — module.
 - `web/styles/profile.css` — styles.
 
 **Modified (frontend):**
-- `web/index.html` — replace stub section, add `<link>` + `<script type=module>`.
+- `web/index.html` — replace the stub with a minimal mount point `<section id="profileSection" class="profile hidden" data-partial="/profil.html"></section>`, add `<link>` + `<script type=module>`.
 - `web/js/main.js` — import + dispatch `initProfileSection()` on `section === "profile"`.
 - `web/js/router.js` — hide/show `#profileSection` in `navigate()`.
 
@@ -1938,55 +1939,12 @@ EOF
 
 This task delivers a visually complete `#profile` section that **reads** from `GET /profile` and renders identity, tool bitmap, 4-bucket skills, preferences. Edits come in Task 12.
 
-- [ ] **Step 11.1: Replace the stub in `web/index.html`**
+- [ ] **Step 11.1: Replace the stub in `web/index.html` with a mount point**
 
-Find `<section class="stub hidden" data-section-stub="profile">…</section>` (around line 157) and replace with:
+Find `<section class="stub hidden" data-section-stub="profile">…</section>` (around line 157) and replace with a minimal mount point — the HTML body itself lives in `web/profil.html`:
 
 ```html
-<section class="profile hidden" id="profileSection">
-  <header class="profile-head">
-    <div class="profile-avatar" id="profAvatar">—</div>
-    <div class="profile-head-main">
-      <h1 id="profName">—</h1>
-      <p class="profile-head-meta">
-        <span id="profLevel" class="tag">—</span>
-        <span>·</span>
-        <span id="profYears">—</span>
-        <span>·</span>
-        <span id="profSpecs">—</span>
-      </p>
-    </div>
-    <button class="btn" id="profEditIdentityBtn">
-      <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-      Éditer
-    </button>
-  </header>
-
-  <section class="profile-block">
-    <h2>Outillage</h2>
-    <div class="profile-tools" id="profTools"></div>
-  </section>
-
-  <section class="profile-block">
-    <h2>Compétences</h2>
-    <div class="profile-skills" id="profSkills"></div>
-  </section>
-
-  <section class="profile-block">
-    <h2>Préférences diagnostic</h2>
-    <div class="profile-prefs" id="profPrefs"></div>
-  </section>
-
-  <aside class="profile-drawer hidden" id="profDrawer">
-    <header class="profile-drawer-head">
-      <h3 id="profDrawerTitle">—</h3>
-      <button class="btn-icon" id="profDrawerClose" aria-label="Fermer">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
-      </button>
-    </header>
-    <div class="profile-drawer-body" id="profDrawerBody"></div>
-  </aside>
-</section>
+<section class="profile hidden" id="profileSection" data-partial="/profil.html"></section>
 ```
 
 Add the CSS `<link>` in `<head>`:
@@ -1999,6 +1957,101 @@ Add the JS `<script>` at the bottom, next to `main.js`:
 
 ```html
 <script type="module" src="/js/profile.js"></script>
+```
+
+- [ ] **Step 11.1b: Create `web/profil.html` with the full section body + identity modal**
+
+```html
+<!-- Profile section body. Fetched by web/js/profile.js and injected into
+     #profileSection in index.html on first navigation. The identity
+     modal lives here too so it ships with the section's DOM in one fetch. -->
+<header class="profile-head">
+  <div class="profile-avatar" id="profAvatar">—</div>
+  <div class="profile-head-main">
+    <h1 id="profName">—</h1>
+    <p class="profile-head-meta">
+      <span id="profLevel" class="tag">—</span>
+      <span>·</span>
+      <span id="profYears">—</span>
+      <span>·</span>
+      <span id="profSpecs">—</span>
+    </p>
+  </div>
+  <button class="btn" id="profEditIdentityBtn">
+    <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+    Éditer
+  </button>
+</header>
+
+<section class="profile-block">
+  <h2>Outillage</h2>
+  <div class="profile-tools" id="profTools"></div>
+</section>
+
+<section class="profile-block">
+  <h2>Compétences</h2>
+  <div class="profile-skills" id="profSkills"></div>
+</section>
+
+<section class="profile-block">
+  <h2>Préférences diagnostic</h2>
+  <div class="profile-prefs" id="profPrefs"></div>
+</section>
+
+<aside class="profile-drawer hidden" id="profDrawer">
+  <header class="profile-drawer-head">
+    <h3 id="profDrawerTitle">—</h3>
+    <button class="btn-icon" id="profDrawerClose" aria-label="Fermer">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+    </button>
+  </header>
+  <div class="profile-drawer-body" id="profDrawerBody"></div>
+</aside>
+
+<!-- Identity edit modal (opened by #profEditIdentityBtn). Wired in Task 12. -->
+<div class="modal hidden" id="profIdentityModal">
+  <div class="modal-backdrop" data-dismiss></div>
+  <div class="modal-card">
+    <header class="modal-head">
+      <h3>Profil technicien</h3>
+      <button class="btn-icon" data-dismiss aria-label="Fermer">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+      </button>
+    </header>
+    <form id="profIdentityForm" class="modal-body">
+      <label class="modal-field">
+        <span>Nom</span>
+        <input name="name" type="text" maxlength="40"/>
+      </label>
+      <label class="modal-field">
+        <span>Avatar (2 lettres ou emoji)</span>
+        <input name="avatar" type="text" maxlength="2"/>
+      </label>
+      <label class="modal-field">
+        <span>Années d'expérience</span>
+        <input name="years_experience" type="number" min="0" max="80"/>
+      </label>
+      <label class="modal-field">
+        <span>Spécialités (séparées par virgule)</span>
+        <input name="specialties" type="text" placeholder="apple, consoles, laptops"/>
+      </label>
+      <label class="modal-field">
+        <span>Forcer le niveau (optionnel)</span>
+        <select name="level_override">
+          <option value="">(dérivé automatiquement)</option>
+          <option value="beginner">beginner</option>
+          <option value="intermediate">intermediate</option>
+          <option value="confirmed">confirmed</option>
+          <option value="expert">expert</option>
+        </select>
+      </label>
+      <footer class="modal-foot">
+        <button type="button" class="btn" data-dismiss>Annuler</button>
+        <button type="submit" class="btn primary">Enregistrer</button>
+      </footer>
+    </form>
+  </div>
+</div>
 ```
 
 - [ ] **Step 11.2: Create `web/styles/profile.css`**
@@ -2114,14 +2167,24 @@ body.no-metabar .profile{top:92px} /* stays 92 because no-metabar applies elsewh
 
 ```javascript
 // Technician profile section.
+// On first activation, fetches web/profil.html (the section's DOM partial)
+// and injects it into #profileSection. Subsequent activations skip the fetch.
 // Consumes GET /profile and renders identity / tools / skills / preferences.
-// Edit flows land in Task 12 — this module currently supports:
-//   - toggling a tool (PUT /profile/tools)
-//   - changing a preference (PUT /profile/preferences)
-//   - opening the skill evidence drawer
-// Identity edit lives in Task 12's modal.
+// Tool toggles → PUT /profile/tools ; preference changes → PUT /profile/preferences
+// ; skill click opens the evidence drawer. Identity modal handler lands in Task 12.
 
-let _state = null; // {profile, derived, catalog}
+let _state = null;    // {profile, derived, catalog}
+let _partialLoaded = false;
+
+async function ensurePartial() {
+  if (_partialLoaded) return;
+  const mount = document.getElementById("profileSection");
+  const url = mount.dataset.partial || "/profil.html";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`partial ${url} → ${res.status}`);
+  mount.innerHTML = await res.text();
+  _partialLoaded = true;
+}
 
 const STATUS_LABELS = {
   mastered:  "Maîtrisées",
@@ -2278,6 +2341,7 @@ function wireDrawerClose() {
 
 export async function initProfileSection() {
   try {
+    await ensurePartial();
     _state = await fetchJSON("/profile");
   } catch (err) {
     console.error("initProfileSection:", err);
@@ -2353,60 +2417,13 @@ EOF
 ## Task 12 — Frontend identity modal + level override
 
 **Files:**
-- Modify: `web/index.html` (modal)
 - Modify: `web/js/profile.js` (handler + render)
 
-The Edit button in the header currently does nothing. Task 12 plugs it into a modal that writes `PUT /profile/identity`.
+The identity modal markup is already part of `web/profil.html` (added in Task 11.1b). Task 12 plugs the Edit button into that modal and writes `PUT /profile/identity`.
 
-- [ ] **Step 12.1: Add the modal markup to `web/index.html`**
+- [ ] **Step 12.1: (no HTML change)**
 
-Near the other modals (search for `class="modal"` — the home modal is around the `homeSection`):
-
-```html
-<div class="modal hidden" id="profIdentityModal">
-  <div class="modal-backdrop" data-dismiss></div>
-  <div class="modal-card">
-    <header class="modal-head">
-      <h3>Profil technicien</h3>
-      <button class="btn-icon" data-dismiss aria-label="Fermer">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
-      </button>
-    </header>
-    <form id="profIdentityForm" class="modal-body">
-      <label class="modal-field">
-        <span>Nom</span>
-        <input name="name" type="text" maxlength="40"/>
-      </label>
-      <label class="modal-field">
-        <span>Avatar (2 lettres ou emoji)</span>
-        <input name="avatar" type="text" maxlength="2"/>
-      </label>
-      <label class="modal-field">
-        <span>Années d'expérience</span>
-        <input name="years_experience" type="number" min="0" max="80"/>
-      </label>
-      <label class="modal-field">
-        <span>Spécialités (séparées par virgule)</span>
-        <input name="specialties" type="text" placeholder="apple, consoles, laptops"/>
-      </label>
-      <label class="modal-field">
-        <span>Forcer le niveau (optionnel)</span>
-        <select name="level_override">
-          <option value="">(dérivé automatiquement)</option>
-          <option value="beginner">beginner</option>
-          <option value="intermediate">intermediate</option>
-          <option value="confirmed">confirmed</option>
-          <option value="expert">expert</option>
-        </select>
-      </label>
-      <footer class="modal-foot">
-        <button type="button" class="btn" data-dismiss>Annuler</button>
-        <button type="submit" class="btn primary">Enregistrer</button>
-      </footer>
-    </form>
-  </div>
-</div>
-```
+Skipped — the modal markup shipped with the partial in Step 11.1b.
 
 - [ ] **Step 12.2: Extend `web/js/profile.js` with the modal handler**
 
@@ -2485,18 +2502,18 @@ Wait for Alexis's visual OK.
 - [ ] **Step 12.4: Commit once Alexis confirms**
 
 ```bash
-git add -- web/index.html web/js/profile.js
+git add -- web/js/profile.js
 git commit -m "$(cat <<'EOF'
-feat(web): identity edit modal on the profile section
+feat(web): wire identity edit modal on the profile section
 
-Edit button opens a modal (reusing modal.css) prefilled from current state
-and writes PUT /profile/identity. Specialties are parsed as a
-comma-separated list. level_override drop-down lets the tech force a level
-other than the one derived from mastered skills.
+Edit button opens the modal declared in profil.html, prefilled from
+current state, and writes PUT /profile/identity. Specialties are parsed
+as a comma-separated list. level_override drop-down lets the tech force
+a level other than the one derived from mastered skills.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
-)" -- web/index.html web/js/profile.js
+)" -- web/js/profile.js
 ```
 
 ---
