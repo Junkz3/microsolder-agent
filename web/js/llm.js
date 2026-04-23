@@ -226,15 +226,31 @@ function closeTurn() {
   currentTurn = null;
 }
 
+function ensurePendingNode(turn) {
+  const rail = turn.querySelector(".turn-rail");
+  if (!rail || rail.querySelector(".step.pending")) return;
+  const step = document.createElement("div");
+  step.className = "step pending";
+  step.innerHTML = `<span class="node"></span><span class="step-phrase">l'agent travaille…</span>`;
+  rail.appendChild(step);
+}
+
+function clearPendingNode(turn) {
+  const p = turn.querySelector(".step.pending");
+  if (p) p.remove();
+}
+
 // Append a .step into the turn's rail. kind ∈ {"thinking","mb","bv"}.
 // phraseHTML is trusted HTML (callers escape user-provided fragments
 // themselves — currently only tool names + refdes which are validated).
 function appendStep(turn, kind, phraseHTML) {
+  clearPendingNode(turn);
   const rail = turn.querySelector(".turn-rail");
   const step = document.createElement("div");
   step.className = `step ${kind}`;
   step.innerHTML = `<span class="node"></span><span class="step-phrase">${phraseHTML}</span>`;
   rail.appendChild(step);
+  ensurePendingNode(turn);
   el("llmLog").scrollTop = el("llmLog").scrollHeight;
   return step;
 }
@@ -281,9 +297,14 @@ function appendTurnMessage(turn, text) {
     turn = ensureTurn();
     msg = null;
   }
+  clearPendingNode(turn);
   msg = document.createElement("div");
   msg.className = "turn-message";
   renderAgentMarkup(msg, text || "");
+  // Caret: visible until turn_cost arrives (removed in appendTurnFoot).
+  const caret = document.createElement("span");
+  caret.className = "caret";
+  msg.appendChild(caret);
   turn.appendChild(msg);
   el("llmLog").scrollTop = el("llmLog").scrollHeight;
   return msg;
@@ -396,6 +417,10 @@ function makeChipNode(match) {
 }
 
 function appendTurnFoot(turn, payload) {
+  // Terminal signal for this turn — clear transient indicators.
+  const caret = turn.querySelector(".turn-message .caret");
+  if (caret) caret.remove();
+  clearPendingNode(turn);
   let foot = turn.querySelector(".turn-foot");
   if (!foot) {
     foot = document.createElement("div");

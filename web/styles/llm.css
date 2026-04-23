@@ -332,3 +332,38 @@ body.llm-open .stub{right:420px}
   border-radius: 3px;
   border: 1px dashed rgba(245,158,11,.35);
 }
+
+/* ============ Live feedback ============ */
+.turn-message .caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--violet);
+  animation: caret-blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+@keyframes caret-blink {
+  0%, 50%   { opacity: 1 }
+  51%, 100% { opacity: 0 }
+}
+
+/* Phantom "agent is working" node at the bottom of the rail. */
+.step.pending {
+  color: var(--text-3);
+  font-style: italic;
+  opacity: .85;
+}
+.step.pending .node {
+  background: var(--violet);
+  box-shadow: 0 0 0 3px rgba(192,132,252,.15);
+  animation: node-pulse 1.4s ease-in-out infinite;
+}
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(192,132,252,.15) }
+  50%      { box-shadow: 0 0 0 6px rgba(192,132,252,.45) }
+}
+
+/* Suppress live indicators during replay (CSS guard). */
+.llm-log.replay .step.pending,
+.llm-log.replay .turn-message .caret { display: none; }
