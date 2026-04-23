@@ -120,6 +120,23 @@ async def _create_repair(host: str, slug: str) -> str:
         return resp.json()["repair_id"]
 
 
+def _cleanup_bench_repair(slug: str, repair_id: str) -> None:
+    """Remove the bench's ephemeral repair dir + metadata so the home view
+    doesn't accumulate `bench_agent_flow` entries every run. Called after
+    the report is printed so any disk assertion is already done."""
+    repairs_dir = REPO / "memory" / slug / "repairs"
+    target_dir = repairs_dir / repair_id
+    target_meta = repairs_dir / f"{repair_id}.json"
+    import shutil
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    if target_meta.exists():
+        try:
+            target_meta.unlink()
+        except OSError:
+            pass
+
+
 async def _play_turn(
     ws, user_text: str, report: Report, stage: str, timeout: float,
 ) -> None:
@@ -326,12 +343,20 @@ def _print_report(report: Report) -> int:
 
 
 async def main_async(args) -> int:
+    repair_id: str | None = None
     try:
         report = await run(args)
+        repair_id = report.repair_id
     except Exception as exc:  # noqa: BLE001
         print(RED(f"Fatal: {exc}"))
         return 2
-    return _print_report(report)
+    rc = _print_report(report)
+    # Tidy the home view — the scripted flow is an ephemeral test fixture,
+    # it shouldn't leave a stale "en cours" repair behind on every run.
+    if repair_id and not args.keep_repair:
+        _cleanup_bench_repair(args.slug, repair_id)
+        print(DIM(f" · cleaned bench repair {repair_id}"))
+    return rc
 
 
 def main() -> None:
@@ -339,6 +364,13 @@ def main() -> None:
     p.add_argument("--slug", default=DEFAULT_SLUG)
     p.add_argument("--tier", default=DEFAULT_TIER, choices=["fast", "normal", "deep"])
     p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument(
+        "--keep-repair",
+        action="store_true",
+        help="Skip the post-run cleanup of the ephemeral repair dir "
+             "(useful when you want to inspect outcome.json / measurements.jsonl "
+             "after the bench finishes).",
+    )
     args = p.parse_args()
     sys.exit(asyncio.run(main_async(args)))
 
