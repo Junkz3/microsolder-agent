@@ -59,9 +59,16 @@ def append_event(
     device_slug: str,
     repair_id: str | None,
     event: dict[str, Any],
+    cost: dict[str, Any] | None = None,
     memory_root: Path | None = None,
 ) -> None:
     """Append one Anthropic-format message event to the session's JSONL.
+
+    Optional `cost` attaches the per-turn token cost alongside an assistant
+    event so the conversation's lifetime spend survives WS close/reopen. The
+    record shape is `{ts, event, cost?}` — `cost` is only surfaced on the
+    record (not inside `event`) so the Anthropic-facing `messages` list stays
+    clean when load_events reads it back.
 
     No-ops silently when `repair_id` is missing (anonymous session), when
     `event` is falsy, or when the feature flag is set to a non-jsonl backend.
@@ -77,10 +84,12 @@ def append_event(
     path = _history_file(memory_root, device_slug, repair_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        record = {
+        record: dict[str, Any] = {
             "ts": datetime.now(UTC).isoformat(),
             "event": event,
         }
+        if cost is not None:
+            record["cost"] = cost
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
     except OSError as exc:
@@ -96,6 +105,22 @@ def load_events(
     memory_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return the list of Anthropic-format events, in write order."""
+    return [event for event, _cost in load_events_with_costs(
+        device_slug=device_slug, repair_id=repair_id, memory_root=memory_root,
+    )]
+
+
+def load_events_with_costs(
+    *,
+    device_slug: str,
+    repair_id: str | None,
+    memory_root: Path | None = None,
+) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Like load_events but also returns each record's attached cost.
+
+    Used by the replay path so the turn_cost chip + running-total accumulator
+    can rebuild visually on reopen, matching what the tech saw live.
+    """
     if not repair_id:
         return []
     settings = get_settings()
@@ -106,7 +131,7 @@ def load_events(
     if not path.exists():
         return []
 
-    events: list[dict[str, Any]] = []
+    records: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     try:
         with path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -121,11 +146,13 @@ def load_events(
                     )
                     continue
                 event = rec.get("event")
-                if isinstance(event, dict):
-                    events.append(event)
+                if not isinstance(event, dict):
+                    continue
+                cost = rec.get("cost") if isinstance(rec.get("cost"), dict) else None
+                records.append((event, cost))
     except OSError as exc:
         logger.warning("[ChatHistory] load_events failed for repair=%s: %s", repair_id, exc)
-    return events
+    return records
 
 
 def save_ma_session_id(

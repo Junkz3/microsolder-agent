@@ -251,11 +251,11 @@ async def run_diagnostic_session_managed(
             "repair_id": repair_id,
         })
         # Replay the MA session's past events so the UI chat panel rebuilds
-        # the conversation visually. The agent itself already carries full
-        # state server-side; this is purely for the tech reading "what did
-        # I say yesterday?".
+        # the conversation visually. Also replays per-turn costs from the
+        # span.model_request_end events MA stores alongside so the lifetime
+        # cost chip survives the reopen.
         await _replay_ma_history_to_ws(
-            ws, client, session.id, session_state,
+            ws, client, session.id, session_state, agent_info["model"],
         )
 
     # Cache: agent.custom_tool_use events by event.id, so we can look up
@@ -310,6 +310,7 @@ async def _replay_ma_history_to_ws(
     client: AsyncAnthropic,
     session_id: str,
     session_state: SessionState,
+    agent_model: str,
 ) -> None:
     """Replay a MA session's past events to the browser chat panel.
 
@@ -402,6 +403,27 @@ async def _replay_ma_history_to_ws(
                     "replay": True,
                 }
             )
+
+        elif etype == "span.model_request_end":
+            # Reprice the turn from MA's persisted usage so the lifetime
+            # cost chip reflects real spend rather than starting from $0.
+            usage = getattr(event, "model_usage", None)
+            if usage is not None:
+                model_label = (
+                    getattr(usage, "model", None)
+                    or getattr(event, "model", None)
+                    or agent_model
+                )
+                cost = compute_turn_cost(
+                    model_label,
+                    input_tokens=getattr(usage, "input_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                    cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    cache_creation_input_tokens=getattr(
+                        usage, "cache_creation_input_tokens", 0
+                    ) or 0,
+                )
+                await ws.send_json({"type": "turn_cost", **cost, "replay": True})
 
     await ws.send_json({"type": "history_replay_end"})
 

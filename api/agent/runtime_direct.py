@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from api.agent.chat_history import (
     append_event,
     build_session_intro,
-    load_events,
+    load_events_with_costs,
     touch_status,
 )
 from api.agent.dispatch_bv import dispatch_bv
@@ -120,13 +120,15 @@ async def _run_agent_turn(
         if response.stop_reason != "tool_use":
             messages.append(assistant_msg)
             append_event(
-                device_slug=device_slug, repair_id=repair_id, event=assistant_msg
+                device_slug=device_slug, repair_id=repair_id,
+                event=assistant_msg, cost=cost,
             )
             return
 
         messages.append(assistant_msg)
         append_event(
-            device_slug=device_slug, repair_id=repair_id, event=assistant_msg
+            device_slug=device_slug, repair_id=repair_id,
+            event=assistant_msg, cost=cost,
         )
         tool_results: list[dict] = []
         for block in response.content:
@@ -161,16 +163,20 @@ async def _run_agent_turn(
 
 
 async def _replay_history_to_ws(
-    ws: WebSocket, events: list[dict[str, Any]]
+    ws: WebSocket,
+    records: list[tuple[dict[str, Any], dict[str, Any] | None]],
 ) -> None:
     """Stream past events back to the client so its chat panel can reconstruct
     the conversation on a reopen. Only surface user text + assistant text +
-    tool_use — tool_results are implementation noise for the UI.
+    tool_use — tool_results are implementation noise for the UI. When an
+    assistant turn has a persisted cost, re-emit a turn_cost event with
+    replay=true right after the text block so the session running total
+    reflects the true lifetime spend.
     """
-    if not events:
+    if not records:
         return
-    await ws.send_json({"type": "history_replay_start", "count": len(events)})
-    for msg in events:
+    await ws.send_json({"type": "history_replay_start", "count": len(records)})
+    for msg, cost in records:
         role = msg.get("role")
         content = msg.get("content")
         if role == "user" and isinstance(content, str):
@@ -196,6 +202,8 @@ async def _replay_history_to_ws(
                             "replay": True,
                         }
                     )
+            if cost is not None:
+                await ws.send_json({"type": "turn_cost", **cost, "replay": True})
     await ws.send_json({"type": "history_replay_end"})
 
 logger = logging.getLogger("microsolder.agent.direct")
@@ -305,16 +313,20 @@ async def run_diagnostic_session_direct(
     system_prompt = render_system_prompt(session, device_slug=device_slug)
     tools = build_tools_manifest(session)
 
-    # Load prior history when reopening a persisted repair — the agent
-    # continues the same conversation, and the client UI rebuilds the chat.
-    messages: list[dict] = load_events(device_slug=device_slug, repair_id=repair_id)
-    if messages:
+    # Load prior history (+ per-turn costs) when reopening a persisted repair —
+    # the agent continues the same conversation and the chat panel rebuilds
+    # with the right lifetime cost total.
+    records = load_events_with_costs(
+        device_slug=device_slug, repair_id=repair_id
+    )
+    messages: list[dict] = [event for event, _cost in records]
+    if records:
         logger.info(
             "[Diag-Direct] Resuming repair=%s with %d prior events",
             repair_id,
-            len(messages),
+            len(records),
         )
-        await _replay_history_to_ws(ws, messages)
+        await _replay_history_to_ws(ws, records)
     elif repair_id:
         # Fresh session on a known repair — stash the device identity + the
         # reported symptom as a hidden first user message so the agent has

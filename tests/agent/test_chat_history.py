@@ -130,6 +130,49 @@ def test_touch_status_noop_when_file_missing(tmp_path, monkeypatch):
     )
 
 
+def test_cost_persists_alongside_event(tmp_path, monkeypatch):
+    """append_event with `cost` kwarg writes it on the record so replay can
+    re-emit it and the lifetime cost chip accumulates correctly.
+    """
+    from api.agent.chat_history import (
+        append_event,
+        load_events,
+        load_events_with_costs,
+    )
+
+    monkeypatch.setenv("CHAT_HISTORY_BACKEND", "jsonl")
+    monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
+
+    append_event(
+        device_slug="demo-pi", repair_id="r1",
+        event={"role": "user", "content": "hello"},
+        memory_root=tmp_path,
+    )
+    append_event(
+        device_slug="demo-pi", repair_id="r1",
+        event={"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+        cost={"model": "claude-haiku-4-5", "cost_usd": 0.023, "priced": True},
+        memory_root=tmp_path,
+    )
+
+    # load_events (legacy) still returns just events.
+    plain = load_events(device_slug="demo-pi", repair_id="r1", memory_root=tmp_path)
+    assert len(plain) == 2
+    assert plain[0]["role"] == "user"
+
+    # load_events_with_costs surfaces per-record cost.
+    records = load_events_with_costs(
+        device_slug="demo-pi", repair_id="r1", memory_root=tmp_path,
+    )
+    assert len(records) == 2
+    user_event, user_cost = records[0]
+    assistant_event, assistant_cost = records[1]
+    assert user_cost is None
+    assert assistant_cost is not None
+    assert assistant_cost["cost_usd"] == 0.023
+    assert assistant_cost["model"] == "claude-haiku-4-5"
+
+
 def test_save_and_load_ma_session_id_per_tier(tmp_path, monkeypatch):
     from api.agent.chat_history import load_ma_session_id, save_ma_session_id
 
