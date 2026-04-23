@@ -193,3 +193,41 @@ def mb_list_findings(
         "filter_refdes": filter_refdes,
         "reports": reports,
     }
+
+
+async def mb_expand_knowledge(
+    *,
+    client,  # AsyncAnthropic — kept loose-typed for import hygiene
+    device_slug: str,
+    focus_symptoms: list[str],
+    focus_refdes: list[str] | None = None,
+    memory_root: Path | None = None,
+) -> dict[str, Any]:
+    """Grow the pack's memory bank around a focus symptom area.
+
+    Invoked when mb_get_rules_for_symptoms returns 0 matches and the
+    technician's symptom is worth researching. Triggers a targeted
+    Scout + Registry + Clinicien mini-pipeline and merges the output
+    into the on-disk pack. Costs ~$0.40 / ~30-60s. Returns a summary
+    the agent can relay to the tech, then the agent can re-call
+    mb_get_rules_for_symptoms to see the freshly added rules.
+    """
+    from api.pipeline.expansion import expand_pack
+
+    try:
+        summary = await expand_pack(
+            device_slug=device_slug,
+            focus_symptoms=focus_symptoms,
+            focus_refdes=focus_refdes or [],
+            client=client,
+            memory_root=memory_root,
+        )
+        summary["ok"] = True
+        return summary
+    except Exception as exc:  # noqa: BLE001 — defensive: never crash the session
+        return {
+            "ok": False,
+            "expanded": False,
+            "reason": type(exc).__name__,
+            "error": str(exc)[:300],
+        }

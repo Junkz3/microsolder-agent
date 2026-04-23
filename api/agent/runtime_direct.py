@@ -27,6 +27,7 @@ from api.agent.dispatch_bv import dispatch_bv
 from api.agent.manifest import build_tools_manifest, render_system_prompt
 from api.agent.sanitize import sanitize_agent_text
 from api.agent.tools import (
+    mb_expand_knowledge,
     mb_get_component,
     mb_get_rules_for_symptoms,
     mb_list_findings,
@@ -235,6 +236,14 @@ async def _dispatch_mb_tool(
             mechanism=payload.get("mechanism"),
             notes=payload.get("notes"),
             session_id=session_id,
+        )
+    if name == "mb_expand_knowledge":
+        return await mb_expand_knowledge(
+            client=client,
+            device_slug=device_slug,
+            focus_symptoms=payload.get("focus_symptoms", []),
+            focus_refdes=payload.get("focus_refdes", []),
+            memory_root=memory_root,
         )
     logger.warning("unknown mb_* tool: %s", name)
     return {"ok": False, "reason": "unknown-tool"}

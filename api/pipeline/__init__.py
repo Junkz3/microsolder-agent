@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from api.config import get_settings
 from api.pipeline import events
+from api.pipeline.expansion import expand_pack
 from api.pipeline.graph_transform import pack_to_graph_payload
 from api.pipeline.orchestrator import _slugify, generate_knowledge_pack
 from api.pipeline.schemas import PipelineResult
@@ -461,6 +462,41 @@ async def progress_ws(websocket: WebSocket, device_slug: str) -> None:
         logger.info("[API] /pipeline/progress/%s · client disconnected", slug)
     finally:
         events.unsubscribe(slug, queue)
+
+
+class ExpandRequest(BaseModel):
+    focus_symptoms: list[str] = Field(
+        min_length=1,
+        description="Symptom phrases the tech is hunting — in any language, any casing.",
+    )
+    focus_refdes: list[str] = Field(
+        default_factory=list,
+        description="Optional refdes to probe specifically (e.g. U3101 for audio codec).",
+    )
+
+
+@router.post("/packs/{device_slug}/expand")
+async def expand_device_pack(device_slug: str, request: ExpandRequest) -> dict:
+    """Grow an existing pack's memory bank around a focus symptom area.
+
+    Called by the diagnostic agent via the `mb_expand_knowledge` tool when
+    the current ruleset comes up empty for a live symptom. Runs a targeted
+    Scout + Registry + Clinicien mini-pipeline and merges the output into
+    the existing pack. See api/pipeline/expansion.py for the mechanics.
+    """
+    slug = _slugify(device_slug)
+    logger.info(
+        "[API] /packs/%s/expand · focus=%s · refdes=%s",
+        slug, request.focus_symptoms, request.focus_refdes,
+    )
+    try:
+        return await expand_pack(
+            device_slug=slug,
+            focus_symptoms=request.focus_symptoms,
+            focus_refdes=request.focus_refdes,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/packs/{device_slug}/graph")

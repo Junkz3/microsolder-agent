@@ -82,6 +82,36 @@ MB_TOOLS: list[dict] = [
             "required": ["refdes", "symptom", "confirmed_cause"],
         },
     },
+    {
+        "type": "custom",
+        "name": "mb_expand_knowledge",
+        "description": (
+            "Grow this device's memory bank around a focus symptom area. Call "
+            "this ONLY when mb_get_rules_for_symptoms returned zero matches "
+            "for a symptom worth researching. Triggers a targeted Scout + "
+            "Clinicien run (~30-60s, ~$0.40) that appends to the pack's dump, "
+            "merges new components into the registry, and regenerates rules. "
+            "After it succeeds, re-call mb_get_rules_for_symptoms to pick up "
+            "the new rules."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "focus_symptoms": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "Symptom phrases to target, e.g. ['no sound', 'earpiece dead'].",
+                },
+                "focus_refdes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional refdes to probe specifically (e.g. ['U3101', 'U3200']).",
+                },
+            },
+            "required": ["focus_symptoms"],
+        },
+    },
 ]
 
 
@@ -251,7 +281,7 @@ Device courant : {device_slug}.
 
 Capabilities for this session:
   - memory bank ✅ (mb_get_component, mb_get_rules_for_symptoms,
-    mb_list_findings, mb_record_finding)
+    mb_list_findings, mb_record_finding, mb_expand_knowledge)
   - boardview {boardview_status}
   - schematic ❌ (not yet parsed)
 
@@ -264,9 +294,15 @@ réponse finale (sanitizer post-hoc) — signal de debug, pas d'excuse.
 
 Quand l'utilisateur décrit des symptômes, consulte d'abord mb_list_findings
 (historique cross-session de ce device), puis mb_get_rules_for_symptoms.
-Quand il demande un composant, appelle mb_get_component — il agrège
-memory bank + board (topologie, nets connectés) en un seul appel. Si la
-boardview est disponible, enchaîne bv_focus + bv_highlight pour MONTRER
-le suspect au tech. Quand l'utilisateur confirme la cause, appelle
-mb_record_finding pour l'archiver. Ne réponds JAMAIS depuis ta mémoire de formation pour des refdes ou des symptômes — utilise toujours les tools ci-dessus.
+**Si mb_get_rules_for_symptoms retourne 0 matches** sur un symptôme sérieux,
+appelle mb_expand_knowledge(focus_symptoms, focus_refdes?) pour étendre la
+memory bank — ça relance un Scout ciblé (~30-60s) et ajoute composants et
+règles. Explique au tech ce que tu fais et patiente. Après succès, re-call
+mb_get_rules_for_symptoms. Quand il demande un composant, appelle
+mb_get_component — il agrège memory bank + board (topologie, nets connectés)
+en un seul appel. Si la boardview est disponible, enchaîne bv_focus +
+bv_highlight pour MONTRER le suspect au tech. Quand l'utilisateur confirme
+la cause, appelle mb_record_finding pour l'archiver. Ne réponds JAMAIS
+depuis ta mémoire de formation pour des refdes ou des symptômes — utilise
+toujours les tools ci-dessus.
 """

@@ -72,13 +72,21 @@ mis à disposition :
     Appelle ce tool UNIQUEMENT quand le technicien confirme explicitement
     la cause ("c'était bien U7, je l'ai remplacé, ça fonctionne"). Ce
     record sera lu par les sessions futures sur le même device.
+  - mb_expand_knowledge(focus_symptoms, focus_refdes?) — étend la memory
+    bank quand mb_get_rules_for_symptoms retourne 0 résultats sur un
+    symptôme sérieux. Déclenche un Scout ciblé + Clinicien qui ajoutent
+    composants et règles au pack existant (~30-60s, ~$0.40). Après ça,
+    re-appelle mb_get_rules_for_symptoms pour voir les nouvelles règles.
+    Explique au technicien ce que tu fais ("je cherche sur les sources
+    microsoudure…") pour qu'il attende.
 
 Le device en cours est fourni dans le premier message user (slug +
 display name). Quand l'utilisateur décrit des symptômes, consulte
 d'abord mb_list_findings puis enchaîne mb_get_rules_for_symptoms.
-Quand il demande un composant par refdes, valide-le. Privilégie les
-causes à haute probabilité et les étapes de diagnostic concrètes
-(mesurer tel voltage sur tel test point).
+Si 0 résultat sur le symptôme → mb_expand_knowledge pour le combler,
+puis re-query. Quand il demande un composant par refdes, valide-le.
+Privilégie les causes à haute probabilité et les étapes de diagnostic
+concrètes (mesurer tel voltage sur tel test point).
 """
 
 TOOLS = MB_TOOLS + BV_TOOLS
