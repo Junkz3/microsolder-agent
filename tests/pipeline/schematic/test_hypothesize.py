@@ -281,8 +281,6 @@ def test_hypothesize_single_fault_recovers_kill_from_observations():
     assert result.hypotheses[0].kill_refdes == ["U7"]
     assert result.hypotheses[0].score > 0
     assert result.pruning.single_candidates_tested >= 1
-    # 2-fault disabled until Task 5, so pairs_tested must be 0 at this point.
-    assert result.pruning.two_fault_pairs_tested == 0
 
 
 def test_hypothesize_empty_observations_returns_empty():
@@ -353,3 +351,53 @@ def test_narrative_with_contradiction_mentions_it():
         narr = contradictory[0].narrative
         assert "Contredit" in narr
         assert "U7" in narr
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — 2-fault pair exploration + merge ranking
+# ---------------------------------------------------------------------------
+
+
+def test_hypothesize_two_fault_covers_residual():
+    """Observations that no single-fault can fully explain should surface a
+    2-fault hypothesis covering the residual, ranked above a partial single.
+    """
+    # Construct a scenario where killing U7 alone leaves U18 dead unexplained
+    # — only a combined kill of (U7, U18) matches the full observation.
+    obs = Observations(
+        dead_comps=frozenset({"U12", "U19", "U18"}),  # U18 is NOT in any U7 cascade
+        dead_rails=frozenset({"+5V"}),
+    )
+    result = hypothesize(
+        _mini_graph(), analyzed_boot=_mini_analyzed(), observations=obs,
+    )
+    # At least one 2-fault hypothesis should be present.
+    two_faults = [h for h in result.hypotheses if len(h.kill_refdes) == 2]
+    assert len(two_faults) >= 1
+    # The ideal 2-fault kill_refdes = sorted(["U7", "U18"]).
+    assert sorted(two_faults[0].kill_refdes) == ["U18", "U7"]
+    # And it should score strictly higher than the best single-fault since it
+    # covers more TP with zero additional FP.
+    singles = [h for h in result.hypotheses if len(h.kill_refdes) == 1]
+    if singles:
+        assert two_faults[0].score >= singles[0].score
+    assert result.pruning.two_fault_pairs_tested > 0
+
+
+def test_hypothesize_two_fault_can_be_disabled():
+    """TWO_FAULT_ENABLED=False must skip the 2-fault pass entirely."""
+    import api.pipeline.schematic.hypothesize as h
+    orig = h.TWO_FAULT_ENABLED
+    h.TWO_FAULT_ENABLED = False
+    try:
+        obs = Observations(
+            dead_comps=frozenset({"U12", "U18"}),
+            dead_rails=frozenset({"+5V"}),
+        )
+        result = hypothesize(
+            _mini_graph(), analyzed_boot=_mini_analyzed(), observations=obs,
+        )
+        assert result.pruning.two_fault_pairs_tested == 0
+        assert all(len(x.kill_refdes) == 1 for x in result.hypotheses)
+    finally:
+        h.TWO_FAULT_ENABLED = orig

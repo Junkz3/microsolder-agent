@@ -248,6 +248,51 @@ def _narrate(
     return head + coverage + tail
 
 
+def _enumerate_two_fault(
+    electrical: ElectricalGraph,
+    analyzed_boot: AnalyzedBootSequence | None,
+    observations: Observations,
+    cascades_cache: dict[str, dict],
+    single_ranked: list[tuple[str, float, HypothesisMetrics, HypothesisDiff]],
+) -> tuple[int, list[tuple[tuple[str, str], float, HypothesisMetrics, HypothesisDiff, dict]]]:
+    """Explore 2-fault pairs seeded by top-K single-fault survivors.
+
+    Returns (pairs_tested, ranked_pairs) where ranked_pairs contains tuples
+    (kill_pair, score, metrics, diff, combined_cascade).
+    """
+    if not TWO_FAULT_ENABLED:
+        return 0, []
+
+    top_k = [refdes for refdes, *_ in single_ranked[:TOP_K_SINGLE]]
+    seen_pairs: set[tuple[str, str]] = set()
+    pairs_tested = 0
+    ranked: list[tuple[tuple[str, str], float, HypothesisMetrics, HypothesisDiff, dict]] = []
+
+    for c1 in top_k:
+        c1_cascade = cascades_cache[c1]
+        residual_dc = observations.dead_comps - c1_cascade["dead_comps"]
+        residual_dr = observations.dead_rails - c1_cascade["dead_rails"]
+        if not residual_dc and not residual_dr:
+            # c1 already explains everything — 2-fault won't help.
+            continue
+        for c2, c2_cascade in cascades_cache.items():
+            if c2 == c1:
+                continue
+            pair = tuple(sorted((c1, c2)))
+            if pair in seen_pairs:
+                continue
+            # Pruning: c2's single-cascade must intersect the residual.
+            if not (c2_cascade["dead_comps"] & residual_dc) and not (c2_cascade["dead_rails"] & residual_dr):
+                continue
+            seen_pairs.add(pair)
+            combined = _simulate_kill(electrical, analyzed_boot, list(pair))
+            pairs_tested += 1
+            score, metrics, diff = _score_candidate(combined, observations)
+            ranked.append((pair, score, metrics, diff, combined))
+    ranked.sort(key=lambda t: -t[1])
+    return pairs_tested, ranked
+
+
 def _enumerate_single_fault(
     electrical: ElectricalGraph,
     analyzed_boot: AnalyzedBootSequence | None,
@@ -310,7 +355,12 @@ def hypothesize(
         electrical, analyzed_boot, observations,
     )
 
-    # Assemble Hypothesis objects from the ranked list.
+    pairs_tested, two_ranked = _enumerate_two_fault(
+        electrical, analyzed_boot, observations,
+        cascades_cache, single_ranked,
+    )
+
+    # Assemble and merge.
     hypotheses: list[Hypothesis] = []
     for refdes, score, metrics, diff in single_ranked:
         cascade = cascades_cache[refdes]
@@ -319,28 +369,41 @@ def hypothesize(
             score=score,
             metrics=metrics,
             diff=diff,
-            narrative=_narrate(
-                kill_refdes=[refdes],
-                cascade=cascade,
-                metrics=metrics,
-                diff=diff,
-                observations=observations,
-            ),
+            narrative=_narrate([refdes], cascade, metrics, diff, observations),
             cascade_preview={
                 "dead_rails": sorted(cascade["dead_rails"]),
                 "dead_comps_count": len(cascade["dead_comps"]),
             },
         ))
+    for pair, score, metrics, diff, combined in two_ranked:
+        hypotheses.append(Hypothesis(
+            kill_refdes=list(pair),
+            score=score,
+            metrics=metrics,
+            diff=diff,
+            narrative=_narrate(list(pair), combined, metrics, diff, observations),
+            cascade_preview={
+                "dead_rails": sorted(combined["dead_rails"]),
+                "dead_comps_count": len(combined["dead_comps"]),
+            },
+        ))
 
-    # Top-N slicing.
+    # Global re-rank: score desc, then fewer refdes (prefer single-fault),
+    # then lower sum of blast_radius-proxy (smaller cascade = simpler explanation).
+    hypotheses.sort(key=lambda h: (
+        -h.score,
+        len(h.kill_refdes),
+        h.cascade_preview["dead_comps_count"],
+    ))
     hypotheses = hypotheses[:max_results]
+
     return HypothesizeResult(
         device_slug=electrical.device_slug,
         observations_echo=observations,
         hypotheses=hypotheses,
         pruning=PruningStats(
             single_candidates_tested=len(cascades_cache),
-            two_fault_pairs_tested=0,
+            two_fault_pairs_tested=pairs_tested,
             wall_ms=(time.perf_counter() - t0) * 1000,
         ),
     )
