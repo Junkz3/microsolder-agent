@@ -3,6 +3,11 @@
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+
+import pytest
+
 from api.pipeline.schematic.schemas import (
     AnalyzedBootPhase,
     AnalyzedBootSequence,
@@ -221,3 +226,35 @@ def test_run_fallback_without_analyzed_boot_uses_compiler_sequence():
     assert [s.phase_index for s in tl.states] == [1, 2, 3]
     # Triggers without a driver are unconditionally asserted.
     assert tl.states[-1].signals["5V_PWR_EN"] == "high"
+
+
+def test_run_is_deterministic_across_100_runs():
+    graph = _mnt_like_graph()
+    analyzed = _mnt_like_analyzed()
+    first = SimulationEngine(graph, analyzed_boot=analyzed, killed_refdes=["U7"]).run()
+    for _ in range(99):
+        again = SimulationEngine(graph, analyzed_boot=analyzed, killed_refdes=["U7"]).run()
+        assert again.model_dump() == first.model_dump()
+
+
+@pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[3]
+         / "memory/mnt-reform-motherboard/electrical_graph.json").exists(),
+    reason="MNT artefacts not present on this checkout",
+)
+def test_run_completes_under_10ms_on_mnt_reform():
+    """Performance smoke — MNT is the biggest board we have (~450 comps)."""
+    root = Path(__file__).resolve().parents[3]
+    eg = ElectricalGraph.model_validate_json(
+        (root / "memory/mnt-reform-motherboard/electrical_graph.json").read_text()
+    )
+    ab_path = root / "memory/mnt-reform-motherboard/boot_sequence_analyzed.json"
+    ab = AnalyzedBootSequence.model_validate_json(ab_path.read_text()) if ab_path.exists() else None
+
+    # Warm-up + 20 runs.
+    SimulationEngine(eg, analyzed_boot=ab).run()
+    t0 = time.perf_counter()
+    for _ in range(20):
+        SimulationEngine(eg, analyzed_boot=ab, killed_refdes=["U12"]).run()
+    elapsed_ms = (time.perf_counter() - t0) * 1000 / 20
+    assert elapsed_ms < 10.0, f"simulator ran {elapsed_ms:.2f}ms/run (> 10ms target)"
