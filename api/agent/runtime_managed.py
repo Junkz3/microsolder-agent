@@ -69,6 +69,22 @@ async def _dispatch_tool(
     responsible for emitting it on the WS and stripping it from the agent
     tool_result.
     """
+    if name.startswith("profile_"):
+        from api.profile.tools import (
+            profile_check_skills,
+            profile_get,
+            profile_track_skill,
+        )
+        if name == "profile_get":
+            return profile_get()
+        if name == "profile_check_skills":
+            return profile_check_skills(payload.get("candidate_skills", []))
+        if name == "profile_track_skill":
+            return profile_track_skill(
+                payload.get("skill_id", ""),
+                payload.get("evidence", {}),
+            )
+        return {"ok": False, "reason": "unknown-tool", "error": f"unknown profile tool: {name}"}
     if name.startswith("bv_"):
         return dispatch_bv(session, name, payload)
     if name == "mb_get_component":
@@ -238,12 +254,22 @@ async def run_diagnostic_session_managed(
         }
     )
 
-    # The intro (device context + reported symptom) only needs injection on
-    # a FRESH session. When we resume, the MA session already carries the
-    # full conversation history including the original intro.
-    intro = None if resumed else build_session_intro(
-        device_slug=device_slug, repair_id=repair_id
-    )
+    # The intro (device context + reported symptom + technician profile) only
+    # needs injection on a FRESH session. When we resume, the MA session
+    # already carries the full conversation history including the original intro.
+    # Fresh sessions get the device intro PLUS the technician profile block.
+    # MA stores them as one hidden user message prefixed to the first real turn
+    # (see _forward_ws_to_session's pending_intro handling).
+    intro: str | None
+    if resumed:
+        intro = None
+    else:
+        from api.profile.prompt import render_technician_block
+        from api.profile.store import load_profile
+        device_intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
+        tech_block = render_technician_block(load_profile())
+        intro_parts = [p for p in (device_intro, f"[CONTEXTE TECHNICIEN]\n{tech_block}") if p]
+        intro = "\n\n---\n\n".join(intro_parts) if intro_parts else None
     if intro:
         await ws.send_json({
             "type": "context_loaded",
@@ -373,10 +399,13 @@ async def _replay_ma_history_to_ws(
                     continue
                 text = getattr(block, "text", "") or ""
                 # Drop the bootstrap intro prefix (we prepend it to the first
-                # real user message in _forward_ws_to_session).
-                if text.startswith("[Nouvelle session de diagnostic]"):
+                # real user message in _forward_ws_to_session). The prefix now
+                # contains both the device context and technician profile blocks,
+                # separated by "---" markers. Use rfind to skip all prefix parts
+                # and surface only the tech's actual text.
+                if text.startswith(("[Nouvelle session de diagnostic]", "[CONTEXTE TECHNICIEN]")):
                     marker = "\n\n---\n\n"
-                    idx = text.find(marker)
+                    idx = text.rfind(marker)
                     if idx >= 0:
                         text = text[idx + len(marker):].strip()
                     else:
