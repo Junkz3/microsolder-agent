@@ -10,6 +10,7 @@ Exposes:
     GET  /pipeline/packs/{slug}/full              — every JSON artefact in one payload.
     GET  /pipeline/packs/{slug}/schematic         — compiled electrical graph.
     GET  /pipeline/packs/{slug}/schematic/boot    — boot_sequence + power_rails subset.
+    GET  /pipeline/packs/{slug}/schematic/passives — passive classifier output (kind, role, confidence).
     POST /pipeline/packs/{slug}/schematic/simulate — run behavioral simulator, returns full timeline.
 """
 
@@ -26,6 +27,7 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from api.agent.field_reports import list_field_reports
@@ -720,6 +722,37 @@ async def get_pack_graph(device_slug: str) -> dict:
     )
 
 
+@router.get("/packs/{device_slug}/schematic.pdf")
+async def get_pack_schematic_pdf(device_slug: str) -> FileResponse:
+    """Serve the source schematic PDF for this device.
+
+    Lookup order:
+    1. `memory/{slug}/schematic.pdf` — persisted by `ingest_schematic`.
+    2. `board_assets/{slug}.pdf` — fallback for demo devices whose schematic
+       was never re-ingested but ships in the repo.
+    Returns 404 when neither exists. Served as `application/pdf` with
+    `Content-Disposition: inline` so the browser's native viewer handles
+    pagination, zoom, and search.
+    """
+    settings = get_settings()
+    slug = _slugify(device_slug)
+    candidates = [
+        Path(settings.memory_root) / slug / "schematic.pdf",
+        Path.cwd() / "board_assets" / f"{slug}.pdf",
+    ]
+    for path in candidates:
+        if path.exists() and path.is_file():
+            return FileResponse(
+                path,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'inline; filename="{slug}.pdf"'},
+            )
+    raise HTTPException(
+        status_code=404,
+        detail=f"No schematic PDF on disk for device_slug={slug!r}",
+    )
+
+
 @router.get("/packs/{device_slug}/schematic")
 async def get_pack_schematic(device_slug: str) -> dict:
     """Return the compiled electrical graph for this device.
@@ -921,6 +954,45 @@ async def get_pack_schematic_boot(device_slug: str) -> dict:
         "power_rails": graph.get("power_rails", {}),
         "quality": graph.get("quality"),
     }
+
+
+@router.get("/packs/{device_slug}/schematic/passives")
+async def get_schematic_passives(device_slug: str) -> list[dict]:
+    """Return classifier output per passive refdes (kind, role, confidence, source).
+
+    Filters ICs out — only R/C/D/FB emitted. Used for debugging the passive
+    classifier and for hand-written fixture generators to look up candidate
+    refdes without deserializing the entire electrical_graph.json.
+    """
+    settings = get_settings()
+    slug = _slugify(device_slug)
+    graph_path = Path(settings.memory_root) / slug / "electrical_graph.json"
+    if not graph_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No schematic ingested yet for device_slug={slug!r}",
+        )
+    try:
+        graph = json.loads(graph_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Malformed electrical_graph.json for {slug!r}: {exc}",
+        ) from exc
+
+    components = graph.get("components", {})
+    return [
+        {
+            "refdes": refdes,
+            "kind": comp.get("kind", "ic"),
+            "role": comp.get("role"),
+            "confidence": 0.7,  # classifier confidence not yet persisted on
+                                # ComponentNode — follow-up phase. Stubbed here.
+            "source": "heuristic",
+        }
+        for refdes, comp in components.items()
+        if comp.get("kind", "ic") != "ic"
+    ]
 
 
 @router.post("/packs/{device_slug}/schematic/simulate")
