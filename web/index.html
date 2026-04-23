@@ -144,6 +144,13 @@
 <section class="sch-root hidden" data-section-stub="schematic" id="schematicSection">
   <div class="sch-grid"></div>
 
+  <!-- surface toggle — top-level choice between the derived Graph view and
+       the original PDF pages. Sits above every other floating control. -->
+  <div class="sch-surface-toggle" role="radiogroup" aria-label="Surface d'affichage">
+    <button class="sch-surface-btn on" data-sch-surface="graph" title="Graphe : rails, consumers, phases de boot (vues dérivées)">Graphe</button>
+    <button class="sch-surface-btn" data-sch-surface="pdf" title="PDF : le schéma original par page, tel que le fabricant l'a dessiné">PDF</button>
+  </div>
+
   <!-- rail sidebar (visible only in mode=railfocus) — populated by JS -->
   <aside class="sch-railbar" id="schRailBar">
     <header class="sch-railbar-head">
@@ -210,6 +217,39 @@
     <div class="sch-zoom-sep"></div>
     <button class="sch-zoom-btn" id="schBtnFit" title="Ajuster à l'écran"><svg class="icon icon-sm" viewBox="0 0 24 24" width="14" height="14"><path d="M4 8V4h4M16 4h4v4M4 16v4h4M16 20h4v-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></button>
     <div class="sch-zoom-label" id="schZoomLabel">× 1.00</div>
+  </div>
+
+  <!-- PDF surface — custom viewer (dark, anchor-aware), lazy-loaded by JS -->
+  <div class="sch-pdf-view" id="schPdfView">
+    <!-- floating search input (top-right, mirrors .sch-filter styling) -->
+    <div class="sch-pdf-search">
+      <svg class="icon icon-sm" viewBox="0 0 24 24" width="14" height="14"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+      <input id="schPdfSearchInput" placeholder="Refdes (U13, C34, R108…)" autocomplete="off" spellcheck="false"/>
+      <span class="sch-pdf-search-status" id="schPdfSearchStatus"></span>
+    </div>
+    <!-- scrollable list of pages, populated by js/schematic.js -->
+    <div class="sch-pdf-scroll" id="schPdfScroll"></div>
+    <!-- status pill (bottom-center): "Page k / n" -->
+    <div class="sch-pdf-pagepill" id="schPdfPagePill">—</div>
+    <!-- zoom controls (bottom-right, mirrors .sch-zoom) -->
+    <div class="sch-pdf-zoom">
+      <button class="sch-pdf-zoom-btn" id="schPdfZoomIn" title="Zoomer (+)"><svg class="icon icon-sm" viewBox="0 0 24 24" width="14" height="14"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M11 8v6M8 11h6M21 21l-4.3-4.3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></button>
+      <button class="sch-pdf-zoom-btn" id="schPdfZoomOut" title="Dézoomer (−)"><svg class="icon icon-sm" viewBox="0 0 24 24" width="14" height="14"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M8 11h6M21 21l-4.3-4.3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg></button>
+      <div class="sch-pdf-zoom-label" id="schPdfZoomLabel">100%</div>
+    </div>
+    <!-- empty state (no PDF) -->
+    <div class="sch-pdf-empty hidden" id="schPdfEmpty">
+      <div class="sch-empty-card">
+        <div class="glyph">
+          <svg class="icon" viewBox="0 0 24 24" width="24" height="24">
+            <path d="M6 3h9l5 5v13H6z" stroke="currentColor" stroke-width="1.6" fill="none"/>
+            <path d="M15 3v5h5" stroke="currentColor" stroke-width="1.6" fill="none"/>
+          </svg>
+        </div>
+        <h3>Aucun PDF disponible</h3>
+        <p>Le schéma PDF original n'a pas été persisté pour cette réparation.</p>
+      </div>
+    </div>
   </div>
 
   <!-- empty state (shown when no device / no schematic) -->

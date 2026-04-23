@@ -550,6 +550,7 @@ function connect() {
 
   try {
     ws = new WebSocket(url);
+    window.__diagnosticWS = ws;
   } catch (err) {
     statusTone("error", "URL invalide");
     logSys(`échec de connexion : ${err.message}`, true);
@@ -596,6 +597,16 @@ function connect() {
         if (kind && key) SC.setObservation(kind, key, payload.mode, payload.measurement);
       } else if (payload.type === "simulation.observation_clear" && SC) {
         SC.clearObservations();
+      } else if (payload.type === "simulation.repair_validated") {
+        const btn = document.getElementById("dashboardFixBtn");
+        if (btn) {
+          // Clear any pending safety timeout from the dashboard-side.
+          if (btn._fixTimeoutId) { clearTimeout(btn._fixTimeoutId); btn._fixTimeoutId = null; }
+          const n = payload.fixes_count || 1;
+          btn.textContent = `✓ Validé (${n} fix${n > 1 ? "es" : ""})`;
+          btn.classList.add("is-validated");
+          btn.disabled = true;
+        }
       }
       return;
     }
@@ -670,6 +681,11 @@ function connect() {
         break;
       case "error":
         logSys(`erreur : ${payload.text}`, true);
+        // If the dashboard fix button is pending, clear its spinner so the
+        // tech can retry instead of staring at "… Claude valide" forever.
+        if (typeof window.__resetDashboardFixBtn === "function") {
+          window.__resetDashboardFixBtn();
+        }
         break;
       case "session_terminated":
         logSys("session terminée", true);

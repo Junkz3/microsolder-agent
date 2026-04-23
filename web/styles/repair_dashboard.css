@@ -498,3 +498,33 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
   transition: background .15s, color .15s;
 }
 .session-pill-close:hover { background: var(--panel); color: var(--amber); }
+
+/* ── « Marquer fix » CTA — emerald outline, filled when validated ── */
+.rd-fix-btn {
+  margin-right: 8px;
+  padding: 6px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--emerald);
+  background: color-mix(in oklch, var(--emerald) 10%, transparent);
+  border: 1px solid color-mix(in oklch, var(--emerald) 40%, transparent);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.rd-fix-btn:hover:not([disabled]) {
+  background: color-mix(in oklch, var(--emerald) 18%, transparent);
+  border-color: var(--emerald);
+}
+.rd-fix-btn[disabled] {
+  opacity: 0.75;
+  cursor: default;
+}
+.rd-fix-btn.is-validated {
+  color: var(--text);
+  background: color-mix(in oklch, var(--emerald) 22%, transparent);
+  border-color: var(--emerald);
+}
+.rd-fix-btn.hidden { display: none; }
