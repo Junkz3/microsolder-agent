@@ -266,22 +266,133 @@ function addExpandToStep(step, payloadObj) {
   });
 }
 
-// Append the assistant text into the current turn. Plain textContent for
-// now — Task 4 will replace this with markdown + chip rendering.
+// Regex shapes. Kept loose — the semantic filter is the Boardview lookup.
+const RE_REFDES = /\b[A-Z]{1,3}\d{1,4}\b/g;
+// Nets: common naming conventions used in iPhone / Mac / Pi schematics.
+// Over-matches on purpose; Boardview.hasNet is the truth gate.
+const RE_NET = /\b(?:PP_[A-Z0-9_]+|[PN]P_[A-Z0-9_]+|L\d{1,3}|VCC(?:_[A-Z0-9_]+)?|VDD(?:_[A-Z0-9_]+)?|AVDD(?:_[A-Z0-9_]+)?|DVDD(?:_[A-Z0-9_]+)?|GND(?:_[A-Z0-9_]+)?|[A-Z][A-Z0-9_]{3,})\b/g;
+const RE_UNKNOWN_REFDES = /⟨\?([A-Z]{1,3}\d{1,4})⟩/g;
+
 function appendTurnMessage(turn, text) {
   let msg = turn.querySelector(".turn-message");
   if (msg) {
-    // An assistant message already landed in this turn — open a new one.
+    // Second assistant message in the same turn — open a new turn.
     closeTurn();
     turn = ensureTurn();
     msg = null;
   }
   msg = document.createElement("div");
   msg.className = "turn-message";
-  msg.textContent = text ?? "";
+  renderAgentMarkup(msg, text || "");
   turn.appendChild(msg);
   el("llmLog").scrollTop = el("llmLog").scrollHeight;
   return msg;
+}
+
+// Parse markdown → sanitize → walk text nodes → replace validated tokens
+// with clickable chips. If marked / DOMPurify aren't on the page, fall back
+// to plain text (defensive: network hiccup loading the CDN).
+function renderAgentMarkup(container, text) {
+  let html;
+  if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
+    const raw = marked.parse(text, { breaks: true, gfm: true });
+    html = DOMPurify.sanitize(raw, {
+      ALLOWED_TAGS: ["p", "br", "strong", "em", "ul", "ol", "li", "code"],
+      ALLOWED_ATTR: [],
+    });
+  } else {
+    html = escapeHTML(text).replaceAll("\n", "<br>");
+  }
+  container.innerHTML = html;
+  decorateChipsIn(container);
+}
+
+// Walk all text nodes under `root` and replace validated refdes / net
+// tokens with clickable chips, plus unknown-refdes ⟨?U999⟩ with amber
+// span. Text inside <code> is skipped (agent's verbatim intent).
+function decorateChipsIn(root) {
+  const hasBoard = !!(window.Boardview && window.Boardview.hasBoard && window.Boardview.hasBoard());
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
+      if (n.parentElement && n.parentElement.closest("code, .refdes-unknown, .chip-refdes, .chip-net"))
+        return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  while (walker.nextNode()) targets.push(walker.currentNode);
+  for (const textNode of targets) decorateOneTextNode(textNode, hasBoard);
+}
+
+function decorateOneTextNode(textNode, hasBoard) {
+  const original = textNode.nodeValue;
+  const matches = [];
+  for (const m of original.matchAll(RE_UNKNOWN_REFDES)) {
+    matches.push({ kind: "unknown", start: m.index, end: m.index + m[0].length, raw: m[0], inner: m[1] });
+  }
+  for (const m of original.matchAll(RE_REFDES)) {
+    if (hasBoard && window.Boardview.hasRefdes(m[0])) {
+      matches.push({ kind: "refdes", start: m.index, end: m.index + m[0].length, raw: m[0] });
+    }
+  }
+  for (const m of original.matchAll(RE_NET)) {
+    if (hasBoard && window.Boardview.hasNet(m[0])) {
+      matches.push({ kind: "net", start: m.index, end: m.index + m[0].length, raw: m[0] });
+    }
+  }
+  if (matches.length === 0) return;
+  // Resolve overlaps: earliest-start first, ties broken by longest-wins.
+  matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const cleaned = [];
+  let cursor = 0;
+  for (const m of matches) {
+    if (m.start < cursor) continue;
+    cleaned.push(m);
+    cursor = m.end;
+  }
+  const frag = document.createDocumentFragment();
+  let i = 0;
+  for (const m of cleaned) {
+    if (m.start > i) frag.appendChild(document.createTextNode(original.slice(i, m.start)));
+    frag.appendChild(makeChipNode(m));
+    i = m.end;
+  }
+  if (i < original.length) frag.appendChild(document.createTextNode(original.slice(i)));
+  textNode.parentNode.replaceChild(frag, textNode);
+}
+
+function makeChipNode(match) {
+  if (match.kind === "refdes") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip-refdes";
+    btn.dataset.refdes = match.raw;
+    btn.textContent = match.raw;
+    btn.addEventListener("click", () => {
+      if (window.Boardview && window.Boardview.focusRefdes) {
+        window.Boardview.focusRefdes(match.raw);
+      }
+    });
+    return btn;
+  }
+  if (match.kind === "net") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip-net";
+    btn.dataset.net = match.raw;
+    btn.textContent = match.raw;
+    btn.addEventListener("click", () => {
+      if (window.Boardview && window.Boardview.highlightNet) {
+        window.Boardview.highlightNet(match.raw);
+      }
+    });
+    return btn;
+  }
+  const span = document.createElement("span");
+  span.className = "refdes-unknown";
+  span.textContent = match.raw;
+  return span;
 }
 
 function appendTurnFoot(turn, payload) {

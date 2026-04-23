@@ -291,3 +291,44 @@ body.llm-open .stub{right:420px}
 .tool-name-raw {
   font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
 }
+
+/* ============ Chips in turn-message ============ */
+.turn-message .chip-refdes,
+.turn-message .chip-net {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: transparent;
+  transition: background .15s, border-color .15s;
+  vertical-align: baseline;
+  line-height: 1.25;
+}
+.turn-message .chip-refdes {
+  color: var(--cyan);
+  border: 1px solid rgba(56,189,248,.3);
+}
+.turn-message .chip-refdes:hover {
+  background: rgba(56,189,248,.12);
+  border-color: rgba(56,189,248,.55);
+}
+.turn-message .chip-net {
+  color: var(--emerald);
+  border: 1px solid rgba(52,211,153,.3);
+}
+.turn-message .chip-net:hover {
+  background: rgba(52,211,153,.12);
+  border-color: rgba(52,211,153,.55);
+}
+.turn-message .refdes-unknown {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  background: rgba(245,158,11,.06);
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px dashed rgba(245,158,11,.35);
+}
