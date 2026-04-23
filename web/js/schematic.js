@@ -1345,6 +1345,8 @@ function renderNodes(model) {
   const sel = g.selectAll("g.sch-node").data(model.nodes, d => d.id).join("g")
     .attr("class", d => `sch-node sch-node-${d.kind} role-${d.role || "rail"} ${d.missing ? "missing" : ""} ${d.populated === false ? "nostuff" : ""} ${d.isSpof ? "spof" : ""}`)
     .attr("transform", d => `translate(${d.x},${d.y})`)
+    .attr("data-refdes", d => d.kind === "component" ? (d.refdes ?? null) : null)
+    .attr("data-rail",   d => d.kind === "rail" ? (d.label ?? d.id ?? null) : null)
     .on("click", (ev, d) => {
       ev.stopPropagation();
       STATE.selectedId = d.id;
@@ -1440,6 +1442,8 @@ function renderEdges(model) {
   // are short stubs from the horizontal bus line to the attached node so
   // they don't clutter the canvas the way long bezier edges do in a 2D
   // grid.
+  // data-signal deferred: edges carry e.netLabel but the simulator's signals
+  // state maps user-visible signal names; hook when signal-level sim is added.
   g.selectAll("path").data(model.edges, d => d.id).join("path")
     .attr("class", d => `sch-link sch-link-${d.kind}`)
     .attr("data-subkind", d => d.subkind || null)
