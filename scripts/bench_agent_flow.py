@@ -87,6 +87,7 @@ class Report:
     diagnosis_log_entries: int = 0
     measurements_entries: int = 0
     tool_calls: list[str] = field(default_factory=list)
+    memory_tool_calls: list[str] = field(default_factory=list)
     error: str | None = None
     total_cost_usd: float = 0.0
     total_turns: int = 0
@@ -169,6 +170,8 @@ async def _play_turn(
             # waiting for an explicit validation.start trigger. Capture it.
             if name == "mb_validate_finding":
                 report.mb_validate_finding_called = True
+        elif t == "memory_tool_use":
+            report.memory_tool_calls.append(ev.get("name", "?"))
         elif t == "simulation.repair_validated":
             report.repair_validated_event = ev
         elif t == "error":
@@ -206,6 +209,8 @@ async def _drain_validation(
             report.tool_calls.append(name)
             if name == "mb_validate_finding":
                 report.mb_validate_finding_called = True
+        elif t == "memory_tool_use":
+            report.memory_tool_calls.append(ev.get("name", "?"))
         elif t == "simulation.repair_validated":
             report.repair_validated_event = ev
         elif t == "turn_cost":
@@ -332,8 +337,11 @@ def _print_report(report: Report) -> int:
         print(f" {icon}  {label:<40}  {DIM(detail)}")
 
     print()
-    print(f" Tools called ({len(report.tool_calls)}): {', '.join(report.tool_calls) or '—'}")
-    print(f" Agent turns: {report.total_turns}  ·  cost: ${report.total_cost_usd:.4f}")
+    print(f" Custom tools ({len(report.tool_calls)}): {', '.join(report.tool_calls) or '—'}")
+    print(f" Memory tools ({len(report.memory_tool_calls)}): {', '.join(report.memory_tool_calls) or '—'}")
+    print(f" Agent turns: {report.total_turns}  ·  LLM cost: ${report.total_cost_usd:.4f}"
+          + (f"  ·  +{len(report.memory_tool_calls)} memory ops (MA-billed)"
+             if report.memory_tool_calls else ""))
     print("━" * 72)
     if ok_count == len(checks):
         print(GREEN(f" ALL GREEN ({ok_count}/{len(checks)})"))

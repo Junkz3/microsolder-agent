@@ -966,6 +966,20 @@ async def _forward_session_to_ws(
                     }
                 )
 
+            elif etype == "agent.tool_use":
+                # MA-native memory_* tools (memory_search / memory_list /
+                # memory_read / memory_write) are dispatched server-side by
+                # Anthropic, not by our runtime. Surface them on the WS so
+                # benchmarks can attribute cost — inference tokens don't
+                # include the per-op memory charges Anthropic bills on top.
+                await ws.send_json(
+                    {
+                        "type": "memory_tool_use",
+                        "name": getattr(event, "name", None),
+                        "input": getattr(event, "input", {}) or {},
+                    }
+                )
+
             elif etype == "session.status_idle":
                 stop = getattr(event, "stop_reason", None)
                 stop_type = getattr(stop, "type", None) if stop is not None else None
