@@ -337,3 +337,62 @@ def test_run_completes_under_10ms_on_mnt_reform():
         SimulationEngine(eg, analyzed_boot=ab, killed_refdes=["U12"]).run()
     elapsed_ms = (time.perf_counter() - t0) * 1000 / 20
     assert elapsed_ms < 10.0, f"simulator ran {elapsed_ms:.2f}ms/run (> 10ms target)"
+
+
+def test_cascade_transitive_dead_rails_via_dead_source():
+    """Rail B sourced by a consumer of rail A: if rail A's source dies,
+    the consumer never powers on, so rail B is transitively dead too."""
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, ElectricalGraph, NetNode, PagePin, PowerRail,
+        SchematicQualityReport, BootPhase,
+    )
+    from api.pipeline.schematic.simulator import SimulationEngine
+
+    comps = {
+        "U1": ComponentNode(
+            refdes="U1", type="ic",
+            pins=[PagePin(number="1", role="power_in", net_label="VIN")],
+        ),
+        "U2": ComponentNode(
+            refdes="U2", type="ic",
+            pins=[
+                PagePin(number="1", role="power_in", net_label="RAIL_A"),
+                PagePin(number="2", role="power_out", net_label="RAIL_B"),
+            ],
+        ),
+        "U3": ComponentNode(
+            refdes="U3", type="ic",
+            pins=[PagePin(number="1", role="power_in", net_label="RAIL_B")],
+        ),
+    }
+    nets = {
+        "VIN": NetNode(label="VIN", is_power=True),
+        "RAIL_A": NetNode(label="RAIL_A", is_power=True),
+        "RAIL_B": NetNode(label="RAIL_B", is_power=True),
+    }
+    rails = {
+        "VIN":    PowerRail(label="VIN",    source_refdes=None, consumers=["U1"]),
+        "RAIL_A": PowerRail(label="RAIL_A", source_refdes="U1", consumers=["U2"]),
+        "RAIL_B": PowerRail(label="RAIL_B", source_refdes="U2", consumers=["U3"]),
+    }
+    graph = ElectricalGraph(
+        device_slug="transitive-test",
+        components=comps,
+        nets=nets,
+        power_rails=rails,
+        typed_edges=[],
+        boot_sequence=[
+            BootPhase(index=1, name="p1", rails_stable=["RAIL_A"], components_entering=["U1", "U2"]),
+            BootPhase(index=2, name="p2", rails_stable=["RAIL_B"], components_entering=["U3"]),
+        ],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1, confidence_global=1.0),
+    )
+    tl = SimulationEngine(graph, killed_refdes=["U1"]).run()
+    # U1 is the kill source → RAIL_A dead. U2 can't power on → RAIL_B also dead
+    # transitively. U3 never powers on.
+    assert "RAIL_A" in tl.cascade_dead_rails
+    assert "RAIL_B" in tl.cascade_dead_rails, (
+        "expected RAIL_B in cascade after fixpoint refactor; got %r" % tl.cascade_dead_rails
+    )
+    assert "U2" in tl.cascade_dead_components
+    assert "U3" in tl.cascade_dead_components

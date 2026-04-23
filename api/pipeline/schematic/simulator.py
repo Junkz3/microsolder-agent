@@ -268,25 +268,55 @@ class SimulationEngine:
         rails: dict[str, RailState],
         components: dict[str, ComponentState],
     ) -> tuple[list[str], list[str]]:
-        dead_rails = sorted(
-            label for label, rail in self.electrical.power_rails.items()
-            if rail.source_refdes in self.killed and rails.get(label) != "stable"
-        )
-        # Components that never turned on because they were waiting on a rail
-        # whose source was killed, OR because the component itself was killed.
-        dead_components: list[str] = []
+        """Compute dead components + dead rails with one transitive rail pass.
+
+        Semantics:
+          1. `dead_components` = `self.killed` plus every component whose
+             `power_in` pin sits on a rail whose original source is in
+             `self.killed`.
+          2. `dead_rails` = every rail whose source is dead after step 1
+             (the transitive pass — picks up rails sourced by an IC that
+             was itself killed by losing its power input).
+
+        The old `_cascade` stopped at step 1. The Phase 1 hypothesize
+        `_simulate_failure("shorted", ...)` path added step 2 as a local
+        patch; lifting it here makes every caller benefit without changing
+        hot-path performance — both steps are a single linear pass.
+        """
+        dead_components: set[str] = set(self.killed)
         for refdes, comp in self.electrical.components.items():
-            if refdes in self.killed:
-                dead_components.append(refdes)
+            if refdes in dead_components:
                 continue
             if components.get(refdes) == "on":
                 continue
-            ins = [pin.net_label for pin in comp.pins if pin.role == "power_in" and pin.net_label]
+            ins = [p.net_label for p in comp.pins if p.role == "power_in" and p.net_label]
             if not ins:
                 continue
-            if any(rails.get(n) != "stable" and
-                   self.electrical.power_rails.get(n) is not None and
-                   self.electrical.power_rails[n].source_refdes in self.killed
-                   for n in ins):
-                dead_components.append(refdes)
-        return sorted(set(dead_components)), dead_rails
+            if any(
+                rails.get(n) != "stable"
+                and self.electrical.power_rails.get(n) is not None
+                and self.electrical.power_rails[n].source_refdes in self.killed
+                for n in ins
+            ):
+                dead_components.add(refdes)
+
+        dead_rails: set[str] = set()
+        for label, rail in self.electrical.power_rails.items():
+            if rails.get(label) == "stable":
+                continue
+            if rail.source_refdes and rail.source_refdes in dead_components:
+                dead_rails.add(label)
+
+        # Extend dead_components to consumers of the transitively-dead rails.
+        # Keeps the caller-visible invariant "if a rail is dead, its consumers
+        # can't power on" without looping to fixpoint — still a linear pass.
+        for refdes, comp in self.electrical.components.items():
+            if refdes in dead_components:
+                continue
+            if components.get(refdes) == "on":
+                continue
+            ins = [p.net_label for p in comp.pins if p.role == "power_in" and p.net_label]
+            if ins and any(n in dead_rails for n in ins):
+                dead_components.add(refdes)
+
+        return sorted(dead_components), sorted(dead_rails)

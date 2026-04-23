@@ -259,26 +259,16 @@ def _simulate_failure(
             c["dead_comps"] = frozenset({refdes})
             return c
         source = electrical.power_rails[rail].source_refdes
-        # Propagate as-if the source was killed — that gives us the downstream.
         downstream = (
             _simulate_dead(electrical, analyzed_boot, [source])
             if source else _empty_cascade()
         )
-        # The SimulationEngine only marks rails dead when their source_refdes
-        # is in `killed`. For shorted we need a second pass: any rail whose
-        # source is itself a dead component (transitively starved) is also dead.
-        all_dead_comps: frozenset[str] = downstream["dead_comps"]
-        transitive_dead_rails: set[str] = set(downstream["dead_rails"])
-        for label, pr in electrical.power_rails.items():
-            if label == rail:
-                continue  # already in shorted_rails
-            if pr.source_refdes and pr.source_refdes in all_dead_comps:
-                transitive_dead_rails.add(label)
+        # SimulationEngine now handles transitive rail death internally — no
+        # second-pass patch needed.
         c = _empty_cascade()
-        # shorted rail tagged separately so scoring matches observed "shorted"
         c["shorted_rails"] = frozenset({rail})
-        c["dead_rails"] = frozenset(transitive_dead_rails) - {rail}
-        c["dead_comps"] = all_dead_comps
+        c["dead_rails"] = downstream["dead_rails"] - {rail}
+        c["dead_comps"] = downstream["dead_comps"]
         c["hot_comps"] = frozenset({source}) if source else frozenset()
         c["final_verdict"] = downstream["final_verdict"]
         c["blocked_at_phase"] = downstream["blocked_at_phase"]
