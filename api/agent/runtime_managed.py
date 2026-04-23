@@ -55,6 +55,144 @@ DEFAULT_TIER: TierLiteral = "fast"
 
 logger = logging.getLogger("microsolder.agent.managed")
 
+_SUMMARY_SYSTEM = (
+    "You are a terse technical note-taker for a microsoldering diagnostic "
+    "session. You receive a transcript of a prior conversation between a "
+    "technician and a diagnostic AI. Produce a FRENCH summary (200 words max) "
+    "structured as:\n\n"
+    "- **Symptôme initial** : 1-2 phrases\n"
+    "- **Refdes / nets explorés** : liste à puces avec le verdict trouvé pour chacun\n"
+    "- **Hypothèses en cours** : liste à puces des pistes non encore confirmées\n"
+    "- **Dernière action du tech** : 1 phrase — ce qu'il venait de faire ou de rapporter\n\n"
+    "Pas de préambule, pas de conclusion, juste les 4 sections. Markdown OK "
+    "(gras pour les refdes, italique pour les tensions). N'invente rien — "
+    "si une section n'a rien à dire, écris \"—\"."
+)
+
+
+async def _summarize_prior_history_for_resume(
+    *,
+    client: AsyncAnthropic,
+    device_slug: str,
+    repair_id: str | None,
+    conv_id: str | None,
+    memory_root: Path,
+    cap: int = 150,
+) -> dict[str, Any] | None:
+    """Summarize the prior conversation history using Haiku for graceful session recovery.
+
+    Reads the last `cap` turns from messages.jsonl, formats them as a compact
+    prose transcript, and calls Haiku to produce a French structured summary.
+    Returns None when there is nothing to summarize or on any error.
+    """
+    if not repair_id or not conv_id:
+        return None
+
+    from api.agent.chat_history import load_events_with_costs
+
+    try:
+        records = load_events_with_costs(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            memory_root=memory_root,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Diag-MA] _summarize: load_events_with_costs failed: %s", exc)
+        return None
+
+    if not records:
+        return None
+
+    # Cap to the last N records.
+    if len(records) > cap:
+        records = records[-cap:]
+
+    # Format into a compact transcript.
+    lines: list[str] = []
+    for event, _cost in records:
+        role = event.get("role")
+        content = event.get("content")
+        if role == "user":
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text") or ""
+                        break
+            # Strip session intro boilerplate from display.
+            if text.startswith(("[Nouvelle session", "[CONTEXTE TECHNICIEN]", "[REPRISE DE CONVERSATION")):
+                marker = "\n\n---\n\n"
+                idx = text.rfind(marker)
+                if idx >= 0:
+                    text = text[idx + len(marker):].strip()
+                else:
+                    continue  # pure intro — skip
+            if text:
+                lines.append(f"[user] {text[:300]}")
+        elif role == "assistant":
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text") or ""
+                        break
+            if text:
+                lines.append(f"[agent] {text[:300]}")
+            # Also capture tool_use blocks from assistant messages.
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        name = block.get("name") or "?"
+                        inp = json.dumps(block.get("input") or {})
+                        lines.append(f"[tool] {name}({inp[:200]})")
+        elif role == "tool":
+            # Tool result records.
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        result_content = block.get("content") or ""
+                        if isinstance(result_content, list):
+                            for rb in result_content:
+                                if isinstance(rb, dict) and rb.get("type") == "text":
+                                    result_content = rb.get("text") or ""
+                                    break
+                        snippet = str(result_content)[:300]
+                        lines.append(f"[tool_result] → {snippet}")
+
+    if not lines:
+        return None
+
+    transcript = "\n".join(lines)
+    try:
+        response = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=600,
+            system=_SUMMARY_SYSTEM,
+            messages=[{"role": "user", "content": transcript}],
+        )
+        summary_text = ""
+        for block in response.content:
+            if getattr(block, "type", None) == "text":
+                summary_text = getattr(block, "text", "") or ""
+                break
+        if not summary_text:
+            return None
+        return {
+            "summary": summary_text,
+            "usage": {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Diag-MA] _summarize: Haiku call failed: %s", exc)
+        return None
+
 
 async def _dispatch_tool(
     name: str,
@@ -122,6 +260,7 @@ async def _dispatch_tool(
             label=payload.get("label"),
             refdes=payload.get("refdes"),
             index=payload.get("index"),
+            domain=payload.get("domain"),
         )
     if name == "mb_expand_knowledge":
         return await mb_expand_knowledge(
@@ -244,7 +383,19 @@ async def run_diagnostic_session_managed(
             )
             session = None
 
+    recovery_summary: dict[str, Any] | None = None
     if session is None:
+        # The old MA session is gone (archived / expired). Before we create a
+        # fresh one, synthesize a recap from the JSONL so the agent can pick up
+        # the context without the full history being replayed through MA again.
+        if reused_session_id and resolved_conv_id:
+            recovery_summary = await _summarize_prior_history_for_resume(
+                client=client,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+                memory_root=memory_root,
+            )
         try:
             session = await client.beta.sessions.create(**session_kwargs)
         except Exception as exc:  # noqa: BLE001
@@ -287,8 +438,11 @@ async def run_diagnostic_session_managed(
     # needs injection on a FRESH session. When we resume, the MA session
     # already carries the full conversation history including the original intro.
     # Fresh sessions get the device intro PLUS the technician profile block.
-    # MA stores them as one hidden user message prefixed to the first real turn
-    # (see _forward_ws_to_session's pending_intro handling).
+    # When the old MA session expired and we fell back to a fresh one, the
+    # recovery_summary is prepended so the agent immediately knows what was
+    # already discussed (graceful session recovery).
+    # MA stores the intro as one hidden user message prefixed to the first real
+    # turn (see _forward_ws_to_session's pending_intro handling).
     intro: str | None
     if resumed:
         intro = None
@@ -297,8 +451,23 @@ async def run_diagnostic_session_managed(
         from api.profile.store import load_profile
         device_intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
         tech_block = render_technician_block(load_profile())
-        intro_parts = [p for p in (device_intro, f"[CONTEXTE TECHNICIEN]\n{tech_block}") if p]
-        intro = "\n\n---\n\n".join(intro_parts) if intro_parts else None
+        parts: list[str] = []
+        if recovery_summary:
+            parts.append(
+                f"[REPRISE DE CONVERSATION — session précédente expirée]\n"
+                f"{recovery_summary['summary']}"
+            )
+        if device_intro:
+            parts.append(device_intro)
+        parts.append(f"[CONTEXTE TECHNICIEN]\n{tech_block}")
+        intro = "\n\n---\n\n".join(parts) if parts else None
+    if recovery_summary:
+        await ws.send_json({
+            "type": "session_resumed_summary",
+            "summary": recovery_summary["summary"],
+            "tokens_in": recovery_summary["usage"]["input_tokens"],
+            "tokens_out": recovery_summary["usage"]["output_tokens"],
+        })
     if intro:
         await ws.send_json({
             "type": "context_loaded",
@@ -434,7 +603,7 @@ async def _replay_ma_history_to_ws(
                 # contains both the device context and technician profile blocks,
                 # separated by "---" markers. Use rfind to skip all prefix parts
                 # and surface only the tech's actual text.
-                if text.startswith(("[Nouvelle session de diagnostic]", "[CONTEXTE TECHNICIEN]")):
+                if text.startswith(("[Nouvelle session de diagnostic]", "[CONTEXTE TECHNICIEN]", "[REPRISE DE CONVERSATION")):
                     marker = "\n\n---\n\n"
                     idx = text.rfind(marker)
                     if idx >= 0:
