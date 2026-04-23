@@ -297,7 +297,28 @@ export function openLLMPanelIfRepairParam() {
   }
 }
 
-export function initLLMPanel() {
+// Fetch the chat panel fragment from web/llm_panel.html and inject it
+// into #llmRoot. Isolating the markup in its own file keeps parallel
+// work on web/index.html from colliding with chat-panel edits.
+async function mountPanelFragment() {
+  const root = el("llmRoot");
+  if (!root) return false;
+  if (root.childElementCount > 0) return true; // already mounted (hot-reload guard)
+  try {
+    const res = await fetch("llm_panel.html", { cache: "no-cache" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    root.innerHTML = await res.text();
+    return true;
+  } catch (err) {
+    console.warn("[llm] failed to mount panel fragment:", err);
+    return false;
+  }
+}
+
+export async function initLLMPanel() {
+  const mounted = await mountPanelFragment();
+  if (!mounted) return;
+
   el("llmToggle")?.addEventListener("click", togglePanel);
   el("llmClose")?.addEventListener("click", closePanel);
   el("llmStop")?.addEventListener("click", interruptAgent);

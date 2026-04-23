@@ -1,0 +1,32 @@
+<!-- Chat panel fragment — mounted by web/js/llm.js into #llmRoot at boot.
+     Lives here so edits to the panel markup don't collide with parallel
+     work on web/index.html. -->
+<aside class="llm-panel" id="llmPanel" aria-hidden="true" aria-label="Agent diagnostic">
+  <header class="llm-head">
+    <span class="type-badge action">Agent</span>
+    <h3>Diagnostic <span class="llm-model" id="llmModel">—</span></h3>
+    <button class="close-x" id="llmClose" aria-label="Fermer le panel" type="button">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <div class="llm-tiers" role="tablist" aria-label="Tier de modèle">
+    <button class="llm-tier on" data-tier="fast" role="tab" aria-selected="true">Fast · Haiku</button>
+    <button class="llm-tier" data-tier="normal" role="tab" aria-selected="false">Normal · Sonnet</button>
+    <button class="llm-tier" data-tier="deep" role="tab" aria-selected="false">Deep · Opus</button>
+  </div>
+  <div class="llm-status" id="llmStatus">
+    <span class="dot"></span>
+    <span id="llmStatusText">inactif</span>
+    <span class="device-tag" id="llmDevice" style="display:none"></span>
+    <span class="cost-total" id="llmCostTotal" style="display:none">$0.00</span>
+  </div>
+  <div class="llm-log" id="llmLog" aria-live="polite"></div>
+  <form class="llm-input" id="llmForm">
+    <input id="llmInput" type="text" placeholder="Pose ta question à l'agent…" autocomplete="off" spellcheck="false" />
+    <button type="button" class="llm-stop" id="llmStop" title="Interrompre l'agent (Esc)" disabled>
+      <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+      Stop
+    </button>
+    <button type="submit" id="llmSend" disabled>Envoyer</button>
+  </form>
+</aside>

@@ -28,7 +28,7 @@ if (!window.Boardview) {
   initNewRepairModal();
   initMemoryBank();
   initPipelineProgress();
-  initLLMPanel();
+  await initLLMPanel();
   openLLMPanelIfRepairParam();
 
   const hash = window.location.hash;
