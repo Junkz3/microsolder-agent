@@ -49,12 +49,12 @@ const SimulationController = {
   timeline: null,          // server response
   killedRefdes: [],        // user-injected faults
   observations: {
-    dead_comps:  new Set(),
-    alive_comps: new Set(),
-    dead_rails:  new Set(),
-    alive_rails: new Set(),
+    state_comps:   new Map(),     // refdes → "dead" | "alive" | "anomalous" | "hot"
+    state_rails:   new Map(),     // rail label → "dead" | "alive" | "shorted"
+    metrics_comps: new Map(),     // refdes → {measured, unit, nominal?, note?, ts}
+    metrics_rails: new Map(),     // rail → {measured, unit, nominal?, note?, ts}
   },
-  hypotheses: null,          // latest HypothesizeResult.hypotheses (array)
+  hypotheses: null,
   playing: false,
   speedMs: 800,            // ms per phase at 1×
   cursor: 0,               // current phase index within timeline.states
@@ -261,53 +261,62 @@ const SimulationController = {
   },
 
   // ---- Observations ----
-  setObservation(kind, key, state) {
-    // kind: "comp" | "rail"    state: "dead" | "alive" | "unknown"
-    const deadSet  = kind === "comp" ? this.observations.dead_comps  : this.observations.dead_rails;
-    const aliveSet = kind === "comp" ? this.observations.alive_comps : this.observations.alive_rails;
-    deadSet.delete(key);
-    aliveSet.delete(key);
-    if (state === "dead")  deadSet.add(key);
-    else if (state === "alive") aliveSet.add(key);
+  setObservation(kind, key, mode, measurement = null) {
+    // kind: "comp" | "rail"
+    // mode: "dead" | "alive" | "anomalous" | "hot" | "shorted" | "unknown"
+    const stateMap  = kind === "comp" ? this.observations.state_comps  : this.observations.state_rails;
+    const metricMap = kind === "comp" ? this.observations.metrics_comps : this.observations.metrics_rails;
+    if (mode === "unknown" || mode == null) {
+      stateMap.delete(key);
+      metricMap.delete(key);
+    } else {
+      stateMap.set(key, mode);
+      if (measurement) {
+        metricMap.set(key, {
+          ...measurement,
+          ts: measurement.ts || new Date().toISOString(),
+        });
+      }
+    }
     this._applyObservationClasses();
   },
   clearObservations() {
-    for (const s of Object.values(this.observations)) s.clear();
+    for (const m of Object.values(this.observations)) m.clear();
     this.hypotheses = null;
     this._applyObservationClasses();
     document.querySelectorAll(".sim-hypotheses-panel").forEach(p => p.remove());
   },
   _applyObservationClasses() {
-    document.querySelectorAll(".obs-dead, .obs-alive").forEach(n =>
-      n.classList.remove("obs-dead", "obs-alive")
-    );
-    for (const ref of this.observations.dead_comps) {
-      document.querySelectorAll(`[data-refdes="${CSS.escape(ref)}"]`).forEach(el => el.classList.add("obs-dead"));
+    document
+      .querySelectorAll(".obs-dead, .obs-alive, .obs-anomalous, .obs-hot, .obs-shorted")
+      .forEach(n => n.classList.remove(
+        "obs-dead", "obs-alive", "obs-anomalous", "obs-hot", "obs-shorted",
+      ));
+    for (const [refdes, mode] of this.observations.state_comps) {
+      document.querySelectorAll(`[data-refdes="${CSS.escape(refdes)}"]`).forEach(el => {
+        el.classList.add(`obs-${mode}`);
+      });
     }
-    for (const ref of this.observations.alive_comps) {
-      document.querySelectorAll(`[data-refdes="${CSS.escape(ref)}"]`).forEach(el => el.classList.add("obs-alive"));
-    }
-    for (const lbl of this.observations.dead_rails) {
-      document.querySelectorAll(`[data-rail="${CSS.escape(lbl)}"]`).forEach(el => el.classList.add("obs-dead"));
-    }
-    for (const lbl of this.observations.alive_rails) {
-      document.querySelectorAll(`[data-rail="${CSS.escape(lbl)}"]`).forEach(el => el.classList.add("obs-alive"));
+    for (const [rail, mode] of this.observations.state_rails) {
+      document.querySelectorAll(`[data-rail="${CSS.escape(rail)}"]`).forEach(el => {
+        el.classList.add(`obs-${mode}`);
+      });
     }
   },
 
   // ---- Reverse-diagnostic: hypothesize + results panel ----
   async hypothesize(slug) {
     const obs = this.observations;
+    const totalObs = obs.state_comps.size + obs.state_rails.size
+                   + obs.metrics_comps.size + obs.metrics_rails.size;
+    if (totalObs === 0) return;
     const body = {
-      dead_comps:  [...obs.dead_comps],
-      alive_comps: [...obs.alive_comps],
-      dead_rails:  [...obs.dead_rails],
-      alive_rails: [...obs.alive_rails],
+      state_comps:   Object.fromEntries(obs.state_comps),
+      state_rails:   Object.fromEntries(obs.state_rails),
+      metrics_comps: Object.fromEntries(obs.metrics_comps),
+      metrics_rails: Object.fromEntries(obs.metrics_rails),
       max_results: 5,
     };
-    const total = body.dead_comps.length + body.alive_comps.length
-                + body.dead_rails.length + body.alive_rails.length;
-    if (total === 0) return;
     try {
       const res = await fetch(
         `/pipeline/packs/${encodeURIComponent(slug)}/schematic/hypothesize`,
@@ -343,8 +352,18 @@ const SimulationController = {
     this.hypotheses.forEach((h, i) => {
       const card = document.createElement("div");
       card.className = "sim-hyp-card";
-      const chips = h.kill_refdes.map(r => `<span class="sim-hyp-chip">${escHtml(r)}</span>`).join(" + ");
-      const contradictions = (h.diff.contradictions || []).map(c => `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(c)}</span>`).join(" ");
+      const chips = h.kill_refdes.map((r, i) => {
+        const m = (h.kill_modes || [])[i] || "dead";
+        const modeLabel = { dead: "mort", anomalous: "anomalous", hot: "chaud", shorted: "shorté" }[m] || m;
+        return `<span class="sim-hyp-chip sim-hyp-chip--${m}">${escHtml(r)} · ${modeLabel}</span>`;
+      }).join(" + ");
+      const contradictions = (h.diff.contradictions || []).map(c => {
+        if (Array.isArray(c) && c.length === 3) {
+          const [target, observed, predicted] = c;
+          return `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(target)} obs ${escHtml(observed)} → prédit ${escHtml(predicted)}</span>`;
+        }
+        return `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(c)}</span>`;
+      }).join(" ");
       const missing = (h.diff.under_explained || []).map(c => `<span class="sim-hyp-tag sim-hyp-tag-fn">${escHtml(c)}</span>`).join(" ");
       card.innerHTML = `
         <div class="sim-hyp-card-head">
@@ -2359,9 +2378,8 @@ function updateInspector(node) {
   const obsKind = node.kind === "component" ? "comp" : node.kind === "rail" ? "rail" : null;
   const obsKey  = node.kind === "component" ? node.refdes : node.kind === "rail" ? node.label : null;
   if (obsKind && obsKey) {
-    const deadSet  = obsKind === "comp" ? SimulationController.observations.dead_comps  : SimulationController.observations.dead_rails;
-    const aliveSet = obsKind === "comp" ? SimulationController.observations.alive_comps : SimulationController.observations.alive_rails;
-    const current  = deadSet.has(obsKey) ? "dead" : aliveSet.has(obsKey) ? "alive" : "unknown";
+    const stateMap = obsKind === "comp" ? SimulationController.observations.state_comps : SimulationController.observations.state_rails;
+    const current  = stateMap.get(obsKey) || "unknown";
 
     const row = document.createElement("div");
     row.className = "sim-obs-row";
@@ -2383,7 +2401,7 @@ function updateInspector(node) {
   // --- Diagnostiquer / Réinitialiser buttons (reverse-diagnostic) ---
   // Shown whenever at least one observation is recorded, regardless of
   // which node is currently selected in the inspector.
-  const obsCount = Object.values(SimulationController.observations).reduce((sum, s) => sum + s.size, 0);
+  const obsCount = Object.values(SimulationController.observations).reduce((sum, m) => sum + m.size, 0);
   if (obsCount > 0) {
     const diagBtn = document.createElement("button");
     diagBtn.className = "sim-inspector-action sim-inspector-action--diag";
@@ -2813,3 +2831,10 @@ function wireControls() {
 }
 
 export function closeSchematicInspector() { clearFocus(); }
+
+// Expose SimulationController globally so llm.js (the WS message handler) can
+// dispatch simulation.observation_set / simulation.observation_clear events
+// without a module import cycle. llm.js dispatches:
+//   window.SimulationController?.setObservation(kind, key, mode, measurement)
+//   window.SimulationController?.clearObservations()
+window.SimulationController = SimulationController;

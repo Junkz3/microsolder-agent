@@ -583,6 +583,23 @@ function connect() {
       return;
     }
 
+    // Simulation observation events mirror the agent's measurement tools
+    // onto the schematic UI in real time. Same one-way channel, different
+    // controller (SimulationController lives in schematic.js).
+    if (typeof payload.type === "string" && payload.type.startsWith("simulation.")) {
+      const SC = window.SimulationController;
+      if (payload.type === "simulation.observation_set" && SC) {
+        const parsed = (typeof payload.target === "string" && payload.target.includes(":"))
+          ? payload.target.split(":", 2) : [null, null];
+        const kind = parsed[0] === "rail" ? "rail" : parsed[0] === "comp" ? "comp" : null;
+        const key = parsed[1];
+        if (kind && key) SC.setObservation(kind, key, payload.mode, payload.measurement);
+      } else if (payload.type === "simulation.observation_clear" && SC) {
+        SC.clearObservations();
+      }
+      return;
+    }
+
     switch (payload.type) {
       case "session_ready": {
         const model = payload.model || "claude";
