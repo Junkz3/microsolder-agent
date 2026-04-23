@@ -5,16 +5,26 @@ Called by the agent at the end of a diagnostic session once the tech
 has clicked « Marquer fix » and Claude has confirmed the fixes via
 chat. Writes outcome.json and fans out simulation.repair_validated to
 the UI so the dashboard can flip to a « validated » state.
+
+The MA memory mirror (copying outcome.json to `/outcomes/{repair_id}.json`
+in the device's memory store) is a SEPARATE async helper
+`mirror_outcome_to_memory` — the runtime fires it as a background task
+after the tool returns. That way `mb_validate_finding` stays sync and
+its existing test surface is untouched, while validated outcomes still
+show up in the agent's cross-repair memory search for future sessions.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from api.agent.validation import RepairOutcome, ValidatedFix, write_outcome
+from api.agent.validation import RepairOutcome, ValidatedFix, load_outcome, write_outcome
+
+logger = logging.getLogger("microsolder.tools.validation")
 
 # Pluggable WS emitter — set by the runtime at session open.
 _ws_emitter: Callable[[dict[str, Any]], None] | None = None
@@ -106,3 +116,64 @@ def mb_validate_finding(
         "fixes_count": len(parsed_fixes),
         "validated_at": outcome.validated_at,
     }
+
+
+async def mirror_outcome_to_memory(
+    *,
+    client: Any,   # AsyncAnthropic — not imported at top-level to avoid cycle
+    device_slug: str,
+    repair_id: str,
+    memory_root: Path,
+) -> str:
+    """Best-effort mirror of the repair's outcome.json into the device's MA
+    memory store under `/outcomes/{repair_id}.json`.
+
+    Called as a fire-and-forget task by the runtime after
+    `mb_validate_finding` returns — closes the cross-repair learning
+    loop so validated fixes become searchable via `memory_search` on
+    future sessions for the same device. Never raises.
+    """
+    from api.agent.memory_stores import ensure_memory_store, upsert_memory
+    from api.config import get_settings
+
+    settings = get_settings()
+    if not settings.ma_memory_store_enabled:
+        return "skipped:flag_disabled"
+
+    outcome = load_outcome(
+        memory_root=memory_root, device_slug=device_slug, repair_id=repair_id,
+    )
+    if outcome is None:
+        return "skipped:no_outcome"
+
+    try:
+        store_id = await ensure_memory_store(client, device_slug)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[ValidationMirror] ensure_memory_store failed for %s: %s",
+            device_slug, exc,
+        )
+        return "error:ensure_store_failed"
+    if store_id is None:
+        return "skipped:no_store"
+
+    try:
+        result = await upsert_memory(
+            client,
+            store_id=store_id,
+            path=f"/outcomes/{repair_id}.json",
+            content=outcome.model_dump_json(indent=2),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[ValidationMirror] upsert_memory failed for %s/%s: %s",
+            device_slug, repair_id, exc,
+        )
+        return "error:upsert_failed"
+    if result is not None:
+        logger.info(
+            "[ValidationMirror] seeded slug=%s /outcomes/%s.json (%d fixes)",
+            device_slug, repair_id, len(outcome.fixes),
+        )
+        return "seeded"
+    return "error:upsert_failed"

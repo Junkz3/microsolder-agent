@@ -327,8 +327,15 @@ async def _dispatch_tool(
             memory_root=memory_root,
         )
     if name == "mb_validate_finding":
-        from api.tools.validation import mb_validate_finding as _mb_val
-        return _mb_val(
+        import asyncio
+
+        from api.tools.validation import (
+            mb_validate_finding as _mb_val,
+        )
+        from api.tools.validation import (
+            mirror_outcome_to_memory,
+        )
+        result = _mb_val(
             device_slug=device_slug,
             repair_id=repair_id or "",
             memory_root=memory_root,
@@ -336,6 +343,20 @@ async def _dispatch_tool(
             tech_note=payload.get("tech_note"),
             agent_confidence=payload.get("agent_confidence", "high"),
         )
+        # Fire-and-forget: mirror the validated outcome into the device's
+        # MA memory store so future repair sessions can `memory_search` it.
+        # Kept off the critical path — the tool's response to the agent
+        # doesn't wait for the HTTP upsert to complete.
+        if result.get("validated") and repair_id:
+            asyncio.create_task(
+                mirror_outcome_to_memory(
+                    client=client,
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    memory_root=memory_root,
+                )
+            )
+        return result
     if name == "mb_expand_knowledge":
         return await mb_expand_knowledge(
             client=client, device_slug=device_slug,
