@@ -71,9 +71,10 @@ The demo flow:
   only performs the dialogue once a validation is actively requested.
   Passive chat detection (« j'ai remplacé X et ça marche ») is too
   fragile to rely on as a ground-truth source.
-- **Historical case ingestion beyond the 9 MNT Reform cases.** iFixit /
-  Rossmann / forum crawling is out of scope. If the dataset grows beyond
-  the initial seed, it grows via live validated repairs.
+- **Historical case ingestion beyond the 9 MNT Reform cases.** External
+  source crawling (pro repair forums, private logic-board repair
+  communities, shop field notes) is out of scope. If the dataset grows
+  beyond the initial seed, it grows via live validated repairs.
 - **Replaying historical diagnosis_log.** Historical cases skip the
   per-call ranking trace — they have a single `{observations,
   ground_truth}` pair, no evolution over time. Only live sessions
@@ -512,9 +513,9 @@ All resolved during brainstorming. One decision locked post-review:
 
 ## Dette backlog (out of scope entirely)
 
-- Automatic historical-case ingestion from iFixit / forums. If the
-  dataset needs to scale past manual curation, write a dedicated
-  ingestion pipeline — separate product.
+- Automatic historical-case ingestion from external sources (pro repair
+  forums, shop field notes). If the dataset needs to scale past manual
+  curation, write a dedicated ingestion pipeline — separate product.
 - Comparison of field vs synthetic accuracy across time (regression
   dashboard). Useful for tracking model drift; out of Phase 1's scope.
 - Cross-device aggregate accuracy (normalised by device complexity).
