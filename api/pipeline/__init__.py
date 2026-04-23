@@ -28,6 +28,7 @@ from anthropic import AsyncAnthropic
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from api.agent.field_reports import list_field_reports
 from api.config import get_settings
 from api.pipeline import events
 from api.pipeline.expansion import expand_pack
@@ -111,14 +112,16 @@ def _validate_slug(slug: str) -> str:
 
     The GET routes happily slugify user input, but the ingestion POST needs
     stricter guarantees: the slug becomes a directory name under memory_root
-    and a non-canonical value like "../evil" must never reach disk.
+    and a non-canonical value like "../evil" or "bad..slug" must never reach
+    disk. Consecutive dots are rejected even though the character class allows
+    a single `.` — `..` is a path-traversal marker by any reasonable reading.
     """
-    if not _SLUG_RE.fullmatch(slug):
+    if not _SLUG_RE.fullmatch(slug) or ".." in slug:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Invalid device_slug {slug!r} — must match "
-                "^[a-z0-9][a-z0-9._-]*$ (no path separators, lowercase)."
+                "^[a-z0-9][a-z0-9._-]*$ with no '..' sequences."
             ),
         )
     return slug
@@ -359,6 +362,17 @@ async def get_pack_full(device_slug: str) -> dict:
         "dictionary": dictionary,
         "audit_verdict": audit_verdict,
     }
+
+
+@router.get("/packs/{device_slug}/findings")
+async def list_device_findings(device_slug: str, limit: int = 50) -> list[dict]:
+    """Return every field report recorded for this device, newest first.
+
+    Mirrors what `mb_list_findings` sees at agent-tool scope, exposed to the
+    web UI so the Journal dashboard can render the cross-session memory
+    without a WS round-trip. Strictly JSON-on-disk — no MA memory-store.
+    """
+    return list_field_reports(device_slug=_validate_slug(device_slug), limit=limit)
 
 
 class RepairRequest(BaseModel):
