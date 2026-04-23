@@ -503,6 +503,34 @@ async def get_repair(repair_id: str) -> RepairSummary:
     raise HTTPException(status_code=404, detail=f"No repair {repair_id!r}")
 
 
+@router.get("/repairs/{repair_id}/conversations")
+def list_repair_conversations(repair_id: str) -> dict:
+    """Return the conversation index for a repair.
+
+    The repair's `device_slug` is inferred from the metadata file one level
+    up in `memory/{slug}/repairs/{repair_id}.json` — clients don't pass it.
+    """
+    from api.agent.chat_history import list_conversations
+
+    settings = get_settings()
+    memory = Path(settings.memory_root)
+    found_slug: str | None = None
+    if memory.exists():
+        for metadata_file in memory.glob(f"*/repairs/{repair_id}.json"):
+            found_slug = metadata_file.parent.parent.name
+            break
+    if not found_slug:
+        raise HTTPException(
+            status_code=404, detail=f"unknown repair_id {repair_id}"
+        )
+    convs = list_conversations(device_slug=found_slug, repair_id=repair_id)
+    return {
+        "device_slug": found_slug,
+        "repair_id": repair_id,
+        "conversations": convs,
+    }
+
+
 async def _run_pipeline_with_events(device_label: str, slug: str) -> None:
     """Background task: run the pipeline, relaying its events on the bus."""
     t0 = time.monotonic()

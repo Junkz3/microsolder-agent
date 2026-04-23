@@ -7,7 +7,12 @@ import json
 import pytest
 
 from api import config as config_mod
-from api.agent.chat_history import append_event, load_events, touch_status
+from api.agent.chat_history import (
+    append_event,
+    ensure_conversation,
+    load_events,
+    touch_status,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -17,25 +22,39 @@ def reset_settings(monkeypatch):
     monkeypatch.setattr(config_mod, "_settings", None)
 
 
+def _ensure_conv(tmp_path, slug="demo-pi", repair="r1", tier="fast") -> str:
+    """Helper: resolve/create the default conversation the tests write into."""
+    conv_id, _ = ensure_conversation(
+        device_slug=slug, repair_id=repair, conv_id=None, tier=tier,
+        memory_root=tmp_path,
+    )
+    return conv_id
+
+
 def test_append_then_load_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_HISTORY_BACKEND", "jsonl")
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
 
+    conv_id = _ensure_conv(tmp_path)
+
     append_event(
         device_slug="demo-pi",
         repair_id="r1",
+        conv_id=conv_id,
         event={"role": "user", "content": "Pas de son"},
         memory_root=tmp_path,
     )
     append_event(
         device_slug="demo-pi",
         repair_id="r1",
+        conv_id=conv_id,
         event={"role": "assistant", "content": [{"type": "text", "text": "OK"}]},
         memory_root=tmp_path,
     )
 
     events = load_events(
-        device_slug="demo-pi", repair_id="r1", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
+        memory_root=tmp_path,
     )
     assert len(events) == 2
     assert events[0]["role"] == "user"
@@ -45,7 +64,8 @@ def test_append_then_load_roundtrip(tmp_path, monkeypatch):
 
 def test_load_returns_empty_when_no_history(tmp_path):
     events = load_events(
-        device_slug="nobody", repair_id="never-happened", memory_root=tmp_path
+        device_slug="nobody", repair_id="never-happened",
+        conv_id="deadbeef", memory_root=tmp_path,
     )
     assert events == []
 
@@ -56,6 +76,7 @@ def test_append_is_noop_without_repair_id(tmp_path, monkeypatch):
     append_event(
         device_slug="demo-pi",
         repair_id=None,
+        conv_id="whatever",
         event={"role": "user", "content": "Pas de son"},
         memory_root=tmp_path,
     )
@@ -69,6 +90,7 @@ def test_append_is_noop_when_backend_not_jsonl(tmp_path, monkeypatch):
     append_event(
         device_slug="demo-pi",
         repair_id="r1",
+        conv_id="whatever",
         event={"role": "user", "content": "Pas de son"},
         memory_root=tmp_path,
     )
@@ -78,8 +100,11 @@ def test_append_is_noop_when_backend_not_jsonl(tmp_path, monkeypatch):
 def test_load_skips_malformed_lines(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_HISTORY_BACKEND", "jsonl")
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    d = tmp_path / "demo-pi" / "repairs" / "r1"
-    d.mkdir(parents=True)
+    # Seed a conversation-scoped messages.jsonl directly (legacy migration is
+    # covered in test_conversations.py — here we just test the load path).
+    conv_id = _ensure_conv(tmp_path)
+    d = tmp_path / "demo-pi" / "repairs" / "r1" / "conversations" / conv_id
+    d.mkdir(parents=True, exist_ok=True)
     (d / "messages.jsonl").write_text(
         '{"ts":"t1","event":{"role":"user","content":"ok"}}\n'
         "not-json\n"
@@ -87,7 +112,8 @@ def test_load_skips_malformed_lines(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     events = load_events(
-        device_slug="demo-pi", repair_id="r1", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
+        memory_root=tmp_path,
     )
     assert len(events) == 2  # middle line dropped
 
@@ -143,26 +169,30 @@ def test_cost_persists_alongside_event(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_HISTORY_BACKEND", "jsonl")
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
 
+    conv_id = _ensure_conv(tmp_path)
+
     append_event(
-        device_slug="demo-pi", repair_id="r1",
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
         event={"role": "user", "content": "hello"},
         memory_root=tmp_path,
     )
     append_event(
-        device_slug="demo-pi", repair_id="r1",
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
         event={"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
         cost={"model": "claude-haiku-4-5", "cost_usd": 0.023, "priced": True},
         memory_root=tmp_path,
     )
 
     # load_events (legacy) still returns just events.
-    plain = load_events(device_slug="demo-pi", repair_id="r1", memory_root=tmp_path)
+    plain = load_events(
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id, memory_root=tmp_path
+    )
     assert len(plain) == 2
     assert plain[0]["role"] == "user"
 
     # load_events_with_costs surfaces per-record cost.
     records = load_events_with_costs(
-        device_slug="demo-pi", repair_id="r1", memory_root=tmp_path,
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id, memory_root=tmp_path,
     )
     assert len(records) == 2
     user_event, user_cost = records[0]
@@ -190,36 +220,34 @@ def test_save_and_load_ma_session_id_per_tier(tmp_path, monkeypatch):
         "ma_session_id": "legacy_session_pre_tier_storage",
     }))
 
+    conv_id = _ensure_conv(tmp_path)
+
     # Legacy top-level ma_session_id is IGNORED by the new loader.
     assert load_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", tier="fast", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id, tier="fast",
+        memory_root=tmp_path,
     ) is None
 
     save_ma_session_id(
-        device_slug="demo-pi", repair_id="r1",
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
         session_id="sesn_fast_A", tier="fast",
         memory_root=tmp_path,
     )
     save_ma_session_id(
-        device_slug="demo-pi", repair_id="r1",
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
         session_id="sesn_normal_B", tier="normal",
         memory_root=tmp_path,
     )
 
     assert load_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", tier="fast", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id, tier="fast",
+        memory_root=tmp_path,
     ) == "sesn_fast_A"
     assert load_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", tier="normal", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id, tier="normal",
+        memory_root=tmp_path,
     ) == "sesn_normal_B"
     assert load_ma_session_id(
-        device_slug="demo-pi", repair_id="r1", tier="deep", memory_root=tmp_path
+        device_slug="demo-pi", repair_id="r1", conv_id=conv_id, tier="deep",
+        memory_root=tmp_path,
     ) is None
-
-    updated = json.loads(meta_path.read_text())
-    assert updated["ma_sessions"] == {
-        "fast": "sesn_fast_A",
-        "normal": "sesn_normal_B",
-    }
-    # Legacy field is wiped on the first save.
-    assert "ma_session_id" not in updated

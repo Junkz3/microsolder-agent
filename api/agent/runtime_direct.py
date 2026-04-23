@@ -20,7 +20,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 from api.agent.chat_history import (
     append_event,
     build_session_intro,
+    ensure_conversation,
+    list_conversations,
     load_events_with_costs,
+    touch_conversation,
     touch_status,
 )
 from api.agent.dispatch_bv import dispatch_bv
@@ -76,6 +79,7 @@ async def _run_agent_turn(
     session: SessionState,
     device_slug: str,
     repair_id: str | None,
+    conv_id: str | None,
     memory_root: Path,
 ) -> None:
     """Drive the model-call / tool-dispatch inner loop until the agent stops.
@@ -129,23 +133,35 @@ async def _run_agent_turn(
         cost = cost_from_response(model, response.usage)
         await ws.send_json({"type": "turn_cost", **cost})
 
+        # Roll the turn's cost into the conversation index so the popover's
+        # "turns · $spend · recency" trio stays fresh even if the tech never
+        # refetches.
+        if repair_id and conv_id:
+            touch_conversation(
+                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                cost_usd=cost.get("cost_usd") if isinstance(cost, dict) else None,
+                model=model,
+            )
+
         assistant_msg = _normalize_message(
             {"role": "assistant", "content": response.content}
         )
 
         if response.stop_reason != "tool_use":
             messages.append(assistant_msg)
-            append_event(
-                device_slug=device_slug, repair_id=repair_id,
-                event=assistant_msg, cost=cost,
-            )
+            if conv_id:
+                append_event(
+                    device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                    event=assistant_msg, cost=cost,
+                )
             return
 
         messages.append(assistant_msg)
-        append_event(
-            device_slug=device_slug, repair_id=repair_id,
-            event=assistant_msg, cost=cost,
-        )
+        if conv_id:
+            append_event(
+                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                event=assistant_msg, cost=cost,
+            )
         tool_results: list[dict] = []
         for block in response.content:
             if block.type != "tool_use":
@@ -175,9 +191,11 @@ async def _run_agent_turn(
             )
         tool_results_msg = {"role": "user", "content": tool_results}
         messages.append(tool_results_msg)
-        append_event(
-            device_slug=device_slug, repair_id=repair_id, event=tool_results_msg
-        )
+        if conv_id:
+            append_event(
+                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                event=tool_results_msg,
+            )
 
 
 async def _replay_history_to_ws(
@@ -312,7 +330,11 @@ def _dispatch_profile_tool(name: str, payload: dict) -> dict:
 
 
 async def run_diagnostic_session_direct(
-    ws: WebSocket, device_slug: str, tier: str = "fast", repair_id: str | None = None
+    ws: WebSocket,
+    device_slug: str,
+    tier: str = "fast",
+    repair_id: str | None = None,
+    conv_id: str | None = None,
 ) -> None:
     """Run a direct-mode diagnostic session over `ws` for `device_slug`.
 
@@ -343,6 +365,25 @@ async def run_diagnostic_session_direct(
         "deep": "claude-opus-4-7",
     }
     model = tier_to_model.get(tier, settings.anthropic_model_main)
+
+    # Resolve the conversation once; every write/read below targets this id.
+    # Anonymous sessions (no repair_id) skip conversation tracking entirely —
+    # they already don't persist anything.
+    resolved_conv_id: str | None = None
+    conversation_count = 0
+    if repair_id:
+        resolved_conv_id, _created = ensure_conversation(
+            device_slug=device_slug, repair_id=repair_id,
+            conv_id=conv_id, tier=tier,
+            memory_root=memory_root,
+        )
+        conversation_count = len(
+            list_conversations(
+                device_slug=device_slug, repair_id=repair_id,
+                memory_root=memory_root,
+            )
+        )
+
     await ws.accept()
     await ws.send_json({
         "type": "session_ready",
@@ -352,6 +393,8 @@ async def run_diagnostic_session_direct(
         "model": model,
         "board_loaded": session.board is not None,
         "repair_id": repair_id,
+        "conv_id": resolved_conv_id,
+        "conversation_count": conversation_count,
     })
 
     # NOTE: prompt + manifest are a snapshot of the session at open time.
@@ -363,18 +406,20 @@ async def run_diagnostic_session_direct(
     # Load prior history (+ per-turn costs) when reopening a persisted repair —
     # the agent continues the same conversation and the chat panel rebuilds
     # with the right lifetime cost total.
-    records = load_events_with_costs(
-        device_slug=device_slug, repair_id=repair_id
-    )
+    records: list[tuple[dict, dict | None]] = []
+    if resolved_conv_id:
+        records = load_events_with_costs(
+            device_slug=device_slug, repair_id=repair_id, conv_id=resolved_conv_id,
+            memory_root=memory_root,
+        )
     messages: list[dict] = [event for event, _cost in records]
     if records:
         logger.info(
-            "[Diag-Direct] Resuming repair=%s with %d prior events",
-            repair_id,
-            len(records),
+            "[Diag-Direct] Resuming repair=%s conv=%s with %d prior events",
+            repair_id, resolved_conv_id, len(records),
         )
         await _replay_history_to_ws(ws, records)
-    elif repair_id:
+    elif repair_id and resolved_conv_id:
         # Fresh session on a known repair — stash the device identity + the
         # reported symptom as a hidden first user message so the agent has
         # context the moment the tech DOES type. We do NOT call the agent
@@ -384,7 +429,8 @@ async def run_diagnostic_session_direct(
             intro_msg = {"role": "user", "content": intro}
             messages.append(intro_msg)
             append_event(
-                device_slug=device_slug, repair_id=repair_id, event=intro_msg
+                device_slug=device_slug, repair_id=repair_id,
+                conv_id=resolved_conv_id, event=intro_msg,
             )
             await ws.send_json({
                 "type": "context_loaded",
@@ -392,9 +438,15 @@ async def run_diagnostic_session_direct(
                 "repair_id": repair_id,
             })
             logger.info(
-                "[Diag-Direct] Stashed session intro for repair=%s (awaiting tech input)",
-                repair_id,
+                "[Diag-Direct] Stashed session intro for repair=%s conv=%s (awaiting tech input)",
+                repair_id, resolved_conv_id,
             )
+
+    first_user_seen = any(
+        isinstance(m, dict) and m.get("role") == "user"
+        and not (isinstance(m.get("content"), str) and m["content"].startswith("[Nouvelle session"))
+        for m in messages
+    )
 
     try:
         while True:
@@ -413,16 +465,34 @@ async def run_diagnostic_session_direct(
                     device_slug=device_slug, repair_id=repair_id, status="in_progress"
                 )
 
+            # Stamp the conversation title from the first real user message —
+            # the tech-visible summary in the switcher popover.
+            if not first_user_seen and repair_id and resolved_conv_id:
+                touch_conversation(
+                    device_slug=device_slug, repair_id=repair_id,
+                    conv_id=resolved_conv_id, first_message=user_text,
+                    memory_root=memory_root,
+                )
+                first_user_seen = True
+
             user_msg = {"role": "user", "content": user_text}
             messages.append(user_msg)
-            append_event(device_slug=device_slug, repair_id=repair_id, event=user_msg)
+            if resolved_conv_id:
+                append_event(
+                    device_slug=device_slug, repair_id=repair_id,
+                    conv_id=resolved_conv_id, event=user_msg,
+                )
 
             await _run_agent_turn(
                 ws=ws, client=client, model=model,
                 system_prompt=system_prompt, tools=tools,
                 messages=messages, session=session,
                 device_slug=device_slug, repair_id=repair_id,
+                conv_id=resolved_conv_id,
                 memory_root=memory_root,
             )
     except WebSocketDisconnect:
-        logger.info("[Diag-Direct] WS closed for device=%s repair=%s", device_slug, repair_id)
+        logger.info(
+            "[Diag-Direct] WS closed for device=%s repair=%s conv=%s",
+            device_slug, repair_id, resolved_conv_id,
+        )

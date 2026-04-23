@@ -116,19 +116,24 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
     # messages.jsonl and replays them; every new turn appends. Without it,
     # each WS open starts a fresh (unpersisted) conversation.
     repair_id = websocket.query_params.get("repair") or None
+    # Optional: target a specific conversation within the repair. None = use
+    # the most recent (or migrate a legacy flat messages.jsonl on first open).
+    # "new" = always create a fresh conversation. Any other value must match
+    # an existing conversation id, otherwise ensure_conversation raises.
+    conv_id = websocket.query_params.get("conv") or None
 
     mode = os.environ.get("DIAGNOSTIC_MODE", "managed").lower()
     if mode == "direct":
         from api.agent.runtime_direct import run_diagnostic_session_direct
 
         await run_diagnostic_session_direct(
-            websocket, device_slug, tier=tier, repair_id=repair_id
+            websocket, device_slug, tier=tier, repair_id=repair_id, conv_id=conv_id
         )
     else:
         from api.agent.runtime_managed import run_diagnostic_session_managed
 
         await run_diagnostic_session_managed(
-            websocket, device_slug, tier=tier, repair_id=repair_id  # type: ignore[arg-type]
+            websocket, device_slug, tier=tier, repair_id=repair_id, conv_id=conv_id  # type: ignore[arg-type]
         )
 
 

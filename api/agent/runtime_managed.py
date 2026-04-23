@@ -28,8 +28,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from api.agent.chat_history import (
     build_session_intro,
+    ensure_conversation,
+    list_conversations,
     load_ma_session_id,
     save_ma_session_id,
+    touch_conversation,
 )
 from api.agent.dispatch_bv import dispatch_bv
 from api.agent.managed_ids import get_agent, load_managed_ids
@@ -136,6 +139,7 @@ async def run_diagnostic_session_managed(
     device_slug: str,
     tier: TierLiteral = DEFAULT_TIER,
     repair_id: str | None = None,
+    conv_id: str | None = None,
 ) -> None:
     """Open a Managed Agents session on the tier-scoped agent and relay it to `ws`.
 
@@ -170,6 +174,24 @@ async def run_diagnostic_session_managed(
     memory_store_id = await ensure_memory_store(client, device_slug)
     session_state = SessionState.from_device(device_slug)
 
+    # Resolve which conversation within the repair this WS targets. Anonymous
+    # sessions (no repair_id) skip conversation tracking — MA still persists
+    # server-side, but we can't index it without an owning repair.
+    resolved_conv_id: str | None = None
+    conversation_count = 0
+    if repair_id:
+        resolved_conv_id, _created = ensure_conversation(
+            device_slug=device_slug, repair_id=repair_id,
+            conv_id=conv_id, tier=tier,
+            memory_root=memory_root,
+        )
+        conversation_count = len(
+            list_conversations(
+                device_slug=device_slug, repair_id=repair_id,
+                memory_root=memory_root,
+            )
+        )
+
     # Build session params. `resources` is the current (2026-04-01) surface
     # for attaching memory stores. If the beta isn't enabled, ensure_memory_store
     # returned None and we just skip the resources field.
@@ -197,10 +219,14 @@ async def run_diagnostic_session_managed(
 
     # Reuse the repair's previously-persisted MA session when possible —
     # that's how conversation context survives a WS close/reopen. Sessions
-    # are keyed BY TIER because each tier uses a different MA agent.
-    reused_session_id = load_ma_session_id(
-        device_slug=device_slug, repair_id=repair_id, tier=tier
-    )
+    # are keyed BY (CONV, TIER): each conversation owns its own MA session
+    # id and each tier within a conversation has its own agent identity.
+    reused_session_id = None
+    if resolved_conv_id:
+        reused_session_id = load_ma_session_id(
+            device_slug=device_slug, repair_id=repair_id,
+            conv_id=resolved_conv_id, tier=tier,
+        )
     session = None
     resumed = False
     if reused_session_id:
@@ -208,8 +234,8 @@ async def run_diagnostic_session_managed(
             session = await client.beta.sessions.retrieve(reused_session_id)
             resumed = True
             logger.info(
-                "[Diag-MA] Resuming existing session=%s for repair=%s",
-                reused_session_id, repair_id,
+                "[Diag-MA] Resuming existing session=%s for repair=%s conv=%s",
+                reused_session_id, repair_id, resolved_conv_id,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -229,10 +255,11 @@ async def run_diagnostic_session_managed(
             await ws.send_json({"type": "error", "text": f"session create failed: {exc}"})
             await ws.close()
             return
-        save_ma_session_id(
-            device_slug=device_slug, repair_id=repair_id,
-            session_id=session.id, tier=tier,
-        )
+        if resolved_conv_id:
+            save_ma_session_id(
+                device_slug=device_slug, repair_id=repair_id,
+                conv_id=resolved_conv_id, session_id=session.id, tier=tier,
+            )
 
     logger.info(
         "[Diag-MA] session=%s device=%s tier=%s model=%s memory=%s resumed=%s",
@@ -251,6 +278,8 @@ async def run_diagnostic_session_managed(
             "model": agent_info["model"],
             "board_loaded": session_state.board is not None,
             "repair_id": repair_id,
+            "conv_id": resolved_conv_id,
+            "conversation_count": conversation_count,
         }
     )
 
@@ -302,7 +331,8 @@ async def run_diagnostic_session_managed(
         recv_task = asyncio.create_task(
             _forward_ws_to_session(
                 ws, client, session.id, pending_intro=intro, repair_id=repair_id,
-                device_slug=device_slug,
+                device_slug=device_slug, conv_id=resolved_conv_id,
+                memory_root=memory_root,
             ),
             name="ws->session",
         )
@@ -310,6 +340,7 @@ async def run_diagnostic_session_managed(
             _forward_session_to_ws(
                 ws, client, session.id, device_slug, memory_root, events_by_id,
                 session_state, agent_info["model"],
+                repair_id=repair_id, conv_id=resolved_conv_id,
             ),
             name="session->ws",
         )
@@ -475,6 +506,8 @@ async def _forward_ws_to_session(
     pending_intro: str | None = None,
     repair_id: str | None = None,
     device_slug: str | None = None,
+    conv_id: str | None = None,
+    memory_root: Path | None = None,
 ) -> None:
     """Read user text from the WS, post it as `user.message` to the session.
 
@@ -484,6 +517,7 @@ async def _forward_ws_to_session(
     that happens when context is sent in isolation.
     """
     intro_pending = pending_intro
+    first_user_seen = False
     while True:
         raw = await ws.receive_text()
         try:
@@ -508,6 +542,17 @@ async def _forward_ws_to_session(
         text = (payload.get("text") or "").strip()
         if not text:
             continue
+
+        # Stamp the conv title from the first real user message (before the
+        # intro prefix is glued on so the popover shows what the tech typed,
+        # not the device-context boilerplate).
+        if not first_user_seen and repair_id and conv_id and device_slug:
+            touch_conversation(
+                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                first_message=text, memory_root=memory_root,
+            )
+            first_user_seen = True
+
         if intro_pending:
             text = intro_pending + "\n\n---\n\n" + text
             intro_pending = None
@@ -537,6 +582,9 @@ async def _forward_session_to_ws(
     events_by_id: dict[str, Any],
     session_state: SessionState,
     agent_model: str,
+    *,
+    repair_id: str | None = None,
+    conv_id: str | None = None,
 ) -> None:
     """Stream session events to the WS and dispatch custom tool calls.
 
@@ -595,6 +643,14 @@ async def _forward_session_to_ws(
                         ) or 0,
                     )
                     await ws.send_json({"type": "turn_cost", **cost})
+                    if repair_id and conv_id:
+                        touch_conversation(
+                            device_slug=device_slug, repair_id=repair_id,
+                            conv_id=conv_id,
+                            cost_usd=cost.get("cost_usd") if isinstance(cost, dict) else None,
+                            model=model_label,
+                            memory_root=memory_root,
+                        )
 
             elif etype == "agent.custom_tool_use":
                 events_by_id[event.id] = event
