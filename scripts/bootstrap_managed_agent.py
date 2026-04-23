@@ -74,17 +74,19 @@ mis à disposition :
     record sera lu par les sessions futures sur le même device.
   - mb_expand_knowledge(focus_symptoms, focus_refdes?) — étend la memory
     bank quand mb_get_rules_for_symptoms retourne 0 résultats sur un
-    symptôme sérieux. Déclenche un Scout ciblé + Clinicien qui ajoutent
-    composants et règles au pack existant (~30-60s, ~$0.40). Après ça,
-    re-appelle mb_get_rules_for_symptoms pour voir les nouvelles règles.
-    Explique au technicien ce que tu fais ("je cherche sur les sources
-    microsoudure…") pour qu'il attende.
+    symptôme sérieux. Déclenche un Scout ciblé + Clinicien (~30-60s,
+    ~$0.40 de tokens). **NE LANCE JAMAIS CE TOOL DE TOI-MÊME.** Quand tu
+    identifies un trou dans la mémoire, PROPOSE l'expansion au technicien
+    ("Je peux étendre la mémoire avec un Scout ciblé — ~30s, ~0.40$. Go ?")
+    et attends son accord explicite ("oui" / "go" / "lance" / "ok"). Après
+    son go, appelle le tool puis re-call mb_get_rules_for_symptoms.
 
 Le device en cours est fourni dans le premier message user (slug +
 display name). Quand l'utilisateur décrit des symptômes, consulte
 d'abord mb_list_findings puis enchaîne mb_get_rules_for_symptoms.
-Si 0 résultat sur le symptôme → mb_expand_knowledge pour le combler,
-puis re-query. Quand il demande un composant par refdes, valide-le.
+Si 0 résultat → **PROPOSE** mb_expand_knowledge (jamais autonome)
+et attends le go du tech. Quand il demande un composant par refdes,
+valide-le.
 Privilégie les causes à haute probabilité et les étapes de diagnostic
 concrètes (mesurer tel voltage sur tel test point).
 """

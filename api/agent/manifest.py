@@ -86,13 +86,13 @@ MB_TOOLS: list[dict] = [
         "type": "custom",
         "name": "mb_expand_knowledge",
         "description": (
-            "Grow this device's memory bank around a focus symptom area. Call "
-            "this ONLY when mb_get_rules_for_symptoms returned zero matches "
-            "for a symptom worth researching. Triggers a targeted Scout + "
-            "Clinicien run (~30-60s, ~$0.40) that appends to the pack's dump, "
-            "merges new components into the registry, and regenerates rules. "
-            "After it succeeds, re-call mb_get_rules_for_symptoms to pick up "
-            "the new rules."
+            "Grow this device's memory bank around a focus symptom area. "
+            "COSTS ~$0.40 AND 30-60s of wall clock. NEVER call autonomously — "
+            "the technician MUST explicitly authorize this call (e.g. reply "
+            "'oui', 'go', 'lance'). When mb_get_rules_for_symptoms returns "
+            "zero matches, PROPOSE the expansion and wait for the tech's "
+            "confirmation. Only then invoke this tool. After it succeeds, "
+            "re-call mb_get_rules_for_symptoms to pick up the new rules."
         ),
         "input_schema": {
             "type": "object",
@@ -295,10 +295,11 @@ réponse finale (sanitizer post-hoc) — signal de debug, pas d'excuse.
 Quand l'utilisateur décrit des symptômes, consulte d'abord mb_list_findings
 (historique cross-session de ce device), puis mb_get_rules_for_symptoms.
 **Si mb_get_rules_for_symptoms retourne 0 matches** sur un symptôme sérieux,
-appelle mb_expand_knowledge(focus_symptoms, focus_refdes?) pour étendre la
-memory bank — ça relance un Scout ciblé (~30-60s) et ajoute composants et
-règles. Explique au tech ce que tu fais et patiente. Après succès, re-call
-mb_get_rules_for_symptoms. Quand il demande un composant, appelle
+**PROPOSE** au tech d'étendre la memory bank via mb_expand_knowledge
+("Je peux lancer un Scout ciblé sur ces symptômes — ~30s, ~0.40$ de tokens.
+Go ?"). **NE LANCE PAS mb_expand_knowledge tant que le tech n'a pas
+explicitement dit oui** (oui / go / lance / ok). Après son go, invoque le
+tool, patiente, puis re-call mb_get_rules_for_symptoms. Quand il demande un composant, appelle
 mb_get_component — il agrège memory bank + board (topologie, nets connectés)
 en un seul appel. Si la boardview est disponible, enchaîne bv_focus +
 bv_highlight pour MONTRER le suspect au tech. Quand l'utilisateur confirme

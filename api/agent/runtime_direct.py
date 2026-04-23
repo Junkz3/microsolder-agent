@@ -309,10 +309,10 @@ async def run_diagnostic_session_direct(
         )
         await _replay_history_to_ws(ws, messages)
     elif repair_id:
-        # Fresh session on a known repair — bootstrap the agent with the
-        # device identity + reported symptom so it can call mb_* tools
-        # without asking "which device are you on?", THEN run one agent
-        # turn so the tech lands on an informed opening reply.
+        # Fresh session on a known repair — stash the device identity + the
+        # reported symptom as a hidden first user message so the agent has
+        # context the moment the tech DOES type. We do NOT call the agent
+        # here: compute only runs on explicit user action.
         intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
         if intro:
             intro_msg = {"role": "user", "content": intro}
@@ -325,16 +325,9 @@ async def run_diagnostic_session_direct(
                 "device_slug": device_slug,
                 "repair_id": repair_id,
             })
-            touch_status(
-                device_slug=device_slug, repair_id=repair_id, status="in_progress"
-            )
-            logger.info("[Diag-Direct] Injected session intro for repair=%s", repair_id)
-            await _run_agent_turn(
-                ws=ws, client=client, model=model,
-                system_prompt=system_prompt, tools=tools,
-                messages=messages, session=session,
-                device_slug=device_slug, repair_id=repair_id,
-                memory_root=memory_root,
+            logger.info(
+                "[Diag-Direct] Stashed session intro for repair=%s (awaiting tech input)",
+                repair_id,
             )
 
     try:

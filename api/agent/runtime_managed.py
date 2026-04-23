@@ -193,35 +193,23 @@ async def run_diagnostic_session_managed(
         }
     )
 
-    # Bootstrap the MA session with a hidden first user message carrying the
-    # device identity + reported symptom. The MA system prompt instructs the
-    # agent that the device arrives in the first user message, so this fills
-    # that contract and spares the tech from retyping the info they already
-    # entered in the "Nouvelle réparation" modal.
+    # The MA runtime needs the device intro prefixed to the TECH's FIRST
+    # real message (see _forward_ws_to_session) — we don't post anything to
+    # the session ourselves, because doing so would trigger an immediate
+    # agent turn (burning tokens) before the tech has even typed. Instead
+    # we surface the context on the WS and stash the intro for prefixing
+    # on the first user submit.
     intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
     if intro:
-        # Tell the client first so it can render a sys line explaining WHY
-        # the agent is about to speak unprompted.
         await ws.send_json({
             "type": "context_loaded",
             "device_slug": device_slug,
             "repair_id": repair_id,
         })
-        try:
-            await client.beta.sessions.events.send(
-                session.id,
-                events=[
-                    {
-                        "type": "user.message",
-                        "content": [{"type": "text", "text": intro}],
-                    }
-                ],
-            )
-            logger.info("[Diag-MA] Injected session intro for repair=%s", repair_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "[Diag-MA] failed to inject session intro: %s", exc
-            )
+        logger.info(
+            "[Diag-MA] Stashed session intro for repair=%s (awaiting tech input)",
+            repair_id,
+        )
 
     # Cache: agent.custom_tool_use events by event.id, so we can look up
     # name+input when `requires_action` arrives and only hands us event_ids.
@@ -229,7 +217,10 @@ async def run_diagnostic_session_managed(
 
     try:
         recv_task = asyncio.create_task(
-            _forward_ws_to_session(ws, client, session.id),
+            _forward_ws_to_session(
+                ws, client, session.id, pending_intro=intro, repair_id=repair_id,
+                device_slug=device_slug,
+            ),
             name="ws->session",
         )
         emit_task = asyncio.create_task(
@@ -260,9 +251,22 @@ async def run_diagnostic_session_managed(
 
 
 async def _forward_ws_to_session(
-    ws: WebSocket, client: AsyncAnthropic, session_id: str
+    ws: WebSocket,
+    client: AsyncAnthropic,
+    session_id: str,
+    *,
+    pending_intro: str | None = None,
+    repair_id: str | None = None,
+    device_slug: str | None = None,
 ) -> None:
-    """Read user text from the WS, post it as `user.message` to the session."""
+    """Read user text from the WS, post it as `user.message` to the session.
+
+    When `pending_intro` is set, it is PREFIXED to the tech's very first
+    message so the agent sees (device context + reported symptom) and the
+    tech's actual question in a single turn — avoids the empty-ack turn
+    that happens when context is sent in isolation.
+    """
+    intro_pending = pending_intro
     while True:
         raw = await ws.receive_text()
         try:
@@ -272,6 +276,15 @@ async def _forward_ws_to_session(
         text = (payload.get("text") or "").strip()
         if not text:
             continue
+        if intro_pending:
+            text = intro_pending + "\n\n---\n\n" + text
+            intro_pending = None
+            if repair_id and device_slug:
+                from api.agent.chat_history import touch_status
+
+                touch_status(
+                    device_slug=device_slug, repair_id=repair_id, status="in_progress"
+                )
         await client.beta.sessions.events.send(
             session_id,
             events=[
