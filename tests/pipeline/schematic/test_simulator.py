@@ -10,6 +10,7 @@ from api.pipeline.schematic.schemas import (
     ComponentNode,
     ElectricalGraph,
     NetNode,
+    PagePin,
     PowerRail,
     SchematicQualityReport,
 )
@@ -51,10 +52,20 @@ def test_simulation_timeline_shape_minimal():
 def _mnt_like_graph() -> ElectricalGraph:
     """Minimal 3-phase MNT-like topology: battery→VIN, VIN→+5V(U7), +5V→+3V3(U12)."""
     components = {
-        "U18": ComponentNode(refdes="U18", type="ic"),
-        "U7":  ComponentNode(refdes="U7",  type="ic"),
-        "U12": ComponentNode(refdes="U12", type="ic"),
-        "U19": ComponentNode(refdes="U19", type="ic"),
+        "U18": ComponentNode(refdes="U18", type="ic", pins=[
+            PagePin(number="1", name="VIN", role="power_in", net_label="LPC_VCC"),
+        ]),
+        "U7":  ComponentNode(refdes="U7",  type="ic", pins=[
+            PagePin(number="1", name="VIN",  role="power_in",  net_label="VIN"),
+            PagePin(number="2", name="VOUT", role="power_out", net_label="+5V"),
+        ]),
+        "U12": ComponentNode(refdes="U12", type="ic", pins=[
+            PagePin(number="1", name="VIN",  role="power_in",  net_label="+5V"),
+            PagePin(number="2", name="VOUT", role="power_out", net_label="+3V3"),
+        ]),
+        "U19": ComponentNode(refdes="U19", type="ic", pins=[
+            PagePin(number="1", name="VIN", role="power_in", net_label="+5V"),
+        ]),
     }
     nets = {
         "VIN":     NetNode(label="VIN",     is_power=True, is_global=True),
@@ -135,3 +146,59 @@ def test_run_normal_boot_completes():
     assert last.signals["3V3_PWR_EN"] == "high"
     assert tl.cascade_dead_rails == []
     assert tl.cascade_dead_components == []
+
+
+def test_run_kill_plus_5v_regulator_blocks_downstream():
+    engine = SimulationEngine(
+        _mnt_like_graph(),
+        analyzed_boot=_mnt_like_analyzed(),
+        killed_refdes=["U7"],
+    )
+    tl = engine.run()
+    assert tl.final_verdict == "blocked"
+    assert tl.blocked_at_phase == 1, "phase 1 stabilises +5V which can't come up without U7"
+    # U7 itself is dead.
+    assert tl.states[-1].components["U7"] == "dead"
+    # +5V never stabilised → U12 and U19 never turn on → they cascade as dead.
+    assert "+5V" in tl.cascade_dead_rails
+    assert "U12" in tl.cascade_dead_components
+    assert "U19" in tl.cascade_dead_components
+    # +3V3 is a sibling rail whose source (U12) is not DIRECTLY killed, but
+    # U12 can't come on without +5V — so +3V3 also never stabilises. It shows
+    # up in rails["+3V3"] == "off" in the final state but not in
+    # cascade_dead_rails (source wasn't killed).
+    assert tl.states[-1].rails["+3V3"] == "off"
+
+
+def test_run_kill_lpc_sequencer_stalls_enable_dependent_phase():
+    """Killing U18 (sequencer) means enable signals never assert.
+
+    Phase 0 still advances because its rails (VIN, LPC_VCC) are externally
+    sourced and don't depend on U18. Phase 1 advances partially — U7 can
+    turn on from VIN, but +5V cannot stabilise without 5V_PWR_EN which U18
+    never drives. The first fully-stalled phase is phase 2: +3V3 requires
+    U12, U12 needs +5V, and no enable ever asserts.
+    """
+    engine = SimulationEngine(
+        _mnt_like_graph(),
+        analyzed_boot=_mnt_like_analyzed(),
+        killed_refdes=["U18"],
+    )
+    tl = engine.run()
+    assert tl.final_verdict == "blocked"
+    assert tl.blocked_at_phase == 2
+    # Sequencer is dead from phase 0 onward.
+    assert tl.states[0].components["U18"] == "dead"
+    # Enable signals never assert high because their driver (U18) is dead.
+    # Phase 0 emitted (net="5V_PWR_EN", from="U18") — U18 is dead, so "low".
+    last = tl.states[-1]
+    assert last.signals.get("5V_PWR_EN") == "low"
+    assert last.signals.get("3V3_PWR_EN") == "low"
+    # The rails behind those enables never came up.
+    assert last.rails["+5V"] == "off"
+    assert last.rails["+3V3"] == "off"
+    # U7 DID come on — its power_in is VIN (external, always up).
+    assert last.components["U7"] == "on"
+    # But U12/U19 (power_in on +5V) stayed off.
+    assert last.components["U12"] == "off"
+    assert last.components["U19"] == "off"
