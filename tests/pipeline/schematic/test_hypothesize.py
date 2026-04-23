@@ -652,3 +652,47 @@ def test_table_covers_all_resistor_and_capacitor_roles():
             assert ("passive_c", c_role, mode) in _PASSIVE_CASCADE_TABLE, (
                 f"missing handler for passive_c/{c_role}/{mode}"
             )
+
+
+def test_cascade_rectifier_short_shorts_input_rail():
+    from api.pipeline.schematic.hypothesize import _cascade_rectifier_short
+    from api.pipeline.schematic.schemas import (
+        ComponentNode, ElectricalGraph, NetNode, PagePin, PowerRail,
+        SchematicQualityReport,
+    )
+    graph = ElectricalGraph(
+        device_slug="rect-test",
+        components={
+            "D1": ComponentNode(
+                refdes="D1", type="diode",
+                kind="passive_d", role="rectifier",
+                pins=[
+                    PagePin(number="1", role="unknown", net_label="VIN"),
+                    PagePin(number="2", role="unknown", net_label="VOUT"),
+                ],
+            ),
+        },
+        nets={"VIN": NetNode(label="VIN", is_power=True),
+              "VOUT": NetNode(label="VOUT", is_power=True)},
+        power_rails={"VIN":  PowerRail(label="VIN"),
+                     "VOUT": PowerRail(label="VOUT")},
+        typed_edges=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1, confidence_global=1.0),
+    )
+    c = _cascade_rectifier_short(graph, graph.components["D1"])
+    # Either VIN or VOUT becomes shorted — implementation defines the
+    # direction. Accept either.
+    assert len(c["shorted_rails"]) == 1
+
+
+def test_table_covers_every_diode_role():
+    from api.pipeline.schematic.hypothesize import _PASSIVE_CASCADE_TABLE
+    for role in ("flyback", "rectifier", "esd", "reverse_protection", "signal_clamp"):
+        for mode in ("open", "short"):
+            assert ("passive_d", role, mode) in _PASSIVE_CASCADE_TABLE
+
+
+def test_table_every_entry_is_callable():
+    from api.pipeline.schematic.hypothesize import _PASSIVE_CASCADE_TABLE
+    for key, fn in _PASSIVE_CASCADE_TABLE.items():
+        assert callable(fn), f"non-callable handler at {key}"

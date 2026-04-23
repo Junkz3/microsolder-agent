@@ -686,6 +686,101 @@ def _cascade_tank_short(electrical: ElectricalGraph, passive: "_CompNode") -> di
     return _empty_cascade()
 
 
+def _cascade_rectifier_short(electrical: ElectricalGraph, passive) -> dict:
+    """Shorted rectifier → its upstream rail shorted (input pulled to output)."""
+    nets = [p.net_label for p in passive.pins if p.net_label]
+    rails = [n for n in nets if n in electrical.power_rails]
+    if not rails:
+        return _empty_cascade()
+    # Pick the input-side rail — heuristic: the one with a source_refdes.
+    rails_with_source = [
+        r for r in rails
+        if electrical.power_rails[r].source_refdes is not None
+    ]
+    target = rails_with_source[0] if rails_with_source else rails[0]
+    source = electrical.power_rails[target].source_refdes
+    downstream = _simulate_dead(electrical, None, [source]) if source else _empty_cascade()
+    c = _empty_cascade()
+    c["shorted_rails"] = frozenset({target})
+    c["dead_rails"] = downstream["dead_rails"] - {target}
+    c["dead_comps"] = downstream["dead_comps"]
+    c["hot_comps"] = frozenset({source}) if source else frozenset()
+    return c
+
+
+def _cascade_rectifier_open(electrical: ElectricalGraph, passive) -> dict:
+    """Open rectifier → output rail dead."""
+    nets = [p.net_label for p in passive.pins if p.net_label]
+    rails = [n for n in nets if n in electrical.power_rails]
+    if not rails:
+        return _empty_cascade()
+    # Pick the output-side rail (no source_refdes — the diode is the source).
+    rails_without_source = [
+        r for r in rails if electrical.power_rails[r].source_refdes is None
+    ]
+    target = rails_without_source[0] if rails_without_source else rails[0]
+    return _simulate_rail_loss(electrical, target)
+
+
+def _cascade_flyback_open(electrical: ElectricalGraph, passive) -> dict:
+    """Flyback diode open → inductor kickback damages downstream → anomalous."""
+    nets = set(p.net_label for p in passive.pins if p.net_label)
+    consumers: set[str] = set()
+    for ic in electrical.components.values():
+        if ic.kind != "ic":
+            continue
+        for p in ic.pins:
+            if p.role == "power_in" and p.net_label in nets:
+                consumers.add(ic.refdes)
+    c = _empty_cascade()
+    c["anomalous_comps"] = frozenset(consumers)
+    return c
+
+
+def _cascade_flyback_short(electrical: ElectricalGraph, passive) -> dict:
+    """Flyback short → continuous current path → source hot + rail shorted."""
+    nets = [p.net_label for p in passive.pins if p.net_label]
+    rails = [n for n in nets if n in electrical.power_rails]
+    if not rails:
+        return _empty_cascade()
+    target = rails[0]
+    source = electrical.power_rails[target].source_refdes
+    downstream = _simulate_dead(electrical, None, [source]) if source else _empty_cascade()
+    c = _empty_cascade()
+    c["shorted_rails"] = frozenset({target})
+    c["dead_rails"] = downstream["dead_rails"] - {target}
+    c["dead_comps"] = downstream["dead_comps"]
+    c["hot_comps"] = frozenset({source}) if source else frozenset()
+    return c
+
+
+def _cascade_signal_to_ground(electrical: ElectricalGraph, passive) -> dict:
+    """ESD clamp short / signal clamp short → signal stuck → consumers anomalous.
+    Uses the signal-net side (non-GND pin)."""
+    sig_net: str | None = None
+    for pin in passive.pins:
+        n = pin.net_label
+        if not n:
+            continue
+        if n in electrical.power_rails:
+            continue
+        up = n.upper()
+        if up in {"GND", "AGND", "DGND", "PGND"} or up.startswith("GND_"):
+            continue
+        sig_net = n
+        break
+    if sig_net is None:
+        return _empty_cascade()
+    consumers: set[str] = set()
+    for edge in electrical.typed_edges:
+        if edge.kind in {"consumes_signal", "depends_on"} and edge.dst == sig_net:
+            if edge.src in electrical.components:
+                consumers.add(edge.src)
+    c = _empty_cascade()
+    c["anomalous_comps"] = frozenset(consumers)
+    return c
+
+
 _PASSIVE_CASCADE_TABLE: dict[tuple[str, str, str], CascadeFn] = {
     # ========================= RESISTORS =========================
     ("passive_r", "series",        "open"):  _cascade_series_open,
@@ -715,9 +810,21 @@ _PASSIVE_CASCADE_TABLE: dict[tuple[str, str, str], CascadeFn] = {
     ("passive_c", "bypass",      "open"):  _cascade_decoupling_open,
     ("passive_c", "bypass",      "short"): _cascade_decoupling_short,
 
-    # (ferrite + diode entries added in T8)
+    # (ferrite entries added in T7)
     ("passive_fb", "filter", "open"):  _cascade_filter_open,
     ("passive_fb", "filter", "short"): _cascade_passive_alive,
+
+    # ========================= DIODES ===========================
+    ("passive_d", "flyback",           "open"):  _cascade_flyback_open,
+    ("passive_d", "flyback",           "short"): _cascade_flyback_short,
+    ("passive_d", "rectifier",         "open"):  _cascade_rectifier_open,
+    ("passive_d", "rectifier",         "short"): _cascade_rectifier_short,
+    ("passive_d", "esd",               "open"):  _cascade_passive_alive,
+    ("passive_d", "esd",               "short"): _cascade_signal_to_ground,
+    ("passive_d", "reverse_protection","open"):  _cascade_series_open,
+    ("passive_d", "reverse_protection","short"): _cascade_passive_alive,
+    ("passive_d", "signal_clamp",      "open"):  _cascade_passive_alive,
+    ("passive_d", "signal_clamp",      "short"): _cascade_signal_to_ground,
 }
 
 
