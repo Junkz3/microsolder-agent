@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from api.pipeline.schematic.passive_classifier import _BAT_FAMILY_PATTERN
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 from api.pipeline.schematic.simulator import SimulationEngine
 
@@ -497,7 +498,6 @@ def _find_cell_protection_downstream(
 
     Uses `_BAT_FAMILY_PATTERN` from `passive_classifier`.
     """
-    from api.pipeline.schematic.passive_classifier import _BAT_FAMILY_PATTERN
     pin_rails = [
         p.net_label for p in q.pins
         if p.net_label and p.net_label in electrical.power_rails

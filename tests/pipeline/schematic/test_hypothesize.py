@@ -1362,3 +1362,54 @@ def test_table_covers_cell_protection_and_cell_balancer_all_modes():
             assert ("passive_q", role, mode) in _PASSIVE_CASCADE_TABLE, (
                 f"missing dispatch for passive_q / {role} / {mode}"
             )
+
+
+def test_find_cell_protection_downstream_returns_none_below_two_rails():
+    """Insufficient topology → None (not a crash, not an arbitrary pick).
+    The cascade handler then short-circuits to _empty_cascade(), so a
+    mis-resolved Q never emits a wrong prediction. Pins the fail-safe
+    branch that Phase 4.6 relies on."""
+    from api.pipeline.schematic.hypothesize import _find_cell_protection_downstream
+    from api.pipeline.schematic.schemas import (
+        ComponentNode,
+        ElectricalGraph,
+        NetNode,
+        PagePin,
+        PowerRail,
+        SchematicQualityReport,
+    )
+
+    def _graph(rails: dict[str, PowerRail]) -> ElectricalGraph:
+        return ElectricalGraph(
+            device_slug="q-cell-prot-none",
+            components={},
+            nets={label: NetNode(label=label, is_power=True) for label in rails},
+            power_rails=rails,
+            typed_edges=[],
+            quality=SchematicQualityReport(
+                total_pages=1, pages_parsed=1, confidence_global=1.0,
+            ),
+        )
+
+    # Zero BAT rails — Q pin labels don't match any registered rail.
+    q_no_rails = ComponentNode(
+        refdes="Q5", type="transistor", kind="passive_q", role="cell_protection",
+        pins=[
+            PagePin(number="1", role="signal_in", net_label=None),
+            PagePin(number="2", role="signal_in", net_label="FOO"),
+            PagePin(number="3", role="signal_out", net_label="BAR"),
+        ],
+    )
+    assert _find_cell_protection_downstream(_graph({}), q_no_rails) is None
+
+    # Exactly one BAT rail — still insufficient, no "downstream" to pick.
+    q_one_rail = ComponentNode(
+        refdes="Q5", type="transistor", kind="passive_q", role="cell_protection",
+        pins=[
+            PagePin(number="1", role="signal_in", net_label=None),
+            PagePin(number="2", role="signal_in", net_label="BAT1"),
+            PagePin(number="3", role="signal_out", net_label="BAT1"),
+        ],
+    )
+    graph = _graph({"BAT1": PowerRail(label="BAT1")})
+    assert _find_cell_protection_downstream(graph, q_one_rail) is None
