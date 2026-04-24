@@ -14,6 +14,51 @@ from api.pipeline.schematic.hypothesize import (
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 
 
+# Module-level pack cache: keeps parsed ElectricalGraph + AnalyzedBootSequence
+# across repeated mb_hypothesize invocations so that the per-graph memo in
+# api.pipeline.schematic.hypothesize fires on call 2+ of the same session.
+# Keyed on (pack_path, graph_mtime_ns, ab_mtime_ns) — a regenerated pack
+# invalidates automatically without needing a server restart.
+_PACK_CACHE: dict[
+    tuple[str, int, int],
+    tuple[ElectricalGraph, "AnalyzedBootSequence | None"],
+] = {}
+
+
+def _load_pack(
+    pack: Path,
+) -> tuple[ElectricalGraph | None, "AnalyzedBootSequence | None", str | None]:
+    """Return (eg, ab, error_reason). `error_reason` is None on success;
+    on failure it is the machine-readable reason string that mb_hypothesize
+    surfaces to the caller."""
+    graph_path = pack / "electrical_graph.json"
+    if not graph_path.exists():
+        return None, None, "no_schematic_graph"
+    ab_path = pack / "boot_sequence_analyzed.json"
+    try:
+        graph_mtime = graph_path.stat().st_mtime_ns
+        ab_mtime = ab_path.stat().st_mtime_ns if ab_path.exists() else 0
+    except OSError:
+        return None, None, "malformed_graph"
+    key = (str(pack), graph_mtime, ab_mtime)
+    cached = _PACK_CACHE.get(key)
+    if cached is not None:
+        eg, ab = cached
+        return eg, ab, None
+    try:
+        eg = ElectricalGraph.model_validate_json(graph_path.read_text())
+    except (OSError, ValueError):
+        return None, None, "malformed_graph"
+    ab: AnalyzedBootSequence | None = None
+    if ab_path.exists():
+        try:
+            ab = AnalyzedBootSequence.model_validate_json(ab_path.read_text())
+        except (OSError, ValueError):
+            ab = None
+    _PACK_CACHE[key] = (eg, ab)
+    return eg, ab, None
+
+
 def _closest_matches(candidates: list[str], needle: str, k: int = 5) -> list[str]:
     needle_u = needle.upper()
     prefix = needle_u[:1] if needle_u else ""
@@ -53,13 +98,9 @@ def mb_hypothesize(
     or `{"found": False, "reason", ...}` on any validation failure.
     """
     pack = memory_root / device_slug
-    graph_path = pack / "electrical_graph.json"
-    if not graph_path.exists():
-        return {"found": False, "reason": "no_schematic_graph", "device_slug": device_slug}
-    try:
-        eg = ElectricalGraph.model_validate_json(graph_path.read_text())
-    except (OSError, ValueError):
-        return {"found": False, "reason": "malformed_graph", "device_slug": device_slug}
+    eg, ab, err = _load_pack(pack)
+    if err is not None:
+        return {"found": False, "reason": err, "device_slug": device_slug}
 
     # Journal-based auto-synthesis.
     if repair_id and not (state_comps or state_rails or metrics_comps or metrics_rails):
@@ -109,14 +150,6 @@ def mb_hypothesize(
             )
         except ValueError as exc:
             return {"found": False, "reason": "invalid_observations", "detail": str(exc)}
-
-    ab: AnalyzedBootSequence | None = None
-    ab_path = pack / "boot_sequence_analyzed.json"
-    if ab_path.exists():
-        try:
-            ab = AnalyzedBootSequence.model_validate_json(ab_path.read_text())
-        except ValueError:
-            ab = None
 
     result = hypothesize(
         eg, analyzed_boot=ab, observations=observations, max_results=max_results,

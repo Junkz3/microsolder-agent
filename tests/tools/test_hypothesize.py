@@ -199,3 +199,31 @@ def test_mb_validate_finding_in_manifest():
     from api.agent.manifest import MB_TOOLS
     names = [t["name"] for t in MB_TOOLS]
     assert "mb_validate_finding" in names
+
+
+def test_load_pack_caches_and_invalidates_on_mtime(
+    memory_root: Path, graph: ElectricalGraph,
+):
+    """Pack cache returns the same ElectricalGraph object on repeated reads
+    of an unchanged pack — so the per-graph memo in hypothesize.py fires —
+    and invalidates automatically when the graph file's mtime advances."""
+    import os
+    from api.tools.hypothesize import _PACK_CACHE, _load_pack
+
+    _PACK_CACHE.clear()
+    _write_graph(memory_root, graph)
+    pack = memory_root / graph.device_slug
+
+    eg1, _ab1, err1 = _load_pack(pack)
+    eg2, _ab2, err2 = _load_pack(pack)
+    assert err1 is None and err2 is None
+    assert eg1 is eg2, "cache hit must return the same object for memo to fire"
+
+    # Advance mtime and rewrite — cache must rebuild.
+    graph_path = pack / "electrical_graph.json"
+    old_mtime = graph_path.stat().st_mtime_ns
+    graph_path.write_text(graph.model_dump_json(indent=2))
+    os.utime(graph_path, ns=(old_mtime + 10_000_000, old_mtime + 10_000_000))
+    eg3, _ab3, err3 = _load_pack(pack)
+    assert err3 is None
+    assert eg3 is not eg1, "mtime change must invalidate the cache entry"
