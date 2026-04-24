@@ -73,3 +73,60 @@ async def test_extract_empty_scenarios_is_valid(toy_graph):
         graph=toy_graph,
     )
     assert payload.scenarios == []
+
+
+from api.pipeline.bench_generator.extractor import rescue_with_opus
+from api.pipeline.bench_generator.schemas import Rejection
+
+
+@pytest.mark.asyncio
+async def test_rescue_filters_eligible_motives(toy_graph, sample_draft):
+    """Only evidence_span_not_literal and refdes_not_in_graph are retried."""
+    eligible = Rejection(
+        local_id="e1", motive="evidence_span_not_literal", detail="",
+        original_draft=sample_draft,
+    )
+    ineligible = Rejection(
+        local_id="d1", motive="duplicate_in_run", detail="",
+        original_draft=sample_draft,
+    )
+
+    client = MagicMock()
+    # Mock returns nothing (no rescue) — we just check filtering
+    client.messages.stream = MagicMock(
+        return_value=_StubStream(_StubResponse({"scenarios": []}))
+    )
+    rescued, still_rejected = await rescue_with_opus(
+        client=client, model="claude-opus-4-7",
+        rejections=[eligible, ineligible],
+        graph=toy_graph,
+    )
+    # Eligible was fed to Opus (no scenario returned) -> opus_rescue_failed
+    # Ineligible stays with original motive
+    assert len(rescued) == 0
+    assert len(still_rejected) == 2
+    motives = {r.motive for r in still_rejected}
+    assert "opus_rescue_failed" in motives
+    assert "duplicate_in_run" in motives
+
+
+@pytest.mark.asyncio
+async def test_rescue_returns_corrected_draft(toy_graph, sample_draft):
+    eligible = Rejection(
+        local_id="e-1", motive="evidence_span_not_literal", detail="",
+        original_draft=sample_draft,
+    )
+    corrected = sample_draft.model_dump()
+    corrected["local_id"] = "e-1"  # keep id for traceability (min_length=3)
+    client = MagicMock()
+    client.messages.stream = MagicMock(
+        return_value=_StubStream(_StubResponse({"scenarios": [corrected]}))
+    )
+    rescued, still_rejected = await rescue_with_opus(
+        client=client, model="claude-opus-4-7",
+        rejections=[eligible],
+        graph=toy_graph,
+    )
+    assert len(rescued) == 1
+    assert rescued[0].local_id == "e-1"
+    assert still_rejected == []
