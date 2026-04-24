@@ -201,6 +201,7 @@ def _empty_cascade() -> dict:
         "always_on_rails": frozenset(),   # Phase 4.5 — Q stuck_on cascades
         "anomalous_comps": frozenset(),
         "hot_comps": frozenset(),
+        "degraded_rails": frozenset(),   # Phase 4.7 — continuous (leaky/regulating_low) modes
         "final_verdict": "",
         "blocked_at_phase": None,
     }
@@ -345,8 +346,16 @@ def _simulate_failure_uncached(
         c["final_verdict"] = downstream["final_verdict"]
         c["blocked_at_phase"] = downstream["blocked_at_phase"]
         return c
-    # Phase 4 passive + Phase 4.5 Q modes.
-    if mode in {"open", "short", "stuck_on", "stuck_off"}:
+    if mode == "regulating_low":
+        sourced = [
+            label for label, rail in electrical.power_rails.items()
+            if rail.source_refdes == refdes
+        ]
+        c = _empty_cascade()
+        c["degraded_rails"] = frozenset(sourced)
+        return c
+    # Phase 4 passive + Phase 4.5 Q modes + Phase 4.7 continuous (leaky_short).
+    if mode in {"open", "short", "stuck_on", "stuck_off", "leaky_short"}:
         comp = electrical.components.get(refdes)
         if comp is None:
             return _empty_cascade()
@@ -674,6 +683,19 @@ def _cascade_decoupling_short(electrical: ElectricalGraph, passive: _CompNode) -
     c["dead_rails"] = downstream["dead_rails"] - {rail}
     c["dead_comps"] = downstream["dead_comps"]
     c["hot_comps"] = frozenset({source}) if source else frozenset()
+    return c
+
+
+def _cascade_decoupling_leaky(electrical: ElectricalGraph, comp: _CompNode) -> dict:
+    """passive_c.leaky_short on decoupling/bulk cap — decoupled rail degrades."""
+    target_rail: str | None = None
+    for label, rail in electrical.power_rails.items():
+        if comp.refdes in rail.decoupling:
+            target_rail = label
+            break
+    c = _empty_cascade()
+    if target_rail is not None:
+        c["degraded_rails"] = frozenset({target_rail})
     return c
 
 
@@ -1067,10 +1089,12 @@ _PASSIVE_CASCADE_TABLE: dict[tuple[str, str, str], CascadeFn] = {
     ("passive_r", "damping",       "short"): _cascade_passive_alive,
 
     # ========================= CAPACITORS ========================
-    ("passive_c", "decoupling",  "open"):  _cascade_decoupling_open,
-    ("passive_c", "decoupling",  "short"): _cascade_decoupling_short,
-    ("passive_c", "bulk",        "open"):  _cascade_decoupling_open,
-    ("passive_c", "bulk",        "short"): _cascade_decoupling_short,
+    ("passive_c", "decoupling",  "open"):        _cascade_decoupling_open,
+    ("passive_c", "decoupling",  "short"):       _cascade_decoupling_short,
+    ("passive_c", "decoupling",  "leaky_short"): _cascade_decoupling_leaky,
+    ("passive_c", "bulk",        "open"):        _cascade_decoupling_open,
+    ("passive_c", "bulk",        "short"):       _cascade_decoupling_short,
+    ("passive_c", "bulk",        "leaky_short"): _cascade_decoupling_leaky,
     ("passive_c", "filter",      "open"):  _cascade_filter_cap_open,
     ("passive_c", "filter",      "short"): _cascade_decoupling_short,
     ("passive_c", "ac_coupling", "open"):  _cascade_signal_path_open,

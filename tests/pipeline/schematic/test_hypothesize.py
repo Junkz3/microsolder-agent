@@ -1413,3 +1413,72 @@ def test_find_cell_protection_downstream_returns_none_below_two_rails():
     )
     graph = _graph({"BAT1": PowerRail(label="BAT1")})
     assert _find_cell_protection_downstream(graph, q_one_rail) is None
+
+
+def test_leaky_short_on_decoupling_cap_returns_degraded_rail():
+    """passive_c.leaky_short routes via the passive table to a degraded rail."""
+    from api.pipeline.schematic.hypothesize import _simulate_failure
+    from api.pipeline.schematic.schemas import (
+        ComponentNode,
+        ElectricalGraph,
+        NetNode,
+        PagePin,
+        PowerRail,
+        SchematicQualityReport,
+    )
+
+    graph = ElectricalGraph(
+        device_slug="t",
+        components={
+            "U7": ComponentNode(refdes="U7", type="ic"),
+            "C42": ComponentNode(
+                refdes="C42",
+                type="capacitor",
+                kind="passive_c",
+                role="decoupling",
+                pins=[
+                    PagePin(number="1", role="terminal", net_label="+5V"),
+                    PagePin(number="2", role="ground", net_label="GND"),
+                ],
+            ),
+        },
+        nets={"+5V": NetNode(label="+5V", is_power=True)},
+        power_rails={
+            "+5V": PowerRail(
+                label="+5V", source_refdes="U7", consumers=[], decoupling=["C42"],
+            ),
+        },
+        typed_edges=[],
+        boot_sequence=[],
+        designer_notes=[],
+        ambiguities=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
+    )
+    cascade = _simulate_failure(graph, analyzed_boot=None, refdes="C42", mode="leaky_short")
+    assert "+5V" in cascade["degraded_rails"]
+
+
+def test_regulating_low_on_ic_returns_degraded_sourced_rails():
+    """ic.regulating_low marks every rail the IC sources as degraded."""
+    from api.pipeline.schematic.hypothesize import _simulate_failure
+    from api.pipeline.schematic.schemas import (
+        ComponentNode,
+        ElectricalGraph,
+        NetNode,
+        PowerRail,
+        SchematicQualityReport,
+    )
+
+    graph = ElectricalGraph(
+        device_slug="t",
+        components={"U7": ComponentNode(refdes="U7", type="ic")},
+        nets={"+5V": NetNode(label="+5V", is_power=True)},
+        power_rails={"+5V": PowerRail(label="+5V", source_refdes="U7")},
+        typed_edges=[],
+        boot_sequence=[],
+        designer_notes=[],
+        ambiguities=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
+    )
+    cascade = _simulate_failure(graph, analyzed_boot=None, refdes="U7", mode="regulating_low")
+    assert "+5V" in cascade["degraded_rails"]
