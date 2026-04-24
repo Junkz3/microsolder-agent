@@ -287,7 +287,30 @@ def _simulate_failure(
 
     Dispatches by mode. `anomalous`, `hot`, `shorted` are implemented in
     Tasks 3-5. Phase 2+ modes should extend this dispatcher.
+
+    Cross-scenario memoization: the cascade is a pure function of
+    (graph, analyzed_boot, refdes, mode) and the returned dict is treated
+    as immutable by every caller (score / narrate / preview / two-fault
+    union all read-only). We cache on the per-graph memo so that a bench
+    running N scenarios against the same pack pays the simulation cost
+    once instead of N times.
     """
+    memo = _memo_for(electrical)
+    key = (id(analyzed_boot), refdes, mode)
+    cached = memo.cascades.get(key)
+    if cached is not None:
+        return cached
+    result = _simulate_failure_uncached(electrical, analyzed_boot, refdes, mode)
+    memo.cascades[key] = result
+    return result
+
+
+def _simulate_failure_uncached(
+    electrical: ElectricalGraph,
+    analyzed_boot: AnalyzedBootSequence | None,
+    refdes: str,
+    mode: str,
+) -> dict:
     if mode == "dead":
         return _simulate_dead(electrical, analyzed_boot, [refdes])
     if mode == "anomalous":
@@ -1179,6 +1202,85 @@ def _compute_discriminators(
     return [t for _, _, t in candidates[:max_results]]
 
 
+_GRAPH_MEMOS: dict[tuple[int, str], "_GraphMemo"] = {}
+
+
+class _GraphMemo:
+    """Per-graph lazy cache for the reverse-diagnostic engine.
+
+    The accuracy bench runs ~200 scenarios against a single ElectricalGraph.
+    Both `_applicable_modes` and `_simulate_failure` are pure functions of
+    the graph topology — their outputs don't depend on the observations
+    being scored. This memo computes them once per (graph, analyzed_boot)
+    pair and shares the results across scenarios.
+
+    Fields:
+      - `applicable_modes[refdes] → tuple[str, ...]`: eagerly precomputed
+        from typed_edges + power_rails in one linear pass per graph.
+      - `cascades[(id(analyzed_boot), refdes, mode)] → dict`: lazily
+        populated on first `_simulate_failure` call.
+
+    Cascade dicts are treated as immutable by every caller (score,
+    narrate, preview, two-fault union all read-only), so sharing is
+    safe without defensive copies.
+    """
+
+    __slots__ = ("applicable_modes", "cascades")
+
+    def __init__(self, graph: ElectricalGraph) -> None:
+        signal_sources: set[str] = set()
+        for edge in graph.typed_edges:
+            if edge.kind in SIGNAL_EDGE_KINDS:
+                signal_sources.add(edge.src)
+        rail_consumers: set[str] = set()
+        for rail in graph.power_rails.values():
+            rail_consumers.update(rail.consumers or ())
+        modes_by_refdes: dict[str, tuple[str, ...]] = {}
+        for refdes, comp in graph.components.items():
+            kind = getattr(comp, "kind", "ic")
+            role = getattr(comp, "role", None)
+            if kind == "ic":
+                modes: list[str] = ["dead", "hot"]
+                if refdes in signal_sources:
+                    modes.append("anomalous")
+                if refdes in rail_consumers:
+                    modes.append("shorted")
+                modes_by_refdes[refdes] = tuple(modes)
+                continue
+            if role is None:
+                modes_by_refdes[refdes] = ()
+                continue
+            candidates = (
+                ("open", "short", "stuck_on", "stuck_off")
+                if kind == "passive_q"
+                else ("open", "short")
+            )
+            applicable: list[str] = []
+            for mode in candidates:
+                handler = _PASSIVE_CASCADE_TABLE.get((kind, role, mode))
+                if handler is not None and handler is not _cascade_passive_alive:
+                    applicable.append(mode)
+            modes_by_refdes[refdes] = tuple(applicable)
+        self.applicable_modes: dict[str, tuple[str, ...]] = modes_by_refdes
+        self.cascades: dict[tuple[int, str, str], dict] = {}
+
+
+def _memo_for(graph: ElectricalGraph) -> _GraphMemo:
+    """Return the memo attached to `graph`, building it on first access.
+
+    Key: (id(graph), graph.device_slug). The slug guards against id() reuse
+    after GC of a distinct-slug graph — the colliding id is rejected because
+    the slug differs. Same-slug id collisions are harmless: a fresh-slug
+    graph is semantically identical to the one it replaced.
+    """
+    key = (id(graph), graph.device_slug)
+    memo = _GRAPH_MEMOS.get(key)
+    if memo is None:
+        memo = _GraphMemo(graph)
+        _GRAPH_MEMOS[key] = memo
+    return memo
+
+
 def _applicable_modes(
     electrical: ElectricalGraph, refdes: str,
 ) -> list[str]:
@@ -1189,41 +1291,7 @@ def _applicable_modes(
     - Passives with a known role: `open` and/or `short` when the dispatch
       table has a non-alive handler for the (kind, role, mode) triple.
     - Passives without a role: no applicable mode (returns [])."""
-    comp = electrical.components.get(refdes)
-    if comp is None:
-        return []
-    kind = getattr(comp, "kind", "ic")
-    role = getattr(comp, "role", None)
-
-    if kind == "ic":
-        modes = ["dead", "hot"]
-        has_signal = any(
-            e.src == refdes and e.kind in SIGNAL_EDGE_KINDS
-            for e in electrical.typed_edges
-        )
-        if has_signal:
-            modes.append("anomalous")
-        is_consumer = any(
-            refdes in (r.consumers or [])
-            for r in electrical.power_rails.values()
-        )
-        if is_consumer:
-            modes.append("shorted")
-        return modes
-
-    # Passive. R/C/D/FB have {open, short}. passive_q has all 4 modes.
-    if role is None:
-        return []
-    if kind == "passive_q":
-        candidate_modes = ("open", "short", "stuck_on", "stuck_off")
-    else:
-        candidate_modes = ("open", "short")
-    applicable: list[str] = []
-    for mode in candidate_modes:
-        handler = _PASSIVE_CASCADE_TABLE.get((kind, role, mode))
-        if handler is not None and handler is not _cascade_passive_alive:
-            applicable.append(mode)
-    return applicable
+    return list(_memo_for(electrical).applicable_modes.get(refdes, ()))
 
 
 def _relevant_to_observations(cascade: dict, obs: Observations) -> bool:
