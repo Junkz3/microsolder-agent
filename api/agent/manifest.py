@@ -166,21 +166,30 @@ MB_TOOLS: list[dict] = [
         "name": "mb_hypothesize",
         "description": (
             "Propose des hypothèses (refdes, mode) qui expliquent les observations. "
-            "Modes supportés : dead (inerte), alive (fonctionne), anomalous (actif mais "
-            "output incorrect — IC DSI bridge, codec audio, sensor), hot (chauffe "
-            "anormalement), shorted (court vers GND — pour un rail). Passer au moins "
-            "une observation via state_comps/state_rails OU fournir repair_id pour "
-            "synthétiser depuis le journal de mesures."
+            "Modes IC (actifs) : dead (inerte), alive (fonctionne), anomalous (actif "
+            "mais output incorrect — IC DSI bridge, codec audio, sensor), hot (chauffe "
+            "anormalement). Modes PASSIVES (R/C/D/FB) : open (circuit coupé, typique "
+            "ferrite brûlée ou R cassée), short (court plaque-à-plaque pour un cap, "
+            "wire pour R). Modes RAILS : dead, alive, shorted (court vers GND ou "
+            "overvoltage). Passer au moins une observation via state_comps/state_rails "
+            "OU fournir repair_id pour synthétiser depuis le journal. La réponse "
+            "contient `discriminating_targets` (list[str]) : quand les top-N candidats "
+            "sont à égalité de score, ce sont les refdes/rails dont la mesure "
+            "suivante partitionne le mieux les suspects — à suggérer au tech."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "state_comps": {
                     "type": "object",
-                    "description": "Map refdes → mode. Modes: 'dead', 'alive', 'anomalous', 'hot'.",
+                    "description": (
+                        "Map refdes → mode. Pour un IC : 'dead', 'alive', 'anomalous', "
+                        "'hot'. Pour un passive (R/C/D/FB) : 'open', 'short', 'alive'. "
+                        "Le moteur rejette un IC en mode passive (et vice-versa)."
+                    ),
                     "additionalProperties": {
                         "type": "string",
-                        "enum": ["dead", "alive", "anomalous", "hot"],
+                        "enum": ["dead", "alive", "anomalous", "hot", "open", "short"],
                     },
                 },
                 "state_rails": {
@@ -631,4 +640,32 @@ mb_get_component. Si la boardview est disponible, enchaîne bv_focus +
 bv_highlight pour MONTRER le suspect. Quand le tech confirme la cause,
 appelle mb_record_finding. Ne réponds JAMAIS depuis ta mémoire de formation
 pour des refdes ou des symptômes — utilise toujours les tools ci-dessus.
+
+HYPOTHESIZE — lire la réponse.
+Le tool `mb_hypothesize` retourne `hypotheses` (triées par score
+décroissant) + `discriminating_targets` (list). Chaque hypothèse a
+`kill_refdes` + `kill_modes` + `score` + `narrative`.
+
+Règles de présentation au tech :
+  - Top-1 bien détaché (score ≥ 2× le suivant) → présente-le comme
+    suspect principal, cite la `narrative`, montre-le via bv_focus +
+    bv_highlight, passe à la réparation.
+  - Top-N à égalité (scores identiques, observation probablement trop
+    maigre) → ne liste PAS les 5 candidats en vrac (inutile pour le
+    tech). À la place, cite `discriminating_targets` : « J'ai 5
+    candidats à égalité. Mesure {{T1}} ou {{T2}} ensuite — ça partitionnera
+    les suspects. » Puis, quand le tech revient avec la mesure, re-call
+    mb_hypothesize avec la nouvelle observation ajoutée (via
+    mb_record_measurement → mb_observations_from_measurements, OU
+    directement via state_comps/state_rails enrichis).
+  - `discriminating_targets` est vide → pas d'ambiguïté, utilise le top-1.
+
+Sur les modes passives : si un top-N contient des `kill_modes` `open`
+ou `short` (typique : cap de découplage shorted, ferrite open, R
+feedback open qui fait overvoltage), explique au tech CE QUE signifie
+le mode physiquement — « C156 short = la capa de découplage a claqué
+plaque-à-plaque, remplace-la » vs « FB2 open = la ferrite est brûlée,
+remplace ». Les passives ont souvent un score 0.5× dampening par design
+(le scoring sait que leur cascade est topologiquement faible) — ne
+confonds pas un score bas avec une hypothèse faible.
 """
