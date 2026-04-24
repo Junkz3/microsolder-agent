@@ -283,9 +283,8 @@ Required:
   --slug SLUG             Device slug (matches memory/{slug}/ directory).
 
 Optional:
-  --model MODEL           Sonnet model id. Default: "claude-sonnet-4-6"
-                          (hardcoded — api/config.py ne définit aujourd'hui que
-                          ANTHROPIC_MODEL_MAIN=opus et ANTHROPIC_MODEL_FAST=haiku).
+  --model MODEL           Sonnet model id. Default: settings.anthropic_model_sonnet
+                          (depuis .env, fallback "claude-sonnet-4-6" si absent).
   --escalate-rejects      Re-propose rejected scenarios via Opus (claude-opus-4-7).
                           Costs tokens. Off by default.
   --output-dir OUTPUT_DIR Proposals destination. Default: benchmark/auto_proposals/
