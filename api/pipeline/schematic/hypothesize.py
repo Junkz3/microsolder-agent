@@ -169,6 +169,12 @@ class HypothesizeResult(BaseModel):
     observations_echo: Observations
     hypotheses: list[Hypothesis]
     pruning: PruningStats
+    # Phase 4.2 — when the top-N hypotheses tie at the same score, these
+    # are targets whose measurement would best partition the candidate
+    # set. Empty when scores are well-separated or there's only one
+    # hypothesis. Callers (UI, agent) can suggest "mesure X ou Y pour
+    # trancher".
+    discriminating_targets: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -942,6 +948,65 @@ def _cascade_preview(cascade: dict) -> dict:
     }
 
 
+def _compute_discriminators(
+    hypotheses: list[Hypothesis],
+    *,
+    score_tolerance: float = 0.01,
+    top_n: int = 5,
+    max_results: int = 3,
+) -> list[str]:
+    """Return targets that would best discriminate between tied top-N hypotheses.
+
+    A target is "discriminating" if it appears as non-alive in SOME but
+    not all of the top-N tied hypotheses. The best discriminator is the
+    one whose split is closest to 50/50 — measuring it halves the
+    candidate set.
+
+    Returns an empty list when:
+      - Fewer than 2 hypotheses
+      - Top hypothesis scores clearly higher than #2 (> score_tolerance gap)
+      - No target appears in >=1 but <top_n of the tied cascades
+    """
+    if len(hypotheses) < 2:
+        return []
+    # Top-N are "tied" if they all sit within score_tolerance of the best.
+    best_score = hypotheses[0].score
+    tied = [h for h in hypotheses[:top_n]
+            if abs(h.score - best_score) <= score_tolerance]
+    if len(tied) < 2:
+        return []
+    # Build a target → {indices of tied hypotheses that predict it} map.
+    # Sources: cascade_preview rails + kill_refdes entries.
+    target_signatures: dict[str, set[int]] = {}
+    for idx, h in enumerate(tied):
+        predicted: set[str] = set()
+        # Rails from cascade_preview
+        predicted.update(h.cascade_preview.get("dead_rails", []) or [])
+        predicted.update(h.cascade_preview.get("shorted_rails", []) or [])
+        # Also include the kill_refdes themselves — if H1 kills U1 and H2
+        # kills U7, measuring U1 (is it dead/alive?) discriminates H1 vs H2.
+        predicted.update(h.kill_refdes)
+        for target in predicted:
+            target_signatures.setdefault(target, set()).add(idx)
+
+    # Score each target by how close its hit count is to N/2.
+    n = len(tied)
+    half = n / 2.0
+    candidates = []
+    for target, indices in target_signatures.items():
+        hits = len(indices)
+        if hits == 0 or hits == n:
+            continue  # appears in none or all — not discriminating
+        # Lower distance-from-half = better discriminator.
+        distance = abs(hits - half)
+        candidates.append((distance, -hits, target))
+    # Sort: smallest distance first, then prefer targets with MORE hits
+    # (ties broken toward the larger partition, so tech's measurement is
+    # more likely to be informative on the first try).
+    candidates.sort()
+    return [t for _, _, t in candidates[:max_results]]
+
+
 def _applicable_modes(
     electrical: ElectricalGraph, refdes: str,
 ) -> list[str]:
@@ -1182,6 +1247,9 @@ def hypothesize(
     ))
     hypotheses = hypotheses[:max_results]
 
+    # Find discriminators (empty when scores are well-separated).
+    discriminating_targets = _compute_discriminators(hypotheses)
+
     return HypothesizeResult(
         device_slug=electrical.device_slug,
         observations_echo=observations,
@@ -1191,4 +1259,5 @@ def hypothesize(
             two_fault_pairs_tested=pairs_tested,
             wall_ms=(time.perf_counter() - t0) * 1000,
         ),
+        discriminating_targets=discriminating_targets,
     )

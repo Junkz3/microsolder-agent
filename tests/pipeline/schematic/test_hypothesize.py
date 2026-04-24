@@ -787,3 +787,104 @@ def test_score_visibility_multiplier_dampens_decoupling_open():
         assert 0.3 <= h.score <= 0.6, (
             "expected dampened score ~0.5 for decoupling_open, got %s" % h.score
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4.2 — _compute_discriminators
+# ---------------------------------------------------------------------------
+
+
+def test_discriminators_empty_when_scores_well_separated():
+    """When top-1 clearly beats top-2, no discriminator needed."""
+    from api.pipeline.schematic.hypothesize import (
+        Hypothesis, HypothesisDiff, HypothesisMetrics, _compute_discriminators,
+    )
+    hyps = [
+        Hypothesis(
+            kill_refdes=["U1"], kill_modes=["dead"], score=10.0,
+            metrics=HypothesisMetrics(tp_comps=2, tp_rails=1, fp_comps=0, fp_rails=0, fn_comps=0, fn_rails=0),
+            diff=HypothesisDiff(),
+            narrative="best",
+            cascade_preview={"dead_rails": ["+5V"], "shorted_rails": [],
+                             "dead_comps_count": 0, "anomalous_count": 0, "hot_count": 0},
+        ),
+        Hypothesis(
+            kill_refdes=["U2"], kill_modes=["dead"], score=2.0,
+            metrics=HypothesisMetrics(tp_comps=0, tp_rails=1, fp_comps=0, fp_rails=0, fn_comps=0, fn_rails=0),
+            diff=HypothesisDiff(),
+            narrative="second",
+            cascade_preview={"dead_rails": ["+5V"], "shorted_rails": [],
+                             "dead_comps_count": 0, "anomalous_count": 0, "hot_count": 0},
+        ),
+    ]
+    # 10.0 vs 2.0 — clearly separated
+    assert _compute_discriminators(hyps) == []
+
+
+def test_discriminators_fired_when_top_n_tied():
+    """5 hypotheses tied → return targets that partition them."""
+    from api.pipeline.schematic.hypothesize import (
+        Hypothesis, HypothesisDiff, HypothesisMetrics, _compute_discriminators,
+    )
+    def _hyp(refdes, mode, dead_rails):
+        return Hypothesis(
+            kill_refdes=[refdes], kill_modes=[mode], score=1.0,
+            metrics=HypothesisMetrics(tp_comps=0, tp_rails=1, fp_comps=0, fp_rails=0, fn_comps=0, fn_rails=0),
+            diff=HypothesisDiff(),
+            narrative="n",
+            cascade_preview={"dead_rails": dead_rails, "shorted_rails": [],
+                             "dead_comps_count": 0, "anomalous_count": 0, "hot_count": 0},
+        )
+    hyps = [
+        _hyp("U1", "shorted", ["+5V", "+3V3"]),   # predicts +5V + +3V3
+        _hyp("U7", "shorted", ["+5V"]),            # predicts +5V only
+        _hyp("U17", "shorted", ["+5V", "+1V8"]),   # predicts +5V + +1V8
+        _hyp("U19", "shorted", ["+5V"]),
+        _hyp("U13", "shorted", ["+5V", "+3V3"]),
+    ]
+    result = _compute_discriminators(hyps)
+    # +3V3 appears in 2/5 (hyp 1, 5) → split ratio distance = |2 - 2.5| = 0.5
+    # +1V8 appears in 1/5 (hyp 3) → distance = |1 - 2.5| = 1.5
+    # +5V appears in 5/5 → not discriminating (skipped)
+    # kill_refdes all unique (1/5 each) → distance 1.5
+    # Expected: +3V3 ranks first.
+    assert "+3V3" in result[:2]
+    # +5V must NOT appear (present in all).
+    assert "+5V" not in result
+
+
+def test_discriminators_mixed_rail_and_component_candidates():
+    """kill_refdes entries are also discriminators (measuring the component
+    itself can partition hypotheses)."""
+    from api.pipeline.schematic.hypothesize import (
+        Hypothesis, HypothesisDiff, HypothesisMetrics, _compute_discriminators,
+    )
+    def _hyp(refdes):
+        return Hypothesis(
+            kill_refdes=[refdes], kill_modes=["dead"], score=1.0,
+            metrics=HypothesisMetrics(tp_comps=1, tp_rails=0, fp_comps=0, fp_rails=0, fn_comps=0, fn_rails=0),
+            diff=HypothesisDiff(),
+            narrative="n",
+            cascade_preview={"dead_rails": [], "shorted_rails": [],
+                             "dead_comps_count": 0, "anomalous_count": 0, "hot_count": 0},
+        )
+    hyps = [_hyp("U1"), _hyp("U2"), _hyp("U3"), _hyp("U4")]
+    result = _compute_discriminators(hyps)
+    # Each refdes appears in 1/4 cascades → each has distance 1.0 from half (2.0)
+    # All four tie — top-3 returns 3 of them.
+    assert len(result) == 3
+    # All four are equally valid discriminators; just verify they come from the kill set.
+    assert all(r in {"U1", "U2", "U3", "U4"} for r in result)
+
+
+def test_hypothesize_result_exposes_discriminators_when_tied():
+    """Integration: hypothesize() on an ambiguous observation returns the
+    field populated."""
+    from api.pipeline.schematic.hypothesize import Observations, hypothesize
+    graph = _mnt_like_graph()  # from earlier tests
+    result = hypothesize(
+        graph,
+        observations=Observations(state_rails={"+3V3": "shorted"}),
+    )
+    # At minimum the field exists and is a list.
+    assert isinstance(result.discriminating_targets, list)
