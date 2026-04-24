@@ -54,13 +54,30 @@ Si une amélioration nécessite de toucher un fichier read-only : **tu n'élargi
    ## Impact estimé
    [Si appliqué, score bougerait de combien et pourquoi]
    ```
-3. **Logger** dans `results.tsv` avec status `propose-evaluator-fix` (pas `keep`, pas `discard`) :
+3. **Logger** dans `results.tsv` avec status `propose-evaluator-fix` :
    ```
    <ts>	<baseline_commit>	0.000000	0.000000	0.000000	propose-evaluator-fix	<résumé une ligne>
    ```
 4. **Quitter** la session (exit 0). L'humain lit la proposition au matin et applique manuellement si OK.
 
 Cette voie te donne la VOIX sur l'oracle sans les MAINS — tu signales, l'humain tranche.
+
+### Coexistence avec un `keep` (no-op simulator)
+
+`propose-evaluator-fix` et `keep` ne sont **pas exclusifs**. Tu peux, dans la même session :
+
+- committer un changement défensif/physique sur `simulator.py` qui est no-op sur le bench actuel (`new_score == baseline_score`) → ligne `keep` normale,
+- ET écrire une proposition d'evaluator-fix qui, elle, matérialisera le gain quand l'humain l'appliquera → ligne `propose-evaluator-fix` en plus.
+
+Dans ce cas, **deux lignes** dans `results.tsv` : la ligne `keep` (avec le nouveau commit SHA et le score égal) puis la ligne `propose-evaluator-fix` (score à `0.000000`, même timestamp ou timestamp léger décalé). C'est le pattern "j'ai corrigé l'asymétrie côté simulator, et je propose à l'humain le patch évaluateur qui rendra le correctif scorable". Exemple canonique : `a88e8b8` (union enable_net — no-op sur la sampling window actuelle, mais proposition évaluateur potentielle pour élargir la window).
+
+Ne pas l'utiliser comme échappatoire : si ton changement simulator n'est pas défensible **indépendamment** de l'evaluator-fix, c'est un `discard` + proposition, pas un `keep` + proposition.
+
+## Interpréteur Python
+
+Tu invoques toujours `.venv/bin/python` en chemin direct, **jamais** `python` ni `python3` nus. Le venv n'est pas activé par le runner entre les sessions ; `python` nu pointerait sur le Python système qui n'a pas les deps du projet, et tu perdrais 2-3 tours à t'en apercevoir et activer à la main. Si `.venv/bin/python` n'existe pas, c'est que l'install n'a pas été faite — abort propre avec `ERROR: .venv missing, run make install`.
+
+Les blocs bash et les scripts inline `python -c "..."` de la boucle ci-dessous utilisent donc tous `.venv/bin/python`. Idem pour le bench : `.venv/bin/python -m scripts.eval_simulator`.
 
 ## Setup (vérifications obligatoires au début de CHAQUE session)
 
@@ -81,6 +98,7 @@ test -f benchmark/scenarios.jsonl || { echo "ERROR: scenarios.jsonl disappeared"
 # 3. State files
 test -f evolve/state.json || { echo "ERROR: evolve/state.json missing — re-run bootstrap"; exit 1; }
 test -f evolve/results.tsv || { echo "ERROR: evolve/results.tsv missing — re-run bootstrap"; exit 1; }
+test -x .venv/bin/python || { echo "ERROR: .venv missing, run make install"; exit 1; }
 
 # 4. Working tree clean (tracked only — untracked OK)
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -162,7 +180,7 @@ Puis quitter.
 ### Step 7 — Mesure
 
 ```bash
-timeout 600 python -m scripts.eval_simulator > /tmp/score.json 2> /tmp/score.err
+timeout 600 .venv/bin/python -m scripts.eval_simulator > /tmp/score.json 2> /tmp/score.err
 EXIT_CODE=$?
 ```
 
@@ -196,13 +214,13 @@ description = "<ta description courte sans tab ni newline>"
 #### Cas KEEP (`new_score >= baseline_score` et pas de crash)
 
 ```bash
-delta=$(python3 -c "print(f'{$new_score - $baseline_score:+.4f}')")
+delta=$(.venv/bin/python -c "print(f'{$new_score - $baseline_score:+.4f}')")
 git add api/pipeline/schematic/
 git commit -m "evolve: <description> (score: $new_score, $delta)"
 NEW_COMMIT=$(git rev-parse --short HEAD)
 
 # Update baseline in state.json
-python3 -c "
+.venv/bin/python -c "
 import json
 state = json.load(open('evolve/state.json'))
 state['baseline_score'] = $new_score
