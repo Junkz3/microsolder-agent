@@ -94,6 +94,11 @@
       </svg>
     </button>
   </div>
+  <nav class="topbar-tabs" id="topbarTabs" aria-label="Vues du repair">
+    <button class="tb-tab" data-detail="memory" type="button">Memory</button>
+    <button class="tb-tab" data-detail="schematic" type="button">Schéma</button>
+    <button class="tb-tab" data-detail="graphe" type="button">Graphe</button>
+  </nav>
   <button class="top-btn"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>Importer CAO</button>
   <button class="top-btn" id="tweaksToggle" title="Réglages">
     <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -102,7 +107,39 @@
     <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3.5-6 7-6s7 2.5 7 6"/><path d="M8 8h-2M18 8h-2"/></svg>
     Agent
   </button>
+  <button class="top-btn mode-toggle" id="modeToggle" title="Mode expert (⚙)" aria-label="Basculer mode expert">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19 12c0 .4-.04.78-.1 1.16l2.06 1.61-2 3.46-2.43-.97a7.05 7.05 0 0 1-2.01 1.16l-.37 2.58h-4l-.37-2.58a7.05 7.05 0 0 1-2.01-1.16l-2.43.97-2-3.46 2.06-1.61A7 7 0 0 1 5 12c0-.4.04-.78.1-1.16L3.04 9.23l2-3.46 2.43.97a7.05 7.05 0 0 1 2.01-1.16L9.85 3h4l.37 2.58a7.05 7.05 0 0 1 2.01 1.16l2.43-.97 2 3.46-2.06 1.61c.06.38.1.76.1 1.16z"/>
+    </svg>
+  </button>
 </div>
+
+<!-- ============ GUIDED SIDEBAR (visible only in body.guided-mode) ============ -->
+<aside class="g-sidebar" id="guidedSidebar" aria-label="Mes diagnostics et conversations">
+  <header class="g-sidebar-head">
+    <button class="g-sidebar-home" id="gSidebarHome" type="button" title="Retour à l'accueil">
+      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor"
+           stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12L12 3l9 9"/><path d="M5 10v10h14V10"/>
+      </svg>
+      <span>Accueil</span>
+    </button>
+  </header>
+
+  <section class="g-sidebar-section">
+    <h3 class="g-sidebar-label">Mes diagnostics</h3>
+    <div class="g-repair-list" id="gRepairList"></div>
+    <button class="g-sidebar-new" type="button" id="gNewRepair">+ nouveau diagnostic</button>
+  </section>
+
+  <section class="g-sidebar-section">
+    <h3 class="g-sidebar-label">Conversations</h3>
+    <div class="g-conv-list" id="gConvList"></div>
+    <button class="g-sidebar-new g-conv-new" type="button" id="gNewConv">+ nouvelle conversation</button>
+  </section>
+</aside>
 
 <!-- ============ LEFT RAIL ============ -->
 <div class="rail">
