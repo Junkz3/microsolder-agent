@@ -101,9 +101,12 @@ def auto_classify(
     if kind == "rail" and unit in ("V", "mV"):
         if nominal is None:
             return None
-        # Normalise mV to V.
+        # Normalise the reading to V. `nominal` is the rail's SI target
+        # (stored in V across the codebase — see tests + schematic_graph
+        # inference), so it is NEVER divided by 1000 even when the reading
+        # is submitted in mV.
         v = value / 1000.0 if unit == "mV" else value
-        nom = nominal / 1000.0 if unit == "mV" else nominal
+        nom = nominal
         # Explicit short note dominates.
         if note and "short" in note.lower() and abs(v) < CLASSIFY_RAIL_DEAD_THRESHOLD_V:
             return "shorted"
@@ -305,7 +308,7 @@ def synthesise_observations(
                     nominal=ev.nominal,
                 )
         elif kind == "rail":
-            if ev.auto_classified_mode in ("dead", "alive", "shorted"):
+            if ev.auto_classified_mode in ("dead", "alive", "shorted", "stuck_on"):
                 state_rails[name] = ev.auto_classified_mode
             if ev.value is not None:
                 metrics_rails[name] = ObservedMetric(
