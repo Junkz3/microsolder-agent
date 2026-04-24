@@ -116,3 +116,10 @@ board_assets/*.pdf
 # Runtime data — technician's working data, never committed (any device, any brand)
 memory/*
 !memory/.gitkeep
+
+# Evolve loop state — locally-managed per-machine, do not version
+evolve/*
+!evolve/.gitkeep
+!evolve/reports
+evolve/reports/*
+!evolve/reports/.gitkeep
