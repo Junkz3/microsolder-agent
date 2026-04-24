@@ -240,6 +240,7 @@ async def generate_knowledge_pack(
             auditor_phase_name = "auditor" if rounds_used == 0 else f"auditor_rev_{rounds_used}"
             auditor_stats = PhaseTokenStats(phase=auditor_phase_name)
             previous_brief = verdict.revision_brief if rounds_used > 0 else ""
+            call_t0 = time.monotonic()
             verdict = await run_auditor(
                 client=client,
                 model=models_by_role["auditor"],
@@ -252,7 +253,7 @@ async def generate_knowledge_pack(
                 revision_brief=previous_brief,
                 stats=auditor_stats,
             )
-            auditor_stats.duration_s = time.monotonic() - t0
+            auditor_stats.duration_s = time.monotonic() - call_t0
             phase_stats.append(auditor_stats)
             (pack_dir / "audit_verdict.json").write_text(
                 verdict.model_dump_json(indent=2), encoding="utf-8"
