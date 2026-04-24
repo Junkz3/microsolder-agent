@@ -316,6 +316,19 @@ class SimulationEngine:
                 comp = self.electrical.components.get(f.refdes)
                 if comp is None:
                     continue
+                # Transistor D-S short on a stuck-on-style role doesn't
+                # ground the rail — it pins the switch closed. The
+                # downstream rail becomes always-on (anomalous but not
+                # dead), the upstream rail is unaffected. No forward
+                # cascade — aligns with hypothesize's
+                # `_cascade_q_load_stuck_on` / `_cascade_passive_alive`.
+                if comp.kind == "passive_q" and comp.role in {
+                    "load_switch",
+                    "cell_protection",
+                    "cell_balancer",
+                    "inrush_limiter",
+                }:
+                    continue
                 # Find the rail this component touches (through any pin).
                 touched = {
                     pin.net_label
