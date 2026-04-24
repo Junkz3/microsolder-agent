@@ -56,3 +56,34 @@ scenarios:
       role: filter
       expected_mode: open
     accept_in_top_n: 10
+
+  - id: mnt-reform-q-load-switch-stuck-on
+    description: |
+      The board consumes 500mA in standby even with the lid closed.
+      A USB-side filtered rail measures nominal voltage when its
+      EN is low. A load-switch MOSFET downstream has D-S shorted
+      permanently — rail stuck-on. Ground truth: any passive_q with
+      role=load_switch connected to a USB/peripheral rail.
+    device_slug: mnt-reform-motherboard
+    observations:
+      state_rails: { "USBH_3V3": "stuck_on" }
+    ground_truth_match:
+      kind: passive_q
+      role: load_switch
+      expected_mode: short
+    accept_in_top_n: 5
+
+  - id: mnt-reform-q-inrush-limiter-open
+    description: |
+      Main VIN reaches the board but no rail ever powers up on cold
+      boot. Inrush limiter MOSFET open (burned from cold-inrush at
+      first power-on). Ground truth: any passive_q with
+      role=inrush_limiter in series with the main VIN path.
+    device_slug: mnt-reform-motherboard
+    observations:
+      state_rails: { "VIN": "dead" }
+    ground_truth_match:
+      kind: passive_q
+      role: inrush_limiter
+      expected_mode: open
+    accept_in_top_n: 10
