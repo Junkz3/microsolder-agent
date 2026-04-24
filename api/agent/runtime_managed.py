@@ -383,8 +383,12 @@ async def _dispatch_tool(
         # session_mirrors ensures the task is awaited on WS close so a
         # fast disconnect doesn't cancel it mid-flight.
         if result.get("validated") and repair_id:
-            mirrors = session_mirrors or _SessionMirrors()
-            mirrors.spawn(
+            if session_mirrors is None:
+                raise RuntimeError(
+                    "mb_validate_finding dispatch requires session_mirrors; "
+                    "this path is only valid from run_diagnostic_session_managed"
+                )
+            session_mirrors.spawn(
                 mirror_outcome_to_memory(
                     client=client,
                     device_slug=device_slug,

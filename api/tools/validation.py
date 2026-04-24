@@ -133,6 +133,14 @@ async def mirror_outcome_to_memory(
     `mb_validate_finding` returns — closes the cross-repair learning
     loop so validated fixes become searchable via `memory_search` on
     future sessions for the same device. Never raises.
+
+    Returns one of:
+      - "mirrored" — successful upsert on some attempt
+      - "skipped:flag_disabled" — ma_memory_store_enabled is False
+      - "skipped:no_outcome" — no outcome.json on disk yet
+      - "skipped:no_store" — memory store id could not be resolved
+      - "error:ensure_store_failed" — ensure_memory_store raised
+      - "error:upsert_failed" — all 3 upsert attempts failed
     """
     from api.agent.memory_stores import ensure_memory_store, upsert_memory
     from api.config import get_settings
@@ -174,7 +182,8 @@ async def mirror_outcome_to_memory(
                 "[ValidationMirror] upsert attempt %d/%d failed for %s/%s: %s",
                 attempt + 1, len(delays), device_slug, repair_id, exc,
             )
-            await asyncio.sleep(delays[attempt])
+            if attempt < len(delays) - 1:
+                await asyncio.sleep(delays[attempt])
             continue
         if result is not None:
             logger.info(
@@ -182,7 +191,8 @@ async def mirror_outcome_to_memory(
                 device_slug, repair_id, attempt + 1,
             )
             return "mirrored"
-        await asyncio.sleep(delays[attempt])
+        if attempt < len(delays) - 1:
+            await asyncio.sleep(delays[attempt])
     logger.warning(
         "[ValidationMirror] giving up after %d attempts for %s/%s: %s",
         len(delays), device_slug, repair_id, last_exc,
