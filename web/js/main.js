@@ -57,6 +57,56 @@ if (!window.Boardview) {
   };
 }
 
+async function loadGuidedRepairs() {
+  const list = document.getElementById("gRepairList");
+  if (!list) return;
+  try {
+    const res = await fetch("/pipeline/repairs");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const repairs = await res.json();
+    const params = new URLSearchParams(location.search);
+    const currentRid = params.get("repair");
+
+    list.innerHTML = "";
+    if (!Array.isArray(repairs) || repairs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "g-empty";
+      empty.style.cssText = "font-size:11px;color:var(--text-3);padding:8px";
+      empty.textContent = "Aucun diagnostic encore.";
+      list.appendChild(empty);
+      return;
+    }
+
+    // Top 20 most recent
+    repairs.slice(0, 20).forEach((rep) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "g-repair-item" + (rep.repair_id === currentRid ? " active" : "");
+      const title = (rep.device_label || rep.device_slug || "Diagnostic");
+      const meta = (rep.status === "closed") ? "fermé" : (rep.status === "in_progress") ? "en cours" : "ouvert";
+      const titleSpan = document.createElement("span");
+      titleSpan.textContent = title.length > 32 ? title.slice(0, 30) + "…" : title;
+      const metaSpan = document.createElement("span");
+      metaSpan.className = "g-repair-item-meta";
+      metaSpan.textContent = `${rep.device_slug} · ${meta}`;
+      btn.appendChild(titleSpan);
+      btn.appendChild(metaSpan);
+      btn.addEventListener("click", () => {
+        if (rep.repair_id === currentRid) return;
+        const url = new URL(location.href);
+        url.searchParams.set("repair", rep.repair_id);
+        url.searchParams.set("device", rep.device_slug);
+        url.searchParams.delete("conv");
+        url.searchParams.delete("confirm_intent");
+        location.href = url.toString();
+      });
+      list.appendChild(btn);
+    });
+  } catch (err) {
+    console.warn("[guided] loadGuidedRepairs failed", err);
+  }
+}
+
 /* ---------- INIT ---------- */
 (async function bootstrap() {
   // Apply mode (guided/expert) class on <body> before any DOM-dependent code runs.
@@ -122,6 +172,9 @@ if (!window.Boardview) {
       }
     });
   }
+
+  // Load guided sidebar repairs list (best-effort, async).
+  loadGuidedRepairs();
 
   // Legacy redirect: #memory-bank is merged into #graphe with view=md.
   if (window.location.hash === "#memory-bank") {
