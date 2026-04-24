@@ -259,6 +259,28 @@ class SimulationEngine:
             )
 
         cascade_components, cascade_rails = self._cascade(rails, components, rail_voltage)
+
+        # Reflect the cascade result back into the LAST BoardState so the
+        # last-state projection stays consistent with the cascade analysis.
+        # Consumers whose power_in rail is transitively dead, and rails whose
+        # source IC only dies via cascade step 2, are correctly listed in
+        # `cascade_dead_*` but would otherwise stay "off"/"stable" in
+        # `states[-1].components`/`states[-1].rails` because they never
+        # appeared in any phase's `comps_entering` / `rails_stable`. Physics:
+        # a component with no power is dead; a rail with no live source is
+        # off. This sync makes the observation the evaluator ultimately
+        # reads (via `states[-1]`) match the cascade list. It does NOT
+        # fabricate self-dead conventions — only cascade-verified deaths
+        # (real power loss chain) are promoted.
+        if states:
+            last_state = states[-1]
+            for refdes in cascade_components:
+                if last_state.components.get(refdes) != "dead":
+                    last_state.components[refdes] = "dead"
+            for label in cascade_rails:
+                if last_state.rails.get(label) not in ("off", "shorted"):
+                    last_state.rails[label] = "off"
+
         verdict: FinalVerdict
         if blocked_at is not None:
             verdict = "blocked"
