@@ -164,3 +164,127 @@ async def test_seed_records_per_file_upsert_failure(pack_dir, monkeypatch):
     )
     assert sum(1 for v in status.values() if v == "seeded") == 3
     assert sum(1 for v in status.values() if v.startswith("error:")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Marker I/O tests (Task 1)
+# ---------------------------------------------------------------------------
+
+from api.agent.memory_seed import (  # noqa: E402
+    MARKER_FILENAME,
+    read_seed_marker,
+    write_seed_marker,
+    stale_files_for_pack,
+    _SEED_FILES,
+)
+
+
+def test_marker_roundtrip(tmp_path: Path):
+    slug = "demo"
+    pack = tmp_path / slug
+    pack.mkdir()
+    write_seed_marker(
+        pack_dir=pack,
+        store_id="memstore_abc",
+        seeded_files={"registry.json": 123.0, "rules.json": 456.5},
+    )
+    marker_path = pack / MARKER_FILENAME
+    assert marker_path.exists()
+    data = read_seed_marker(pack)
+    assert data is not None
+    assert data["store_id"] == "memstore_abc"
+    assert data["files"]["registry.json"] == 123.0
+
+
+def test_read_marker_missing(tmp_path: Path):
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    assert read_seed_marker(pack) is None
+
+
+def test_read_marker_corrupt(tmp_path: Path):
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    (pack / MARKER_FILENAME).write_text("{not json")
+    assert read_seed_marker(pack) is None
+
+
+def test_stale_files_no_marker_returns_all_present(tmp_path: Path):
+    """No marker → every file that exists on disk is stale."""
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    (pack / "registry.json").write_text("{}")
+    (pack / "rules.json").write_text("{}")
+    # knowledge_graph.json + dictionary.json absent on purpose
+    stale = stale_files_for_pack(pack)
+    assert set(stale) == {"registry.json", "rules.json"}
+
+
+def test_stale_files_all_synced(tmp_path: Path):
+    """Marker has every file's mtime up-to-date → nothing stale."""
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    files = {}
+    for name, _memory_path in _SEED_FILES:
+        p = pack / name
+        p.write_text("{}")
+        files[name] = p.stat().st_mtime
+    write_seed_marker(pack_dir=pack, store_id="memstore_x", seeded_files=files)
+    assert stale_files_for_pack(pack) == []
+
+
+def test_stale_files_partial_drift(tmp_path: Path):
+    """rules.json touched after seed → only that one is stale."""
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    files = {}
+    for name, _ in _SEED_FILES:
+        p = pack / name
+        p.write_text("{}")
+        files[name] = p.stat().st_mtime
+    write_seed_marker(pack_dir=pack, store_id="memstore_x", seeded_files=files)
+
+    # Simulate a later pipeline write to rules.json only.
+    import time
+    time.sleep(0.01)
+    (pack / "rules.json").write_text('{"rules": []}')
+    assert stale_files_for_pack(pack) == ["rules.json"]
+
+
+@pytest.mark.asyncio
+async def test_seed_only_files_uploads_subset(tmp_path: Path, monkeypatch):
+    """only_files=['rules.json'] must upsert exactly one path and update the marker."""
+    from api.agent import memory_seed as ms_mod
+    from unittest.mock import AsyncMock
+
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    for name, _ in ms_mod._SEED_FILES:
+        (pack / name).write_text("{}")
+
+    class FakeSettings:
+        ma_memory_store_enabled = True
+    monkeypatch.setattr(ms_mod, "get_settings", lambda: FakeSettings())
+
+    async def fake_ensure(client, slug):
+        return "memstore_xyz"
+    monkeypatch.setattr(ms_mod, "ensure_memory_store", fake_ensure)
+
+    calls: list[str] = []
+
+    async def fake_upsert(client, *, store_id, path, content):
+        calls.append(path)
+        return {"id": "mem_1"}
+    monkeypatch.setattr(ms_mod, "upsert_memory", fake_upsert)
+
+    status = await ms_mod.seed_memory_store_from_pack(
+        client=AsyncMock(), device_slug="demo", pack_dir=pack,
+        only_files=["rules.json"],
+    )
+
+    assert calls == ["/knowledge/rules.json"]
+    assert status["/knowledge/rules.json"] == "seeded"
+    # Marker must contain rules.json plus merge with anything previously recorded.
+    marker = ms_mod.read_seed_marker(pack)
+    assert marker["store_id"] == "memstore_xyz"
+    assert "rules.json" in marker["files"]
