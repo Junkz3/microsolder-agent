@@ -105,3 +105,61 @@ async def test_auto_seed_uses_session_mirrors_when_provided(tmp_path, monkeypatc
     assert task in mirrors._pending
     await mirrors.wait_drain(timeout=2.0)
     assert task.done()
+
+
+@pytest.mark.asyncio
+async def test_auto_seed_noop_when_flag_disabled(tmp_path, monkeypatch):
+    """When ma_memory_store_enabled is False, maybe_auto_seed returns None without spawning."""
+    from api.agent import runtime_managed as rm
+    from api.agent import memory_seed as ms
+
+    slug = "demo"
+    pack = tmp_path / slug
+    pack.mkdir()
+    (pack / "rules.json").write_text('{"rules": []}')
+
+    class FakeSettings:
+        anthropic_api_key = "sk-test"
+        memory_root = str(tmp_path)
+        ma_memory_store_enabled = False
+    monkeypatch.setattr(rm, "get_settings", lambda: FakeSettings())
+
+    calls: list[str] = []
+    async def fake_seed(**kwargs):
+        calls.append("called")
+        return {}
+    monkeypatch.setattr(ms, "seed_memory_store_from_pack", fake_seed)
+
+    task = await rm.maybe_auto_seed(
+        client=MagicMock(), device_slug=slug, memory_root=tmp_path,
+    )
+    assert task is None
+    await asyncio.sleep(0.05)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_auto_seed_noop_when_pack_dir_missing(tmp_path, monkeypatch):
+    """When pack_dir doesn't exist, maybe_auto_seed returns None without spawning."""
+    from api.agent import runtime_managed as rm
+    from api.agent import memory_seed as ms
+
+    class FakeSettings:
+        anthropic_api_key = "sk-test"
+        memory_root = str(tmp_path)
+        ma_memory_store_enabled = True
+    monkeypatch.setattr(rm, "get_settings", lambda: FakeSettings())
+
+    calls: list[str] = []
+    async def fake_seed(**kwargs):
+        calls.append("called")
+        return {}
+    monkeypatch.setattr(ms, "seed_memory_store_from_pack", fake_seed)
+
+    # Note: no pack dir created — slug is "nonexistent".
+    task = await rm.maybe_auto_seed(
+        client=MagicMock(), device_slug="nonexistent", memory_root=tmp_path,
+    )
+    assert task is None
+    await asyncio.sleep(0.05)
+    assert calls == []

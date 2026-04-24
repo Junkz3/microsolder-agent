@@ -414,7 +414,7 @@ async def maybe_auto_seed(
     client: AsyncAnthropic,
     device_slug: str,
     memory_root: Path,
-    session_mirrors: "_SessionMirrors | None" = None,
+    session_mirrors: _SessionMirrors | None = None,
 ) -> asyncio.Task | None:
     """Launch a background re-seed of pack files that drifted since last seed.
 
