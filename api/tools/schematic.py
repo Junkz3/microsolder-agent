@@ -41,7 +41,7 @@ _VALID_QUERIES = (
 def _load_graph(
     device_slug: str,
     memory_root: Path,
-    session: "SessionState | None" = None,
+    session: SessionState | None = None,
 ) -> tuple[dict | None, str | None]:
     path = memory_root / device_slug / "electrical_graph.json"
     analyzed_path = memory_root / device_slug / "boot_sequence_analyzed.json"
@@ -358,16 +358,18 @@ def _compute_blast_radius_all(graph: dict) -> list[dict[str, Any]]:
         rails_lost = sum(1 for x in cas if x.startswith("rail:"))
         comps_lost = sum(1 for x in cas if x.startswith("comp:"))
         prefix, label = nid.split(":", 1)
-        scores.append({
-            "id": nid,
-            "kind": "rail" if prefix == "rail" else "component",
-            "label": label,
-            "blast_radius": len(cas),
-            "rails_lost": rails_lost,
-            "comps_lost": comps_lost,
-            # Percentage of the board that goes down if this node dies.
-            "impact_pct": round(100 * len(cas) / total, 1),
-        })
+        scores.append(
+            {
+                "id": nid,
+                "kind": "rail" if prefix == "rail" else "component",
+                "label": label,
+                "blast_radius": len(cas),
+                "rails_lost": rails_lost,
+                "comps_lost": comps_lost,
+                # Percentage of the board that goes down if this node dies.
+                "impact_pct": round(100 * len(cas) / total, 1),
+            }
+        )
     scores.sort(key=lambda s: (-s["blast_radius"], s["label"]))
     return scores
 
@@ -395,12 +397,14 @@ def _critical_path_query(graph: dict) -> dict[str, Any]:
                 candidates.append(by_label[name])
                 seen.add(name)
         candidates.sort(key=lambda s: -s["blast_radius"])
-        per_phase.append({
-            "index": phase.get("index"),
-            "name": phase.get("name"),
-            "kind": phase.get("kind"),
-            "critical": candidates[:3],
-        })
+        per_phase.append(
+            {
+                "index": phase.get("index"),
+                "name": phase.get("name"),
+                "kind": phase.get("kind"),
+                "critical": candidates[:3],
+            }
+        )
 
     return {
         "found": True,
@@ -491,14 +495,23 @@ def _net_query(graph: dict, label: str | None) -> dict[str, Any]:
 # `USB_PWR` is a USB concern even if structurally a rail. Keep this in
 # sync with the frontend copy.
 _DOMAIN_SUBSTRING: dict[str, re.Pattern] = {
-    "hdmi":     re.compile(r"\b(?:HDMI|TMDS|DDC|CEC)\b|^(?:HDMI|TMDS|DDC)_", re.IGNORECASE),
-    "usb":      re.compile(r"\bUSB\b|^USB|USB_", re.IGNORECASE),
-    "pcie":     re.compile(r"\bPCIE\b|^PCIE", re.IGNORECASE),
-    "ethernet": re.compile(r"\b(?:ETH|RGMII|MII|MDIO|PHY)\b|^(?:ETH|RGMII|MII|MDIO|PHY)_", re.IGNORECASE),
-    "audio":    re.compile(r"\b(?:I2S|DAC|ADC|SPDIF|AUDIO|MICBIAS|AVDD|DBVDD|DCVDD|SPKVDD)\b|^(?:I2S|DAC|ADC|SPDIF|AUDIO|MIC)_", re.IGNORECASE),
-    "display":  re.compile(r"\b(?:EDP|DSI|LCD|BACKLIGHT|LVDS|DP_AUX)\b|^(?:EDP|DSI|LCD|BL_)", re.IGNORECASE),
-    "storage":  re.compile(r"\b(?:SD|EMMC|MMC|SDHC|SDIO)\b|^(?:SD|EMMC|MMC)_", re.IGNORECASE),
-    "debug":    re.compile(r"\b(?:JTAG|SWD|UART|TDI|TDO|TCK|TMS|SWDIO|SWCLK)\b|^(?:JTAG|SWD|UART)_", re.IGNORECASE),
+    "hdmi": re.compile(r"\b(?:HDMI|TMDS|DDC|CEC)\b|^(?:HDMI|TMDS|DDC)_", re.IGNORECASE),
+    "usb": re.compile(r"\bUSB\b|^USB|USB_", re.IGNORECASE),
+    "pcie": re.compile(r"\bPCIE\b|^PCIE", re.IGNORECASE),
+    "ethernet": re.compile(
+        r"\b(?:ETH|RGMII|MII|MDIO|PHY)\b|^(?:ETH|RGMII|MII|MDIO|PHY)_", re.IGNORECASE
+    ),
+    "audio": re.compile(
+        r"\b(?:I2S|DAC|ADC|SPDIF|AUDIO|MICBIAS|AVDD|DBVDD|DCVDD|SPKVDD)\b|^(?:I2S|DAC|ADC|SPDIF|AUDIO|MIC)_",
+        re.IGNORECASE,
+    ),
+    "display": re.compile(
+        r"\b(?:EDP|DSI|LCD|BACKLIGHT|LVDS|DP_AUX)\b|^(?:EDP|DSI|LCD|BL_)", re.IGNORECASE
+    ),
+    "storage": re.compile(r"\b(?:SD|EMMC|MMC|SDHC|SDIO)\b|^(?:SD|EMMC|MMC)_", re.IGNORECASE),
+    "debug": re.compile(
+        r"\b(?:JTAG|SWD|UART|TDI|TDO|TCK|TMS|SWDIO|SWCLK)\b|^(?:JTAG|SWD|UART)_", re.IGNORECASE
+    ),
 }
 
 
@@ -521,8 +534,7 @@ def _net_domain_query(graph: dict, domain: str | None) -> dict[str, Any]:
         }
     # 1) Primary — nets whose classified domain matches.
     matching_nets = {
-        label: cn for label, cn in net_domains.items()
-        if (cn.get("domain") or "").lower() == domain
+        label: cn for label, cn in net_domains.items() if (cn.get("domain") or "").lower() == domain
     }
     # 2) Secondary — functional-family substring match so USB_PWR (classified
     # as power_rail) still comes up when the agent asks for 'usb'.
@@ -597,7 +609,7 @@ def _simulate_query(
     killed_refdes: list[str] | None,
     failures: list[dict] | None = None,
     rail_overrides: list[dict] | None = None,
-    session: "SessionState | None" = None,
+    session: SessionState | None = None,
 ) -> dict[str, Any]:
     """Run the behavioral simulator and return a compact cascade summary.
 
@@ -642,9 +654,7 @@ def _simulate_query(
                 "detail": str(exc),
             }
 
-    invalid_refdes = [
-        r for r in killed + [f.refdes for f in f_objs] if r not in components
-    ]
+    invalid_refdes = [r for r in killed + [f.refdes for f in f_objs] if r not in components]
     if invalid_refdes:
         return {
             "found": False,
@@ -660,9 +670,7 @@ def _simulate_query(
             "found": False,
             "reason": "unknown_rail",
             "invalid_rails": invalid_rails,
-            "closest_matches": {
-                r: _closest_matches(list(rails.keys()), r) for r in invalid_rails
-            },
+            "closest_matches": {r: _closest_matches(list(rails.keys()), r) for r in invalid_rails},
         }
 
     # Re-validate from disk so we get the real Pydantic shapes the engine expects.
@@ -724,7 +732,7 @@ def mb_schematic_graph(
     killed_refdes: list[str] | None = None,
     failures: list[dict] | None = None,
     rail_overrides: list[dict] | None = None,
-    session: "SessionState | None" = None,
+    session: SessionState | None = None,
 ) -> dict[str, Any]:
     """Deterministic read over `memory/{device_slug}/electrical_graph.json`.
 

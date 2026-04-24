@@ -97,7 +97,7 @@ class Failure(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_mode_specific_required(self) -> "Failure":
+    def _check_mode_specific_required(self) -> Failure:
         if self.mode == "leaky_short" and self.value_ohms is None:
             raise ValueError(
                 "Failure(mode='leaky_short') requires value_ohms — "
@@ -126,7 +126,7 @@ class RailOverride(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_state_specific_required(self) -> "RailOverride":
+    def _check_state_specific_required(self) -> RailOverride:
         if self.state == "degraded" and self.voltage_pct is None:
             raise ValueError(
                 "RailOverride(state='degraded') requires voltage_pct — "
@@ -155,14 +155,10 @@ class SimulationEngine:
         self.failures: list[Failure] = list(failures or []) + synth_failures
         self.rail_overrides: list[RailOverride] = list(rail_overrides or [])
         # Derived view used by the existing cascade pass.
-        self.killed: frozenset[str] = frozenset(
-            f.refdes for f in self.failures if f.mode == "dead"
-        )
+        self.killed: frozenset[str] = frozenset(f.refdes for f in self.failures if f.mode == "dead")
         # Rails locked by an explicit observation — _stabilise_rails leaves
         # these alone so the override holds across phase iteration.
-        self._overridden_rails: frozenset[str] = frozenset(
-            o.label for o in self.rail_overrides
-        )
+        self._overridden_rails: frozenset[str] = frozenset(o.label for o in self.rail_overrides)
 
     # ------------------------------------------------------------------
     # Phase source — prefer analyzer (phases + triggers carry `from_refdes`),
@@ -174,13 +170,17 @@ class SimulationEngine:
             out = []
             for p in self.analyzed_boot.phases:
                 triggers = [(t.net_label, t.from_refdes) for t in p.triggers_next]
-                out.append((p.index, p.name, list(p.rails_stable), list(p.components_entering), triggers))
+                out.append(
+                    (p.index, p.name, list(p.rails_stable), list(p.components_entering), triggers)
+                )
             return out
         # Compiler fallback — triggers_next is list[str] of signal names, no driver.
         out = []
         for p in self.electrical.boot_sequence:
             triggers = [(net, None) for net in p.triggers_next]
-            out.append((p.index, p.name, list(p.rails_stable), list(p.components_entering), triggers))
+            out.append(
+                (p.index, p.name, list(p.rails_stable), list(p.components_entering), triggers)
+            )
         return out
 
     def run(self) -> SimulationTimeline:
@@ -214,23 +214,25 @@ class SimulationEngine:
         phases = self._phases()
         blocked_at: int | None = None
 
-        for (idx, name, rails_stable, comps_entering, triggers) in phases:
+        for idx, name, rails_stable, comps_entering, triggers in phases:
             self._stabilise_rails(rails, components, rails_stable, signals)
             self._activate_components(rails, rail_voltage, components, comps_entering)
             self._assert_triggers(components, signals, triggers)
             blocked, reason = self._phase_blocked(rails_stable, rails, comps_entering, components)
             if blocked and blocked_at is None:
                 blocked_at = idx
-            states.append(BoardState(
-                phase_index=idx,
-                phase_name=name,
-                rails=dict(rails),
-                rail_voltage_pct=dict(rail_voltage),
-                components=dict(components),
-                signals=dict(signals),
-                blocked=blocked,
-                blocked_reason=reason,
-            ))
+            states.append(
+                BoardState(
+                    phase_index=idx,
+                    phase_name=name,
+                    rails=dict(rails),
+                    rail_voltage_pct=dict(rail_voltage),
+                    components=dict(components),
+                    signals=dict(signals),
+                    blocked=blocked,
+                    blocked_reason=reason,
+                )
+            )
             if blocked:
                 break  # halt at first blockage — cascade below is computed post-loop
 
@@ -238,16 +240,18 @@ class SimulationEngine:
         # meaningful for callers driving the engine purely via overrides on a
         # graph without a compiled boot_sequence.
         if not states:
-            states.append(BoardState(
-                phase_index=0,
-                phase_name="Φ0 — initial state",
-                rails=dict(rails),
-                rail_voltage_pct=dict(rail_voltage),
-                components=dict(components),
-                signals=dict(signals),
-                blocked=False,
-                blocked_reason=None,
-            ))
+            states.append(
+                BoardState(
+                    phase_index=0,
+                    phase_name="Φ0 — initial state",
+                    rails=dict(rails),
+                    rail_voltage_pct=dict(rail_voltage),
+                    components=dict(components),
+                    signals=dict(signals),
+                    blocked=False,
+                    blocked_reason=None,
+                )
+            )
 
         cascade_components, cascade_rails = self._cascade(rails, components, rail_voltage)
         verdict: FinalVerdict
@@ -309,7 +313,9 @@ class SimulationEngine:
                     continue
                 # Find the rail this component touches (through any pin).
                 touched = {
-                    pin.net_label for pin in comp.pins if pin.net_label
+                    pin.net_label
+                    for pin in comp.pins
+                    if pin.net_label
                     and pin.net_label in self.electrical.power_rails
                     and pin.net_label.upper() not in {"GND", "VSS", "0V"}
                 }
@@ -360,10 +366,7 @@ class SimulationEngine:
                 # baseline applied in `run()`). The OTHER net's consumers
                 # are the downstream casualties.
                 touched_nets = {pin.net_label for pin in comp.pins if pin.net_label}
-                upstream_candidates = {
-                    n for n in touched_nets
-                    if n in self.electrical.power_rails
-                }
+                upstream_candidates = {n for n in touched_nets if n in self.electrical.power_rails}
                 if len(upstream_candidates) == 1:
                     upstream = next(iter(upstream_candidates))
                     downstream_nets = touched_nets - {upstream}
@@ -392,9 +395,7 @@ class SimulationEngine:
         # `triggers_next` often describes phase boundaries semantically
         # ("LPC wake") rather than listing every EN signal, so we fill the gap
         # by propagating sequencer state to all enable signals referenced here.
-        sequencer = (
-            self.analyzed_boot.sequencer_refdes if self.analyzed_boot else None
-        )
+        sequencer = self.analyzed_boot.sequencer_refdes if self.analyzed_boot else None
         for label in rails_stable:
             rail = self.electrical.power_rails.get(label)
             if rail is None or not rail.enable_net:
@@ -453,10 +454,7 @@ class SimulationEngine:
             if comp is None:
                 components[refdes] = "on"  # unknown — trust the phase
                 continue
-            ins = [
-                pin.net_label for pin in comp.pins
-                if pin.role == "power_in" and pin.net_label
-            ]
+            ins = [pin.net_label for pin in comp.pins if pin.role == "power_in" and pin.net_label]
             if not ins:
                 components[refdes] = "on"
                 continue
@@ -516,11 +514,13 @@ class SimulationEngine:
         live_comp_states = {"on", "degraded"}
         no_rails = (
             all(rails.get(r) not in live_rail_states for r in rails_stable)
-            if rails_stable else True
+            if rails_stable
+            else True
         )
         no_comps = (
             all(components.get(c) not in live_comp_states for c in comps_entering)
-            if comps_entering else True
+            if comps_entering
+            else True
         )
         if rails_stable and no_rails and (not comps_entering or no_comps):
             missing = next((r for r in rails_stable if rails.get(r) != "stable"), rails_stable[0])

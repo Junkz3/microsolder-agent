@@ -210,9 +210,7 @@ async def _run_schematic_in_background(
             time.monotonic() - t0,
         )
     except Exception:
-        logger.exception(
-            "[API] schematic ingestion failed for slug=%r", device_slug
-        )
+        logger.exception("[API] schematic ingestion failed for slug=%r", device_slug)
 
 
 @router.post(
@@ -231,12 +229,8 @@ async def post_ingest_schematic(
     """
     slug = _validate_slug(request.device_slug)
     pdf_path = _resolve_pdf_path(request.pdf_path)
-    logger.info(
-        "[API] /pipeline/ingest-schematic · slug=%r · pdf=%s", slug, pdf_path
-    )
-    asyncio.create_task(
-        _run_schematic_in_background(slug, pdf_path, request.device_label)
-    )
+    logger.info("[API] /pipeline/ingest-schematic · slug=%r · pdf=%s", slug, pdf_path)
+    asyncio.create_task(_run_schematic_in_background(slug, pdf_path, request.device_label))
     return IngestSchematicResponse(
         device_slug=slug,
         pdf_path=str(pdf_path),
@@ -579,9 +573,7 @@ def list_repair_conversations(repair_id: str) -> dict:
             found_slug = metadata_file.parent.parent.name
             break
     if not found_slug:
-        raise HTTPException(
-            status_code=404, detail=f"unknown repair_id {repair_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"unknown repair_id {repair_id}")
     convs = list_conversations(device_slug=found_slug, repair_id=repair_id)
     return {
         "device_slug": found_slug,
@@ -678,9 +670,7 @@ async def progress_ws(websocket: WebSocket, device_slug: str) -> None:
     await websocket.accept()
     queue = events.subscribe(slug)
     try:
-        await websocket.send_text(
-            json.dumps({"type": "subscribed", "device_slug": slug})
-        )
+        await websocket.send_text(json.dumps({"type": "subscribed", "device_slug": slug}))
         while True:
             event = await queue.get()
             await websocket.send_text(json.dumps(event))
@@ -713,7 +703,9 @@ async def expand_device_pack(device_slug: str, request: ExpandRequest) -> dict:
     slug = _slugify(device_slug)
     logger.info(
         "[API] /packs/%s/expand · focus=%s · refdes=%s",
-        slug, request.focus_symptoms, request.focus_refdes,
+        slug,
+        request.focus_symptoms,
+        request.focus_refdes,
     )
     try:
         return await expand_pack(
@@ -820,7 +812,8 @@ def _render_and_extract_pages(pdf_path: Path, pages_dir: Path, dpi: int = 150) -
         except Exception:
             logger.exception(
                 "grounding failed on page %d of %s — skipping anchors",
-                rp.page_number, pdf_path,
+                rp.page_number,
+                pdf_path,
             )
             continue
         payload = {
@@ -899,13 +892,15 @@ async def get_pack_schematic_pages(device_slug: str) -> dict:
         n = int(png.stem.rsplit("-", 1)[1])
         anchors_file = pages_dir / f"page-{n:02d}.anchors.json"
         anchors_payload = _read_optional_json(anchors_file) or {}
-        pages.append({
-            "n": n,
-            "url": f"/pipeline/packs/{slug}/schematic/pages/{n}.png",
-            "width_pt": anchors_payload.get("page_width_pt", 0.0),
-            "height_pt": anchors_payload.get("page_height_pt", 0.0),
-            "anchors": anchors_payload.get("anchors", []),
-        })
+        pages.append(
+            {
+                "n": n,
+                "url": f"/pipeline/packs/{slug}/schematic/pages/{n}.png",
+                "width_pt": anchors_payload.get("page_width_pt", 0.0),
+                "height_pt": anchors_payload.get("page_height_pt", 0.0),
+                "anchors": anchors_payload.get("anchors", []),
+            }
+        )
     return {"device_slug": slug, "count": len(pages), "pages": pages}
 
 
@@ -1005,7 +1000,8 @@ async def get_pack_schematic(device_slug: str) -> dict:
         except json.JSONDecodeError:
             payload["net_domains_source"] = "none"
             logger.warning(
-                "nets_classified.json malformed for %s", slug,
+                "nets_classified.json malformed for %s",
+                slug,
             )
     else:
         payload["net_domains_source"] = "none"
@@ -1020,26 +1016,22 @@ async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> 
     try:
         graph = ElectricalGraph.model_validate_json(graph_path.read_text())
     except Exception:
-        logger.exception(
-            "[API] analyze-boot: failed to load electrical_graph for %s", device_slug
-        )
+        logger.exception("[API] analyze-boot: failed to load electrical_graph for %s", device_slug)
         return
     _s = get_settings()
     client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
         analyzed = await analyze_boot_sequence(graph, client=client)
-        (pack_dir / "boot_sequence_analyzed.json").write_text(
-            analyzed.model_dump_json(indent=2)
-        )
+        (pack_dir / "boot_sequence_analyzed.json").write_text(analyzed.model_dump_json(indent=2))
         logger.info(
             "[API] analyze-boot finished for %s in %.1fs (phases=%d conf=%.2f)",
-            device_slug, time.monotonic() - t0,
-            len(analyzed.phases), analyzed.global_confidence,
+            device_slug,
+            time.monotonic() - t0,
+            len(analyzed.phases),
+            analyzed.global_confidence,
         )
     except Exception:
-        logger.exception(
-            "[API] analyze-boot failed for %s", device_slug
-        )
+        logger.exception("[API] analyze-boot failed for %s", device_slug)
 
 
 @router.post("/packs/{device_slug}/schematic/analyze-boot", status_code=202)
@@ -1073,26 +1065,22 @@ async def _run_net_classifier_in_background(device_slug: str, pack_dir: Path) ->
     try:
         graph = ElectricalGraph.model_validate_json(graph_path.read_text())
     except Exception:
-        logger.exception(
-            "[API] classify-nets: failed to load electrical_graph for %s", device_slug
-        )
+        logger.exception("[API] classify-nets: failed to load electrical_graph for %s", device_slug)
         return
     _s = get_settings()
     client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
         classification = await classify_nets(graph, client=client)
-        (pack_dir / "nets_classified.json").write_text(
-            classification.model_dump_json(indent=2)
-        )
+        (pack_dir / "nets_classified.json").write_text(classification.model_dump_json(indent=2))
         logger.info(
             "[API] classify-nets finished for %s in %.1fs (nets=%d model=%s)",
-            device_slug, time.monotonic() - t0,
-            len(classification.nets), classification.model_used,
+            device_slug,
+            time.monotonic() - t0,
+            len(classification.nets),
+            classification.model_used,
         )
     except Exception:
-        logger.exception(
-            "[API] classify-nets failed for %s", device_slug
-        )
+        logger.exception("[API] classify-nets failed for %s", device_slug)
 
 
 @router.post("/packs/{device_slug}/schematic/classify-nets", status_code=202)
@@ -1181,7 +1169,7 @@ async def get_schematic_passives(device_slug: str) -> list[dict]:
             "kind": comp.get("kind", "ic"),
             "role": comp.get("role"),
             "confidence": 0.7,  # classifier confidence not yet persisted on
-                                # ComponentNode — follow-up phase. Stubbed here.
+            # ComponentNode — follow-up phase. Stubbed here.
             "source": "heuristic",
         }
         for refdes, comp in components.items()
@@ -1217,7 +1205,8 @@ async def post_simulate(device_slug: str, request: SimulateRequest) -> dict:
         ) from exc
 
     invalid = [
-        r for r in list(request.killed_refdes) + [f.refdes for f in request.failures]
+        r
+        for r in list(request.killed_refdes) + [f.refdes for f in request.failures]
         if r not in electrical.components
     ]
     if invalid:
@@ -1226,8 +1215,7 @@ async def post_simulate(device_slug: str, request: SimulateRequest) -> dict:
             detail=f"Unknown refdes: {invalid}",
         )
     invalid_rails = [
-        o.label for o in request.rail_overrides
-        if o.label not in electrical.power_rails
+        o.label for o in request.rail_overrides if o.label not in electrical.power_rails
     ]
     if invalid_rails:
         raise HTTPException(
@@ -1305,7 +1293,9 @@ class MeasurementCreate(BaseModel):
     status_code=201,
 )
 async def post_measurement(
-    device_slug: str, repair_id: str, body: MeasurementCreate,
+    device_slug: str,
+    repair_id: str,
+    body: MeasurementCreate,
 ) -> dict:
     """Append a measurement event to the repair journal and auto-classify it.
 
@@ -1317,10 +1307,15 @@ async def post_measurement(
     settings = get_settings()
     safe_repair_id = _validate_repair_id(repair_id)
     result = _mb_record_measurement(
-        device_slug=_slugify(device_slug), repair_id=safe_repair_id,
+        device_slug=_slugify(device_slug),
+        repair_id=safe_repair_id,
         memory_root=Path(settings.memory_root),
-        target=body.target, value=body.value, unit=body.unit,
-        nominal=body.nominal, note=body.note, source="ui",
+        target=body.target,
+        value=body.value,
+        unit=body.unit,
+        nominal=body.nominal,
+        note=body.note,
+        source="ui",
     )
     if not result.get("recorded"):
         raise HTTPException(status_code=400, detail=result)
@@ -1329,8 +1324,10 @@ async def post_measurement(
 
 @router.get("/packs/{device_slug}/repairs/{repair_id}/measurements")
 async def get_measurements(
-    device_slug: str, repair_id: str,
-    target: str | None = None, since: str | None = None,
+    device_slug: str,
+    repair_id: str,
+    target: str | None = None,
+    since: str | None = None,
 ) -> dict:
     """Return the measurement journal for a repair, newest-first.
 
@@ -1341,9 +1338,11 @@ async def get_measurements(
     settings = get_settings()
     safe_repair_id = _validate_repair_id(repair_id)
     return _mb_list_measurements(
-        device_slug=_slugify(device_slug), repair_id=safe_repair_id,
+        device_slug=_slugify(device_slug),
+        repair_id=safe_repair_id,
         memory_root=Path(settings.memory_root),
-        target=target, since=since,
+        target=target,
+        since=since,
     )
 
 

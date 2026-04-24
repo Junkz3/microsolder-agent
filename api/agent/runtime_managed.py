@@ -78,10 +78,11 @@ class _SessionMirrors:
                 asyncio.gather(*self._pending, return_exceptions=True),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "[Diag-MA] %d mirror tasks still pending after %.1fs — cancelling",
-                len(self._pending), timeout,
+                len(self._pending),
+                timeout,
             )
             for task in list(self._pending):
                 task.cancel()
@@ -98,7 +99,7 @@ _SUMMARY_SYSTEM = (
     "- **Dernière action du tech** : 1 phrase — ce qu'il venait de faire ou de rapporter\n\n"
     "Pas de préambule, pas de conclusion, juste les 4 sections. Markdown OK "
     "(gras pour les refdes, italique pour les tensions). N'invente rien — "
-    "si une section n'a rien à dire, écris \"—\"."
+    'si une section n\'a rien à dire, écris "—".'
 )
 
 
@@ -121,7 +122,7 @@ def _strip_intro_wrapper(text: str) -> str | None:
     idx = text.rfind(marker)
     if idx < 0:
         return None
-    tail = text[idx + len(marker):].strip()
+    tail = text[idx + len(marker) :].strip()
     return tail or None
 
 
@@ -143,9 +144,7 @@ async def _collect_ma_transcript_lines(
         )
         return None
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "[Diag-MA] _summarize: events.list(%s) failed: %s", old_session_id, exc
-        )
+        logger.warning("[Diag-MA] _summarize: events.list(%s) failed: %s", old_session_id, exc)
         return None
 
     collected: list[Any] = []
@@ -267,9 +266,7 @@ def _collect_jsonl_transcript_lines(
     return lines
 
 
-async def _haiku_summarize_lines(
-    client: AsyncAnthropic, lines: list[str]
-) -> dict[str, Any] | None:
+async def _haiku_summarize_lines(client: AsyncAnthropic, lines: list[str]) -> dict[str, Any] | None:
     """Run the Haiku note-taker on a rendered transcript, return `{summary, usage}`."""
     transcript = "\n".join(lines)
     try:
@@ -338,7 +335,10 @@ async def _summarize_prior_history_for_resume(
         logger.info(
             "[Diag-MA] MA events empty for session=%s — fell back to JSONL "
             "(repair=%s conv=%s, lines=%d)",
-            old_session_id, repair_id, conv_id, len(lines or []),
+            old_session_id,
+            repair_id,
+            conv_id,
+            len(lines or []),
         )
 
     if not lines:
@@ -372,6 +372,7 @@ async def _dispatch_tool(
             profile_get,
             profile_track_skill,
         )
+
         if name == "profile_get":
             return profile_get(session=session)
         if name == "profile_check_skills":
@@ -386,28 +387,37 @@ async def _dispatch_tool(
         return dispatch_bv(session, name, payload)
     if name == "mb_get_component":
         return mb_get_component(
-            device_slug=device_slug, refdes=payload.get("refdes", ""),
-            memory_root=memory_root, session=session,
+            device_slug=device_slug,
+            refdes=payload.get("refdes", ""),
+            memory_root=memory_root,
+            session=session,
         )
     if name == "mb_get_rules_for_symptoms":
         return mb_get_rules_for_symptoms(
-            device_slug=device_slug, symptoms=payload.get("symptoms", []),
-            memory_root=memory_root, max_results=payload.get("max_results", 5),
+            device_slug=device_slug,
+            symptoms=payload.get("symptoms", []),
+            memory_root=memory_root,
+            max_results=payload.get("max_results", 5),
             session=session,
         )
     if name == "mb_list_findings":
         return mb_list_findings(
-            device_slug=device_slug, memory_root=memory_root,
+            device_slug=device_slug,
+            memory_root=memory_root,
             limit=payload.get("limit", 20),
             filter_refdes=payload.get("filter_refdes"),
         )
     if name == "mb_record_finding":
         return await mb_record_finding(
-            client=client, device_slug=device_slug,
-            refdes=payload.get("refdes", ""), symptom=payload.get("symptom", ""),
+            client=client,
+            device_slug=device_slug,
+            refdes=payload.get("refdes", ""),
+            symptom=payload.get("symptom", ""),
             confirmed_cause=payload.get("confirmed_cause", ""),
-            memory_root=memory_root, mechanism=payload.get("mechanism"),
-            notes=payload.get("notes"), session_id=session_id,
+            memory_root=memory_root,
+            mechanism=payload.get("mechanism"),
+            notes=payload.get("notes"),
+            session_id=session_id,
         )
     if name == "mb_schematic_graph":
         return mb_schematic_graph(
@@ -425,6 +435,7 @@ async def _dispatch_tool(
         )
     if name == "mb_hypothesize":
         from api.tools.hypothesize import mb_hypothesize as _mb_hypothesize
+
         return _mb_hypothesize(
             device_slug=device_slug,
             memory_root=memory_root,
@@ -441,8 +452,10 @@ async def _dispatch_tool(
         )
     if name == "mb_record_measurement":
         from api.tools.measurements import mb_record_measurement as _mb_rec
+
         return _mb_rec(
-            device_slug=device_slug, repair_id=repair_id or "",
+            device_slug=device_slug,
+            repair_id=repair_id or "",
             memory_root=memory_root,
             target=payload.get("target", ""),
             value=payload.get("value", 0.0),
@@ -453,16 +466,20 @@ async def _dispatch_tool(
         )
     if name == "mb_list_measurements":
         from api.tools.measurements import mb_list_measurements as _mb_list
+
         return _mb_list(
-            device_slug=device_slug, repair_id=repair_id or "",
+            device_slug=device_slug,
+            repair_id=repair_id or "",
             memory_root=memory_root,
             target=payload.get("target"),
             since=payload.get("since"),
         )
     if name == "mb_compare_measurements":
         from api.tools.measurements import mb_compare_measurements as _mb_cmp
+
         return _mb_cmp(
-            device_slug=device_slug, repair_id=repair_id or "",
+            device_slug=device_slug,
+            repair_id=repair_id or "",
             memory_root=memory_root,
             target=payload.get("target", ""),
             before_ts=payload.get("before_ts"),
@@ -470,33 +487,38 @@ async def _dispatch_tool(
         )
     if name == "mb_observations_from_measurements":
         from api.tools.measurements import mb_observations_from_measurements as _mb_syn
+
         return _mb_syn(
-            device_slug=device_slug, repair_id=repair_id or "",
+            device_slug=device_slug,
+            repair_id=repair_id or "",
             memory_root=memory_root,
         )
     if name == "mb_set_observation":
         from api.tools.measurements import mb_set_observation as _mb_set
+
         return _mb_set(
-            device_slug=device_slug, repair_id=repair_id or "",
+            device_slug=device_slug,
+            repair_id=repair_id or "",
             memory_root=memory_root,
             target=payload.get("target", ""),
             mode=payload.get("mode", "unknown"),
         )
     if name == "mb_clear_observations":
         from api.tools.measurements import mb_clear_observations as _mb_clr
+
         return _mb_clr(
-            device_slug=device_slug, repair_id=repair_id or "",
+            device_slug=device_slug,
+            repair_id=repair_id or "",
             memory_root=memory_root,
         )
     if name == "mb_validate_finding":
-        import asyncio
-
         from api.tools.validation import (
             mb_validate_finding as _mb_val,
         )
         from api.tools.validation import (
             mirror_outcome_to_memory,
         )
+
         result = _mb_val(
             device_slug=device_slug,
             repair_id=repair_id or "",
@@ -528,7 +550,8 @@ async def _dispatch_tool(
         return result
     if name == "mb_expand_knowledge":
         return await mb_expand_knowledge(
-            client=client, device_slug=device_slug,
+            client=client,
+            device_slug=device_slug,
             focus_symptoms=payload.get("focus_symptoms", []),
             focus_refdes=payload.get("focus_refdes", []),
             memory_root=memory_root,
@@ -575,12 +598,16 @@ async def maybe_auto_seed(
                 only_files=stale,
             )
             logger.info(
-                "[Diag-MA] auto-seeded slug=%s files=%s", device_slug, stale,
+                "[Diag-MA] auto-seeded slug=%s files=%s",
+                device_slug,
+                stale,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[Diag-MA] auto-seed failed slug=%s files=%s: %s",
-                device_slug, stale, exc,
+                device_slug,
+                stale,
+                exc,
             )
 
     if session_mirrors is not None:
@@ -628,7 +655,7 @@ async def run_diagnostic_session_managed(
         await ws.close()
         return
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)  # noqa: E501
     session_mirrors = _SessionMirrors()
     memory_root = Path(settings.memory_root)
     memory_store_id = await ensure_memory_store(client, device_slug)
@@ -647,13 +674,16 @@ async def run_diagnostic_session_managed(
     conversation_count = 0
     if repair_id:
         resolved_conv_id, _created = ensure_conversation(
-            device_slug=device_slug, repair_id=repair_id,
-            conv_id=conv_id, tier=tier,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            tier=tier,
             memory_root=memory_root,
         )
         conversation_count = len(
             list_conversations(
-                device_slug=device_slug, repair_id=repair_id,
+                device_slug=device_slug,
+                repair_id=repair_id,
                 memory_root=memory_root,
             )
         )
@@ -691,8 +721,10 @@ async def run_diagnostic_session_managed(
     reused_session_id = None
     if resolved_conv_id:
         reused_session_id = load_ma_session_id(
-            device_slug=device_slug, repair_id=repair_id,
-            conv_id=resolved_conv_id, tier=tier,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+            tier=tier,
         )
     session = None
     resumed = False
@@ -713,19 +745,24 @@ async def run_diagnostic_session_managed(
                 logger.info(
                     "[Diag-MA] session=%s bound to stale agent=%s (current=%s) — "
                     "forcing fresh session + recap",
-                    reused_session_id, session_agent_id, agent_info["id"],
+                    reused_session_id,
+                    session_agent_id,
+                    agent_info["id"],
                 )
                 session = None
             else:
                 resumed = True
                 logger.info(
                     "[Diag-MA] Resuming existing session=%s for repair=%s conv=%s",
-                    reused_session_id, repair_id, resolved_conv_id,
+                    reused_session_id,
+                    repair_id,
+                    resolved_conv_id,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[Diag-MA] could not resume session=%s (%s) — creating fresh",
-                reused_session_id, exc,
+                reused_session_id,
+                exc,
             )
             session = None
 
@@ -749,22 +786,28 @@ async def run_diagnostic_session_managed(
         try:
             session = await client.beta.sessions.create(**session_kwargs)
         except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "[Diag-MA] session create failed for device=%s", device_slug
-            )
+            logger.exception("[Diag-MA] session create failed for device=%s", device_slug)
             await ws.accept()
             await ws.send_json({"type": "error", "text": f"session create failed: {exc}"})
             await ws.close()
             return
         if resolved_conv_id:
             save_ma_session_id(
-                device_slug=device_slug, repair_id=repair_id,
-                conv_id=resolved_conv_id, session_id=session.id, tier=tier,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+                session_id=session.id,
+                tier=tier,
             )
 
     logger.info(
         "[Diag-MA] session=%s device=%s tier=%s model=%s memory=%s resumed=%s",
-        session.id, device_slug, tier, agent_info["model"], memory_store_id, resumed,
+        session.id,
+        device_slug,
+        tier,
+        agent_info["model"],
+        memory_store_id,
+        resumed,
     )
 
     await ws.accept()
@@ -799,6 +842,7 @@ async def run_diagnostic_session_managed(
     else:
         from api.profile.prompt import render_technician_block
         from api.profile.store import load_profile
+
         device_intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
         tech_block = render_technician_block(load_profile())
         parts: list[str] = []
@@ -812,34 +856,44 @@ async def run_diagnostic_session_managed(
         parts.append(f"[CONTEXTE TECHNICIEN]\n{tech_block}")
         intro = "\n\n---\n\n".join(parts) if parts else None
     if recovery_summary:
-        await ws.send_json({
-            "type": "session_resumed_summary",
-            "summary": recovery_summary["summary"],
-            "tokens_in": recovery_summary["usage"]["input_tokens"],
-            "tokens_out": recovery_summary["usage"]["output_tokens"],
-        })
+        await ws.send_json(
+            {
+                "type": "session_resumed_summary",
+                "summary": recovery_summary["summary"],
+                "tokens_in": recovery_summary["usage"]["input_tokens"],
+                "tokens_out": recovery_summary["usage"]["output_tokens"],
+            }
+        )
     if intro:
-        await ws.send_json({
-            "type": "context_loaded",
-            "device_slug": device_slug,
-            "repair_id": repair_id,
-        })
+        await ws.send_json(
+            {
+                "type": "context_loaded",
+                "device_slug": device_slug,
+                "repair_id": repair_id,
+            }
+        )
         logger.info(
             "[Diag-MA] Stashed session intro for repair=%s (awaiting tech input)",
             repair_id,
         )
     if resumed:
-        await ws.send_json({
-            "type": "session_resumed",
-            "session_id": session.id,
-            "repair_id": repair_id,
-        })
+        await ws.send_json(
+            {
+                "type": "session_resumed",
+                "session_id": session.id,
+                "repair_id": repair_id,
+            }
+        )
         # Replay the MA session's past events so the UI chat panel rebuilds
         # the conversation visually. Also replays per-turn costs from the
         # span.model_request_end events MA stores alongside so the lifetime
         # cost chip survives the reopen.
         await _replay_ma_history_to_ws(
-            ws, client, session.id, session_state, agent_info["model"],
+            ws,
+            client,
+            session.id,
+            session_state,
+            agent_info["model"],
         )
 
     # Cache: agent.custom_tool_use events by event.id, so we can look up
@@ -858,17 +912,29 @@ async def run_diagnostic_session_managed(
     try:
         recv_task = asyncio.create_task(
             _forward_ws_to_session(
-                ws, client, session.id, pending_intro=intro, repair_id=repair_id,
-                device_slug=device_slug, conv_id=resolved_conv_id,
+                ws,
+                client,
+                session.id,
+                pending_intro=intro,
+                repair_id=repair_id,
+                device_slug=device_slug,
+                conv_id=resolved_conv_id,
                 memory_root=memory_root,
             ),
             name="ws->session",
         )
         emit_task = asyncio.create_task(
             _forward_session_to_ws(
-                ws, client, session.id, device_slug, memory_root, events_by_id,
-                session_state, agent_info["model"],
-                repair_id=repair_id, conv_id=resolved_conv_id,
+                ws,
+                client,
+                session.id,
+                device_slug,
+                memory_root,
+                events_by_id,
+                session_state,
+                agent_info["model"],
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
                 session_mirrors=session_mirrors,
             ),
             name="session->ws",
@@ -888,11 +954,14 @@ async def run_diagnostic_session_managed(
             if isinstance(exc, WebSocketDisconnect):
                 logger.info(
                     "[Diag-MA] task %s finished on WS disconnect code=%s",
-                    task.get_name(), getattr(exc, "code", "?"),
+                    task.get_name(),
+                    getattr(exc, "code", "?"),
                 )
             else:
                 logger.exception(
-                    "[Diag-MA] task %s raised", task.get_name(), exc_info=exc,
+                    "[Diag-MA] task %s raised",
+                    task.get_name(),
+                    exc_info=exc,
                 )
     except WebSocketDisconnect:
         logger.info("[Diag-MA] WS disconnected for device=%s", device_slug)
@@ -937,9 +1006,7 @@ async def _replay_ma_history_to_ws(
     try:
         events_iter = client.beta.sessions.events.list(session_id)
     except AttributeError:
-        logger.warning(
-            "[Diag-MA] SDK has no beta.sessions.events.list — skipping replay"
-        )
+        logger.warning("[Diag-MA] SDK has no beta.sessions.events.list — skipping replay")
         return
     except Exception as exc:  # noqa: BLE001
         logger.warning("[Diag-MA] events.list failed for %s: %s", session_id, exc)
@@ -978,11 +1045,17 @@ async def _replay_ma_history_to_ws(
                 # contains both the device context and technician profile blocks,
                 # separated by "---" markers. Use rfind to skip all prefix parts
                 # and surface only the tech's actual text.
-                if text.startswith(("[Nouvelle session de diagnostic]", "[CONTEXTE TECHNICIEN]", "[REPRISE DE CONVERSATION")):
+                if text.startswith(
+                    (
+                        "[Nouvelle session de diagnostic]",
+                        "[CONTEXTE TECHNICIEN]",
+                        "[REPRISE DE CONVERSATION",
+                    )
+                ):
                     marker = "\n\n---\n\n"
                     idx = text.rfind(marker)
                     if idx >= 0:
-                        text = text[idx + len(marker):].strip()
+                        text = text[idx + len(marker) :].strip()
                     else:
                         continue  # pure intro with no follow-up — hide
                 if not text:
@@ -1024,18 +1097,15 @@ async def _replay_ma_history_to_ws(
             usage = getattr(event, "model_usage", None)
             if usage is not None:
                 model_label = (
-                    getattr(usage, "model", None)
-                    or getattr(event, "model", None)
-                    or agent_model
+                    getattr(usage, "model", None) or getattr(event, "model", None) or agent_model
                 )
                 cost = compute_turn_cost(
                     model_label,
                     input_tokens=getattr(usage, "input_tokens", 0) or 0,
                     output_tokens=getattr(usage, "output_tokens", 0) or 0,
                     cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-                    cache_creation_input_tokens=getattr(
-                        usage, "cache_creation_input_tokens", 0
-                    ) or 0,
+                    cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0)
+                    or 0,
                 )
                 await ws.send_json({"type": "turn_cost", **cost, "replay": True})
 
@@ -1097,7 +1167,9 @@ async def _forward_ws_to_session(
             )
             if repair_id and conv_id and device_slug and memory_root:
                 append_event(
-                    device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    conv_id=conv_id,
                     memory_root=memory_root,
                     event={
                         "role": "user",
@@ -1117,8 +1189,11 @@ async def _forward_ws_to_session(
         # not the device-context boilerplate).
         if not first_user_seen and repair_id and conv_id and device_slug:
             touch_conversation(
-                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
-                first_message=text, memory_root=memory_root,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=conv_id,
+                first_message=text,
+                memory_root=memory_root,
             )
             first_user_seen = True
 
@@ -1128,9 +1203,7 @@ async def _forward_ws_to_session(
             if repair_id and device_slug:
                 from api.agent.chat_history import touch_status
 
-                touch_status(
-                    device_slug=device_slug, repair_id=repair_id, status="in_progress"
-                )
+                touch_status(device_slug=device_slug, repair_id=repair_id, status="in_progress")
         await client.beta.sessions.events.send(
             session_id,
             events=[
@@ -1181,16 +1254,10 @@ async def _forward_session_to_ws(
             if etype == "agent.message":
                 for block in getattr(event, "content", None) or []:
                     if getattr(block, "type", None) == "text":
-                        clean, unknown = sanitize_agent_text(
-                            block.text, session_state.board
-                        )
+                        clean, unknown = sanitize_agent_text(block.text, session_state.board)
                         if unknown:
-                            logger.warning(
-                                "sanitizer wrapped unknown refdes: %s", unknown
-                            )
-                        await ws.send_json(
-                            {"type": "message", "role": "assistant", "text": clean}
-                        )
+                            logger.warning("sanitizer wrapped unknown refdes: %s", unknown)
+                        await ws.send_json({"type": "message", "role": "assistant", "text": clean})
 
             elif etype == "agent.thinking":
                 text = getattr(event, "text", "") or ""
@@ -1215,14 +1282,14 @@ async def _forward_session_to_ws(
                         input_tokens=getattr(usage, "input_tokens", 0) or 0,
                         output_tokens=getattr(usage, "output_tokens", 0) or 0,
                         cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-                        cache_creation_input_tokens=getattr(
-                            usage, "cache_creation_input_tokens", 0
-                        ) or 0,
+                        cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0)
+                        or 0,
                     )
                     await ws.send_json({"type": "turn_cost", **cost})
                     if repair_id and conv_id:
                         touch_conversation(
-                            device_slug=device_slug, repair_id=repair_id,
+                            device_slug=device_slug,
+                            repair_id=repair_id,
                             conv_id=conv_id,
                             cost_usd=cost.get("cost_usd") if isinstance(cost, dict) else None,
                             model=model_label,
@@ -1262,10 +1329,12 @@ async def _forward_session_to_ws(
                     # for WS clients that need to know when it's safe to
                     # send the next user input (bench scripts, automated
                     # tests). UI chat clients can ignore it.
-                    await ws.send_json({
-                        "type": "turn_complete",
-                        "stop_reason": stop_type,
-                    })
+                    await ws.send_json(
+                        {
+                            "type": "turn_complete",
+                            "stop_reason": stop_type,
+                        }
+                    )
                     continue
                 event_ids = getattr(stop, "event_ids", None) or []
                 for eid in event_ids:
@@ -1276,15 +1345,19 @@ async def _forward_session_to_ws(
                         continue
                     tool_event = events_by_id.get(eid)
                     if tool_event is None:
-                        logger.warning(
-                            "[Diag-MA] requires_action for unknown event id %s", eid
-                        )
+                        logger.warning("[Diag-MA] requires_action for unknown event id %s", eid)
                         continue
                     name = getattr(tool_event, "name", "")
                     payload = getattr(tool_event, "input", {}) or {}
                     result = await _dispatch_tool(
-                        name, payload, device_slug, memory_root, client,
-                        session_state, session_id, repair_id=repair_id,
+                        name,
+                        payload,
+                        device_slug,
+                        memory_root,
+                        client,
+                        session_state,
+                        session_id,
+                        repair_id=repair_id,
                         session_mirrors=session_mirrors,
                     )
                     # Emit the WS event if the dispatch succeeded.
@@ -1299,7 +1372,10 @@ async def _forward_session_to_ws(
                                 "type": "user.custom_tool_result",
                                 "custom_tool_use_id": eid,
                                 "content": [
-                                    {"type": "text", "text": json.dumps(result_for_agent, default=str)}
+                                    {
+                                        "type": "text",
+                                        "text": json.dumps(result_for_agent, default=str),
+                                    }
                                 ],
                             }
                         ],

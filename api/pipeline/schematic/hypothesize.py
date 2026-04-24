@@ -35,11 +35,11 @@ CascadeFn = Callable[["ElectricalGraph", "_CompNode"], dict]
 # based on benchmark accuracy.
 # ---------------------------------------------------------------------------
 
-PENALTY_WEIGHTS: tuple[int, int] = (10, 2)   # (fp_weight, fn_weight)
-TOP_K_SINGLE: int = 20                        # how many single-fault survivors seed 2-fault
+PENALTY_WEIGHTS: tuple[int, int] = (10, 2)  # (fp_weight, fn_weight)
+TOP_K_SINGLE: int = 20  # how many single-fault survivors seed 2-fault
 MAX_RESULTS_DEFAULT: int = 5
 TWO_FAULT_ENABLED: bool = True
-MAX_PAIRS: int = 100                          # 2-fault pair cap (safety net, rarely hit)
+MAX_PAIRS: int = 100  # 2-fault pair cap (safety net, rarely hit)
 
 # ---------------------------------------------------------------------------
 # Phase 4: visibility multiplier — dampens topologically weak passive cascades.
@@ -49,10 +49,10 @@ MAX_PAIRS: int = 100                          # 2-fault pair cap (safety net, ra
 
 _SCORE_VISIBILITY: dict[tuple[str, str, str], float] = {
     ("passive_c", "decoupling", "open"): 0.5,
-    ("passive_c", "bulk",       "open"): 0.5,
-    ("passive_c", "filter",     "open"): 0.5,
-    ("passive_r", "pull_up",    "open"): 0.5,
-    ("passive_r", "pull_down",  "open"): 0.5,
+    ("passive_c", "bulk", "open"): 0.5,
+    ("passive_c", "filter", "open"): 0.5,
+    ("passive_r", "pull_up", "open"): 0.5,
+    ("passive_r", "pull_down", "open"): 0.5,
     # shorts are visible at rail level → no multiplier.
 }
 
@@ -61,14 +61,20 @@ _SCORE_VISIBILITY: dict[tuple[str, str, str], float] = {
 # ---------------------------------------------------------------------------
 
 ComponentMode = Literal[
-    "dead", "alive", "anomalous", "hot",
-    "open", "short",
-    "stuck_on", "stuck_off",
+    "dead",
+    "alive",
+    "anomalous",
+    "hot",
+    "open",
+    "short",
+    "stuck_on",
+    "stuck_off",
 ]
 RailMode = Literal[
-    "dead", "alive",
-    "shorted",       # to GND OR overvolt (Phase 1 semantics)
-    "stuck_on",      # Phase 4.5 — rail alive when it should be off
+    "dead",
+    "alive",
+    "shorted",  # to GND OR overvolt (Phase 1 semantics)
+    "stuck_on",  # Phase 4.5 — rail alive when it should be off
 ]
 
 # Failure modes that can be attributed to a component as the root-cause kill.
@@ -78,15 +84,18 @@ RailMode = Literal[
 # modes — stuck_on = conducts permanently (rail stays on), stuck_off =
 # never conducts (rail stays off).
 FailureMode = Literal[
-    "dead", "anomalous", "hot", "shorted",
-    "open", "short",
-    "stuck_on", "stuck_off",
+    "dead",
+    "anomalous",
+    "hot",
+    "shorted",
+    "open",
+    "short",
+    "stuck_on",
+    "stuck_off",
 ]
 
 _IC_MODES: frozenset[str] = frozenset({"dead", "alive", "anomalous", "hot"})
-_PASSIVE_MODES: frozenset[str] = frozenset(
-    {"open", "short", "alive", "stuck_on", "stuck_off"}
-)
+_PASSIVE_MODES: frozenset[str] = frozenset({"open", "short", "alive", "stuck_on", "stuck_off"})
 
 
 class ObservedMetric(BaseModel):
@@ -121,9 +130,7 @@ class Observations(BaseModel):
     def _no_cross_bucket_alias(self):
         overlap = set(self.state_comps) & set(self.state_rails)
         if overlap:
-            raise ValueError(
-                f"target appears as both component and rail: {sorted(overlap)}"
-            )
+            raise ValueError(f"target appears as both component and rail: {sorted(overlap)}")
         return self
 
     def is_empty(self) -> bool:
@@ -162,7 +169,9 @@ class Hypothesis(BaseModel):
     metrics: HypothesisMetrics
     diff: HypothesisDiff
     narrative: str
-    cascade_preview: dict  # {dead_rails, shorted_rails, dead_comps_count, anomalous_count, hot_count}
+    cascade_preview: (
+        dict  # {dead_rails, shorted_rails, dead_comps_count, anomalous_count, hot_count}
+    )
 
 
 class PruningStats(BaseModel):
@@ -198,10 +207,10 @@ def _empty_cascade() -> dict:
         "dead_comps": frozenset(),
         "dead_rails": frozenset(),
         "shorted_rails": frozenset(),
-        "always_on_rails": frozenset(),   # Phase 4.5 — Q stuck_on cascades
+        "always_on_rails": frozenset(),  # Phase 4.5 — Q stuck_on cascades
         "anomalous_comps": frozenset(),
         "hot_comps": frozenset(),
-        "degraded_rails": frozenset(),   # Phase 4.7 — continuous (leaky/regulating_low) modes
+        "degraded_rails": frozenset(),  # Phase 4.7 — continuous (leaky/regulating_low) modes
         "final_verdict": "",
         "blocked_at_phase": None,
     }
@@ -214,7 +223,9 @@ def _simulate_dead(
 ) -> dict:
     """Forward cascade when one or more refdes are fully dead (power-off)."""
     tl = SimulationEngine(
-        electrical, analyzed_boot=analyzed_boot, killed_refdes=killed,
+        electrical,
+        analyzed_boot=analyzed_boot,
+        killed_refdes=killed,
     ).run()
     c = _empty_cascade()
     c["dead_comps"] = frozenset(set(tl.cascade_dead_components) | set(killed))
@@ -230,7 +241,8 @@ SIGNAL_EDGE_KINDS: frozenset[str] = frozenset(
 
 
 def _propagate_signal_downstream(
-    electrical: ElectricalGraph, origin_refdes: str,
+    electrical: ElectricalGraph,
+    origin_refdes: str,
 ) -> set[str]:
     """BFS downstream on signal-typed edges, returning reachable REFDES.
 
@@ -271,7 +283,8 @@ def _propagate_signal_downstream(
 
 
 def _find_powered_rail(
-    electrical: ElectricalGraph, refdes: str,
+    electrical: ElectricalGraph,
+    refdes: str,
 ) -> str | None:
     """Return the (first) rail label whose consumers list contains `refdes`."""
     for label, rail in electrical.power_rails.items():
@@ -333,8 +346,7 @@ def _simulate_failure_uncached(
             return c
         source = electrical.power_rails[rail].source_refdes
         downstream = (
-            _simulate_dead(electrical, analyzed_boot, [source])
-            if source else _empty_cascade()
+            _simulate_dead(electrical, analyzed_boot, [source]) if source else _empty_cascade()
         )
         # SimulationEngine now handles transitive rail death internally — no
         # second-pass patch needed.
@@ -348,8 +360,7 @@ def _simulate_failure_uncached(
         return c
     if mode == "regulating_low":
         sourced = [
-            label for label, rail in electrical.power_rails.items()
-            if rail.source_refdes == refdes
+            label for label, rail in electrical.power_rails.items() if rail.source_refdes == refdes
         ]
         c = _empty_cascade()
         c["degraded_rails"] = frozenset(sourced)
@@ -462,9 +473,12 @@ def _score_candidate(
     over_predicted.sort()
 
     metrics = HypothesisMetrics(
-        tp_comps=tp_c, tp_rails=tp_r,
-        fp_comps=fp_c, fp_rails=fp_r,
-        fn_comps=fn_c, fn_rails=fn_r,
+        tp_comps=tp_c,
+        tp_rails=tp_r,
+        fp_comps=fp_c,
+        fp_rails=fp_r,
+        fn_comps=fn_c,
+        fn_rails=fn_r,
     )
     tp = (tp_c * tp_mult) + tp_r
     fp = fp_c + fp_r
@@ -490,7 +504,8 @@ _CELL_PROT_DOWNSTREAM_SUFFIXES = ("FUSED", "PROT", "OUT", "PACK")
 
 
 def _find_cell_protection_downstream(
-    electrical: ElectricalGraph, q: _CompNode,
+    electrical: ElectricalGraph,
+    q: _CompNode,
 ) -> str | None:
     """Return the protected-side BAT-family rail for a cell_protection Q.
 
@@ -508,23 +523,20 @@ def _find_cell_protection_downstream(
     Uses `_BAT_FAMILY_PATTERN` from `passive_classifier`.
     """
     pin_rails = [
-        p.net_label for p in q.pins
-        if p.net_label and p.net_label in electrical.power_rails
+        p.net_label for p in q.pins if p.net_label and p.net_label in electrical.power_rails
     ]
     bat_rails = sorted({r for r in pin_rails if _BAT_FAMILY_PATTERN.match(r)})
     if len(bat_rails) < 2:
         return None
-    suffixed = [
-        r for r in bat_rails
-        if any(r.endswith(s) for s in _CELL_PROT_DOWNSTREAM_SUFFIXES)
-    ]
+    suffixed = [r for r in bat_rails if any(r.endswith(s) for s in _CELL_PROT_DOWNSTREAM_SUFFIXES)]
     if len(suffixed) == 1:
         return suffixed[0]
     return _find_downstream_rail(electrical, q)
 
 
 def _find_downstream_rail(
-    electrical: ElectricalGraph, passive: _CompNode,
+    electrical: ElectricalGraph,
+    passive: _CompNode,
 ) -> str | None:
     """Return the rail sourced on one side of a series passive (R/FB/D/C).
 
@@ -547,8 +559,7 @@ def _find_downstream_rail(
     # Secondary — rail with source_refdes null (passive-driven, source
     # not annotated by the compiler).
     candidates = [
-        label for label in rail_labels
-        if electrical.power_rails[label].source_refdes is None
+        label for label in rail_labels if electrical.power_rails[label].source_refdes is None
     ]
     if len(candidates) == 1:
         return candidates[0]
@@ -562,7 +573,8 @@ def _find_downstream_rail(
 
 
 def _find_decoupled_rail(
-    electrical: ElectricalGraph, passive: _CompNode,
+    electrical: ElectricalGraph,
+    passive: _CompNode,
 ) -> str | None:
     """A decoupling cap has one pin on a rail and one on GND. Return the rail."""
     nets = [p.net_label for p in passive.pins if p.net_label]
@@ -573,7 +585,8 @@ def _find_decoupled_rail(
 
 
 def _find_decoupled_ic(
-    electrical: ElectricalGraph, passive: _CompNode,
+    electrical: ElectricalGraph,
+    passive: _CompNode,
 ) -> str | None:
     """The IC most likely decoupled by this cap — explicit `decouples` edge
     target, or the first consumer IC on the decoupled rail."""
@@ -592,7 +605,8 @@ def _find_decoupled_ic(
 
 
 def _find_regulated_rail_of_feedback(
-    electrical: ElectricalGraph, passive: _CompNode,
+    electrical: ElectricalGraph,
+    passive: _CompNode,
 ) -> str | None:
     """Walk a `feedback_in` edge from the divider's signal pin back to the
     regulator that drives the rail being regulated."""
@@ -626,7 +640,8 @@ def _find_regulated_rail_of_feedback(
 
 
 def _simulate_rail_loss(
-    electrical: ElectricalGraph, rail_label: str,
+    electrical: ElectricalGraph,
+    rail_label: str,
 ) -> dict:
     """Mark a rail dead and propagate through SimulationEngine by killing
     its source. If the rail has no source (passive-driven rail), fall
@@ -645,6 +660,7 @@ def _simulate_rail_loss(
 
 
 # --- Cascade handlers (one per (kind, role, mode) family) ---
+
 
 def _cascade_passive_alive(electrical: ElectricalGraph, passive: _CompNode) -> dict:
     """Physically plausible but no observable cascade. Empty → pruned."""
@@ -768,7 +784,8 @@ def _cascade_signal_path_open(electrical: ElectricalGraph, passive: _CompNode) -
     # Pick the net with the most downstream consumers as the "output" side.
     consumer_counts = {
         n: sum(
-            1 for e in electrical.typed_edges
+            1
+            for e in electrical.typed_edges
             if e.kind in {"consumes_signal", "depends_on"} and e.dst == n
         )
         for n in nets
@@ -832,10 +849,7 @@ def _cascade_rectifier_short(electrical: ElectricalGraph, passive) -> dict:
     if not rails:
         return _empty_cascade()
     # Pick the input-side rail — heuristic: the one with a source_refdes.
-    rails_with_source = [
-        r for r in rails
-        if electrical.power_rails[r].source_refdes is not None
-    ]
+    rails_with_source = [r for r in rails if electrical.power_rails[r].source_refdes is not None]
     target = rails_with_source[0] if rails_with_source else rails[0]
     source = electrical.power_rails[target].source_refdes
     downstream = _simulate_dead(electrical, None, [source]) if source else _empty_cascade()
@@ -854,9 +868,7 @@ def _cascade_rectifier_open(electrical: ElectricalGraph, passive) -> dict:
     if not rails:
         return _empty_cascade()
     # Pick the output-side rail (no source_refdes — the diode is the source).
-    rails_without_source = [
-        r for r in rails if electrical.power_rails[r].source_refdes is None
-    ]
+    rails_without_source = [r for r in rails if electrical.power_rails[r].source_refdes is None]
     target = rails_without_source[0] if rails_without_source else rails[0]
     return _simulate_rail_loss(electrical, target)
 
@@ -956,15 +968,13 @@ def _cascade_q_load_stuck_on(electrical: ElectricalGraph, q) -> dict:
 
 
 def _cascade_q_shifter_signal_broken(
-    electrical: ElectricalGraph, q,
+    electrical: ElectricalGraph,
+    q,
 ) -> dict:
     """Level shifter open / stuck_off → signal not propagating → consumers
     anomalous. Treats both signal nets as potentially affected."""
     nets = [p.net_label for p in q.pins if p.net_label]
-    sig_nets = [
-        n for n in nets
-        if n not in electrical.power_rails and not _is_ground_net_label(n)
-    ]
+    sig_nets = [n for n in nets if n not in electrical.power_rails and not _is_ground_net_label(n)]
     anomalous: set[str] = set()
     for edge in electrical.typed_edges:
         if edge.kind in {"consumes_signal", "depends_on"} and edge.dst in sig_nets:
@@ -976,7 +986,8 @@ def _cascade_q_shifter_signal_broken(
 
 
 def _cascade_q_shifter_signal_stuck(
-    electrical: ElectricalGraph, q,
+    electrical: ElectricalGraph,
+    q,
 ) -> dict:
     """Level shifter short / stuck_on → signal stuck at one rail level →
     consumers anomalous. Cascade topologically identical to _broken; the
@@ -985,14 +996,16 @@ def _cascade_q_shifter_signal_stuck(
 
 
 def _cascade_q_inrush_rail_dead(
-    electrical: ElectricalGraph, q,
+    electrical: ElectricalGraph,
+    q,
 ) -> dict:
     """Inrush limiter open / stuck_off → downstream regulator never powers up."""
     return _cascade_q_load_dead(electrical, q)
 
 
 def _cascade_q_flyback_switch_dead(
-    electrical: ElectricalGraph, q,
+    electrical: ElectricalGraph,
+    q,
 ) -> dict:
     """Flyback switch open / stuck_off → SMPS doesn't switch → output rail
     dead. Finds the output rail by inspecting the inductor that spans the
@@ -1021,7 +1034,8 @@ def _cascade_q_flyback_switch_dead(
 
 
 def _cascade_q_flyback_switch_short(
-    electrical: ElectricalGraph, q,
+    electrical: ElectricalGraph,
+    q,
 ) -> dict:
     """Flyback D-S short / stuck_on → continuous current through inductor →
     input rail (PVIN / VIN) stressed, source IC hot, downstream of source
@@ -1045,10 +1059,7 @@ def _cascade_q_flyback_switch_short(
     if input_rail is None:
         return _empty_cascade()
     source = electrical.power_rails[input_rail].source_refdes
-    downstream = (
-        _simulate_dead(electrical, None, [source])
-        if source else _empty_cascade()
-    )
+    downstream = _simulate_dead(electrical, None, [source]) if source else _empty_cascade()
     c = _empty_cascade()
     c["shorted_rails"] = frozenset({input_rail})
     c["dead_rails"] = downstream["dead_rails"] - {input_rail}
@@ -1058,7 +1069,8 @@ def _cascade_q_flyback_switch_short(
 
 
 def _cascade_q_cell_protection_dead(
-    electrical: ElectricalGraph, q,
+    electrical: ElectricalGraph,
+    q,
 ) -> dict:
     """Cell-protection series FET open / stuck_off → protected-side rail
     loses power. Consumers of that rail become dead.
@@ -1075,81 +1087,72 @@ def _cascade_q_cell_protection_dead(
 
 _PASSIVE_CASCADE_TABLE: dict[tuple[str, str, str], CascadeFn] = {
     # ========================= RESISTORS =========================
-    ("passive_r", "series",        "open"):  _cascade_series_open,
-    ("passive_r", "series",        "short"): _cascade_passive_alive,
-    ("passive_r", "feedback",      "open"):  _cascade_feedback_open_overvolt,
-    ("passive_r", "feedback",      "short"): _cascade_feedback_short_undervolt,
-    ("passive_r", "pull_up",       "open"):  _cascade_pull_up_open,
-    ("passive_r", "pull_up",       "short"): _cascade_pull_up_short,
-    ("passive_r", "pull_down",     "open"):  _cascade_pull_up_open,
-    ("passive_r", "pull_down",     "short"): _cascade_passive_alive,
-    ("passive_r", "current_sense", "open"):  _cascade_series_open,
+    ("passive_r", "series", "open"): _cascade_series_open,
+    ("passive_r", "series", "short"): _cascade_passive_alive,
+    ("passive_r", "feedback", "open"): _cascade_feedback_open_overvolt,
+    ("passive_r", "feedback", "short"): _cascade_feedback_short_undervolt,
+    ("passive_r", "pull_up", "open"): _cascade_pull_up_open,
+    ("passive_r", "pull_up", "short"): _cascade_pull_up_short,
+    ("passive_r", "pull_down", "open"): _cascade_pull_up_open,
+    ("passive_r", "pull_down", "short"): _cascade_passive_alive,
+    ("passive_r", "current_sense", "open"): _cascade_series_open,
     ("passive_r", "current_sense", "short"): _cascade_passive_alive,
-    ("passive_r", "damping",       "open"):  _cascade_passive_alive,
-    ("passive_r", "damping",       "short"): _cascade_passive_alive,
-
+    ("passive_r", "damping", "open"): _cascade_passive_alive,
+    ("passive_r", "damping", "short"): _cascade_passive_alive,
     # ========================= CAPACITORS ========================
-    ("passive_c", "decoupling",  "open"):        _cascade_decoupling_open,
-    ("passive_c", "decoupling",  "short"):       _cascade_decoupling_short,
-    ("passive_c", "decoupling",  "leaky_short"): _cascade_decoupling_leaky,
-    ("passive_c", "bulk",        "open"):        _cascade_decoupling_open,
-    ("passive_c", "bulk",        "short"):       _cascade_decoupling_short,
-    ("passive_c", "bulk",        "leaky_short"): _cascade_decoupling_leaky,
-    ("passive_c", "filter",      "open"):  _cascade_filter_cap_open,
-    ("passive_c", "filter",      "short"): _cascade_decoupling_short,
-    ("passive_c", "ac_coupling", "open"):  _cascade_signal_path_open,
+    ("passive_c", "decoupling", "open"): _cascade_decoupling_open,
+    ("passive_c", "decoupling", "short"): _cascade_decoupling_short,
+    ("passive_c", "decoupling", "leaky_short"): _cascade_decoupling_leaky,
+    ("passive_c", "bulk", "open"): _cascade_decoupling_open,
+    ("passive_c", "bulk", "short"): _cascade_decoupling_short,
+    ("passive_c", "bulk", "leaky_short"): _cascade_decoupling_leaky,
+    ("passive_c", "filter", "open"): _cascade_filter_cap_open,
+    ("passive_c", "filter", "short"): _cascade_decoupling_short,
+    ("passive_c", "ac_coupling", "open"): _cascade_signal_path_open,
     ("passive_c", "ac_coupling", "short"): _cascade_signal_path_dc,
-    ("passive_c", "tank",        "open"):  _cascade_tank_open,
-    ("passive_c", "tank",        "short"): _cascade_tank_short,
-    ("passive_c", "bypass",      "open"):  _cascade_decoupling_open,
-    ("passive_c", "bypass",      "short"): _cascade_decoupling_short,
-
+    ("passive_c", "tank", "open"): _cascade_tank_open,
+    ("passive_c", "tank", "short"): _cascade_tank_short,
+    ("passive_c", "bypass", "open"): _cascade_decoupling_open,
+    ("passive_c", "bypass", "short"): _cascade_decoupling_short,
     # (ferrite entries added in T7)
-    ("passive_fb", "filter", "open"):  _cascade_filter_open,
+    ("passive_fb", "filter", "open"): _cascade_filter_open,
     ("passive_fb", "filter", "short"): _cascade_passive_alive,
-
     # ========================= DIODES ===========================
-    ("passive_d", "flyback",           "open"):  _cascade_flyback_open,
-    ("passive_d", "flyback",           "short"): _cascade_flyback_short,
-    ("passive_d", "rectifier",         "open"):  _cascade_rectifier_open,
-    ("passive_d", "rectifier",         "short"): _cascade_rectifier_short,
-    ("passive_d", "esd",               "open"):  _cascade_passive_alive,
-    ("passive_d", "esd",               "short"): _cascade_signal_to_ground,
-    ("passive_d", "reverse_protection","open"):  _cascade_series_open,
-    ("passive_d", "reverse_protection","short"): _cascade_passive_alive,
-    ("passive_d", "signal_clamp",      "open"):  _cascade_passive_alive,
-    ("passive_d", "signal_clamp",      "short"): _cascade_signal_to_ground,
-
+    ("passive_d", "flyback", "open"): _cascade_flyback_open,
+    ("passive_d", "flyback", "short"): _cascade_flyback_short,
+    ("passive_d", "rectifier", "open"): _cascade_rectifier_open,
+    ("passive_d", "rectifier", "short"): _cascade_rectifier_short,
+    ("passive_d", "esd", "open"): _cascade_passive_alive,
+    ("passive_d", "esd", "short"): _cascade_signal_to_ground,
+    ("passive_d", "reverse_protection", "open"): _cascade_series_open,
+    ("passive_d", "reverse_protection", "short"): _cascade_passive_alive,
+    ("passive_d", "signal_clamp", "open"): _cascade_passive_alive,
+    ("passive_d", "signal_clamp", "short"): _cascade_signal_to_ground,
     # ========================= TRANSISTORS (Phase 4.5) ===========================
-    ("passive_q", "load_switch",    "open"):      _cascade_q_load_dead,
-    ("passive_q", "load_switch",    "short"):     _cascade_q_load_stuck_on,
-    ("passive_q", "load_switch",    "stuck_on"):  _cascade_q_load_stuck_on,
-    ("passive_q", "load_switch",    "stuck_off"): _cascade_q_load_dead,
-
-    ("passive_q", "level_shifter",  "open"):      _cascade_q_shifter_signal_broken,
-    ("passive_q", "level_shifter",  "short"):     _cascade_q_shifter_signal_stuck,
-    ("passive_q", "level_shifter",  "stuck_on"):  _cascade_q_shifter_signal_stuck,
-    ("passive_q", "level_shifter",  "stuck_off"): _cascade_q_shifter_signal_broken,
-
-    ("passive_q", "inrush_limiter", "open"):      _cascade_q_inrush_rail_dead,
-    ("passive_q", "inrush_limiter", "short"):     _cascade_passive_alive,
-    ("passive_q", "inrush_limiter", "stuck_on"):  _cascade_passive_alive,
+    ("passive_q", "load_switch", "open"): _cascade_q_load_dead,
+    ("passive_q", "load_switch", "short"): _cascade_q_load_stuck_on,
+    ("passive_q", "load_switch", "stuck_on"): _cascade_q_load_stuck_on,
+    ("passive_q", "load_switch", "stuck_off"): _cascade_q_load_dead,
+    ("passive_q", "level_shifter", "open"): _cascade_q_shifter_signal_broken,
+    ("passive_q", "level_shifter", "short"): _cascade_q_shifter_signal_stuck,
+    ("passive_q", "level_shifter", "stuck_on"): _cascade_q_shifter_signal_stuck,
+    ("passive_q", "level_shifter", "stuck_off"): _cascade_q_shifter_signal_broken,
+    ("passive_q", "inrush_limiter", "open"): _cascade_q_inrush_rail_dead,
+    ("passive_q", "inrush_limiter", "short"): _cascade_passive_alive,
+    ("passive_q", "inrush_limiter", "stuck_on"): _cascade_passive_alive,
     ("passive_q", "inrush_limiter", "stuck_off"): _cascade_q_inrush_rail_dead,
-
-    ("passive_q", "flyback_switch", "open"):      _cascade_q_flyback_switch_dead,
-    ("passive_q", "flyback_switch", "short"):     _cascade_q_flyback_switch_short,
-    ("passive_q", "flyback_switch", "stuck_on"):  _cascade_q_flyback_switch_short,
+    ("passive_q", "flyback_switch", "open"): _cascade_q_flyback_switch_dead,
+    ("passive_q", "flyback_switch", "short"): _cascade_q_flyback_switch_short,
+    ("passive_q", "flyback_switch", "stuck_on"): _cascade_q_flyback_switch_short,
     ("passive_q", "flyback_switch", "stuck_off"): _cascade_q_flyback_switch_dead,
-
-    ("passive_q", "cell_protection", "open"):      _cascade_q_cell_protection_dead,
-    ("passive_q", "cell_protection", "short"):     _cascade_passive_alive,
-    ("passive_q", "cell_protection", "stuck_on"):  _cascade_passive_alive,
+    ("passive_q", "cell_protection", "open"): _cascade_q_cell_protection_dead,
+    ("passive_q", "cell_protection", "short"): _cascade_passive_alive,
+    ("passive_q", "cell_protection", "stuck_on"): _cascade_passive_alive,
     ("passive_q", "cell_protection", "stuck_off"): _cascade_q_cell_protection_dead,
-
-    ("passive_q", "cell_balancer",   "open"):      _cascade_passive_alive,
-    ("passive_q", "cell_balancer",   "short"):     _cascade_passive_alive,
-    ("passive_q", "cell_balancer",   "stuck_on"):  _cascade_passive_alive,
-    ("passive_q", "cell_balancer",   "stuck_off"): _cascade_passive_alive,
+    ("passive_q", "cell_balancer", "open"): _cascade_passive_alive,
+    ("passive_q", "cell_balancer", "short"): _cascade_passive_alive,
+    ("passive_q", "cell_balancer", "stuck_on"): _cascade_passive_alive,
+    ("passive_q", "cell_balancer", "stuck_off"): _cascade_passive_alive,
 }
 
 
@@ -1208,10 +1211,7 @@ def _narrate(
     for target, metric in list(observations.metrics_rails.items())[:2]:
         unit = metric.unit
         metric_snippets.append(f"{target} à {metric.measured}{unit}")
-    metrics_tail = (
-        " Mesures : " + ", ".join(metric_snippets) + "."
-        if metric_snippets else ""
-    )
+    metrics_tail = " Mesures : " + ", ".join(metric_snippets) + "." if metric_snippets else ""
 
     tail = ""
     if diff.contradictions:
@@ -1257,8 +1257,7 @@ def _compute_discriminators(
         return []
     # Top-N are "tied" if they all sit within score_tolerance of the best.
     best_score = hypotheses[0].score
-    tied = [h for h in hypotheses[:top_n]
-            if abs(h.score - best_score) <= score_tolerance]
+    tied = [h for h in hypotheses[:top_n] if abs(h.score - best_score) <= score_tolerance]
     if len(tied) < 2:
         return []
     # Build a target → {indices of tied hypotheses that predict it} map.
@@ -1374,7 +1373,8 @@ def _memo_for(graph: ElectricalGraph) -> _GraphMemo:
 
 
 def _applicable_modes(
-    electrical: ElectricalGraph, refdes: str,
+    electrical: ElectricalGraph,
+    refdes: str,
 ) -> list[str]:
     """Return the list of modes worth simulating for a given refdes.
 
@@ -1390,12 +1390,8 @@ def _relevant_to_observations(cascade: dict, obs: Observations) -> bool:
     """Pruning gate — cascade touches at least one observation target."""
     obs_comps = set(obs.state_comps)
     obs_rails = set(obs.state_rails)
-    any_pred = (
-        cascade["dead_comps"] | cascade["anomalous_comps"] | cascade["hot_comps"]
-    )
-    any_rail = (
-        cascade["dead_rails"] | cascade["shorted_rails"] | cascade["always_on_rails"]
-    )
+    any_pred = cascade["dead_comps"] | cascade["anomalous_comps"] | cascade["hot_comps"]
+    any_rail = cascade["dead_rails"] | cascade["shorted_rails"] | cascade["always_on_rails"]
     if any_pred & obs_comps:
         return True
     if any_rail & obs_rails:
@@ -1424,7 +1420,9 @@ def _enumerate_single_fault(
                 continue
             tp_mult = _SCORE_VISIBILITY.get((kind, role, mode), 1.0) if role else 1.0
             score, metrics, diff = _score_candidate(
-                cascade, observations, tp_mult=tp_mult,
+                cascade,
+                observations,
+                tp_mult=tp_mult,
             )
             ranked.append((refdes, mode, score, metrics, diff))
     ranked.sort(key=lambda t: -t[2])
@@ -1437,7 +1435,14 @@ def _enumerate_two_fault(
     observations: Observations,
     cascades_cache: dict[tuple[str, str], dict],
     single_ranked: list[tuple[str, str, float, HypothesisMetrics, HypothesisDiff]],
-) -> tuple[int, list[tuple[tuple[tuple[str, str], tuple[str, str]], float, HypothesisMetrics, HypothesisDiff, dict]]]:
+) -> tuple[
+    int,
+    list[
+        tuple[
+            tuple[tuple[str, str], tuple[str, str]], float, HypothesisMetrics, HypothesisDiff, dict
+        ]
+    ],
+]:
     """2-fault pass seeded by top-K single-fault survivors.
 
     Each kill element is a (refdes, mode) pair. Pairs are deduplicated
@@ -1449,16 +1454,19 @@ def _enumerate_two_fault(
     top_k = [(r, m) for r, m, *_ in single_ranked[:TOP_K_SINGLE]]
     seen: set[tuple[tuple[str, str], tuple[str, str]]] = set()
     pairs_tested = 0
-    ranked: list[tuple[tuple[tuple[str, str], tuple[str, str]], float, HypothesisMetrics, HypothesisDiff, dict]] = []
+    ranked: list[
+        tuple[
+            tuple[tuple[str, str], tuple[str, str]], float, HypothesisMetrics, HypothesisDiff, dict
+        ]
+    ] = []
 
-    for (r1, m1) in top_k:
+    for r1, m1 in top_k:
         c1 = cascades_cache[(r1, m1)]
-        residual_comps = (
-            set(observations.state_comps) - (c1["dead_comps"] | c1["anomalous_comps"] | c1["hot_comps"])
+        residual_comps = set(observations.state_comps) - (
+            c1["dead_comps"] | c1["anomalous_comps"] | c1["hot_comps"]
         )
-        residual_rails = (
-            set(observations.state_rails)
-            - (c1["dead_rails"] | c1["shorted_rails"] | c1["always_on_rails"])
+        residual_rails = set(observations.state_rails) - (
+            c1["dead_rails"] | c1["shorted_rails"] | c1["always_on_rails"]
         )
         if not residual_comps and not residual_rails:
             continue
@@ -1500,7 +1508,8 @@ def _enumerate_two_fault(
 
 
 def _validate_obs_against_graph(
-    electrical: ElectricalGraph, observations: Observations,
+    electrical: ElectricalGraph,
+    observations: Observations,
 ) -> None:
     """Cross-check each observation's mode against the target's ComponentKind.
 
@@ -1549,42 +1558,53 @@ def hypothesize(
         )
 
     cascades_cache, single_ranked = _enumerate_single_fault(
-        electrical, analyzed_boot, observations,
+        electrical,
+        analyzed_boot,
+        observations,
     )
     pairs_tested, two_ranked = _enumerate_two_fault(
-        electrical, analyzed_boot, observations,
-        cascades_cache, single_ranked,
+        electrical,
+        analyzed_boot,
+        observations,
+        cascades_cache,
+        single_ranked,
     )
 
     hypotheses: list[Hypothesis] = []
     for refdes, mode, score, metrics, diff in single_ranked:
         cascade = cascades_cache[(refdes, mode)]
-        hypotheses.append(Hypothesis(
-            kill_refdes=[refdes],
-            kill_modes=[mode],
-            score=score,
-            metrics=metrics,
-            diff=diff,
-            narrative=_narrate([refdes], [mode], cascade, metrics, diff, observations),
-            cascade_preview=_cascade_preview(cascade),
-        ))
+        hypotheses.append(
+            Hypothesis(
+                kill_refdes=[refdes],
+                kill_modes=[mode],
+                score=score,
+                metrics=metrics,
+                diff=diff,
+                narrative=_narrate([refdes], [mode], cascade, metrics, diff, observations),
+                cascade_preview=_cascade_preview(cascade),
+            )
+        )
     for key, score, metrics, diff, combined in two_ranked:
         (r1, m1), (r2, m2) = key
-        hypotheses.append(Hypothesis(
-            kill_refdes=[r1, r2],
-            kill_modes=[m1, m2],
-            score=score,
-            metrics=metrics,
-            diff=diff,
-            narrative=_narrate([r1, r2], [m1, m2], combined, metrics, diff, observations),
-            cascade_preview=_cascade_preview(combined),
-        ))
+        hypotheses.append(
+            Hypothesis(
+                kill_refdes=[r1, r2],
+                kill_modes=[m1, m2],
+                score=score,
+                metrics=metrics,
+                diff=diff,
+                narrative=_narrate([r1, r2], [m1, m2], combined, metrics, diff, observations),
+                cascade_preview=_cascade_preview(combined),
+            )
+        )
 
-    hypotheses.sort(key=lambda h: (
-        -h.score,
-        len(h.kill_refdes),
-        h.cascade_preview["dead_comps_count"] + h.cascade_preview["anomalous_count"],
-    ))
+    hypotheses.sort(
+        key=lambda h: (
+            -h.score,
+            len(h.kill_refdes),
+            h.cascade_preview["dead_comps_count"] + h.cascade_preview["anomalous_count"],
+        )
+    )
     hypotheses = hypotheses[:max_results]
 
     # Find discriminators (empty when scores are well-separated).

@@ -36,9 +36,7 @@ class Scorecard(BaseModel):
     per_scenario: list[ScenarioResult] = Field(default_factory=list)
 
 
-def compute_self_mrr(
-    graph: ElectricalGraph, *, max_per_kind: int = DEFAULT_MAX_PER_KIND
-) -> float:
+def compute_self_mrr(graph: ElectricalGraph, *, max_per_kind: int = DEFAULT_MAX_PER_KIND) -> float:
     """For every (refdes, mode) pair sampled from the graph, forward-simulate
     then check whether the cause is recoverable from the resulting state.
     Returns mean reciprocal rank ∈ [0, 1]. Returns 0.0 on empty graphs.
@@ -59,9 +57,7 @@ def compute_self_mrr(
 
     rrs: list[float] = []
     for refdes, mode in candidates:
-        timeline = SimulationEngine(
-            graph, failures=[_make_failure(refdes, mode)]
-        ).run()
+        timeline = SimulationEngine(graph, failures=[_make_failure(refdes, mode)]).run()
         symptoms = _symptoms_from_timeline(timeline)
         ranked = _rank_candidates_for_symptoms(graph, symptoms)
         rank = next(
@@ -103,12 +99,10 @@ def compute_cascade_recall(
         predicted_rails = set(timeline.cascade_dead_rails)
         predicted_comps = set(timeline.cascade_dead_components)
         rec_rails = (
-            len(predicted_rails & expected_rails) / len(expected_rails)
-            if expected_rails else None
+            len(predicted_rails & expected_rails) / len(expected_rails) if expected_rails else None
         )
         rec_comps = (
-            len(predicted_comps & expected_comps) / len(expected_comps)
-            if expected_comps else None
+            len(predicted_comps & expected_comps) / len(expected_comps) if expected_comps else None
         )
         parts = [r for r in (rec_rails, rec_comps) if r is not None]
         recall = sum(parts) / len(parts) if parts else 0.0
@@ -122,9 +116,7 @@ def compute_cascade_recall(
     return (sum(recalls) / len(recalls)), breakdown
 
 
-def compute_score(
-    graph: ElectricalGraph, scenarios: list[dict]
-) -> Scorecard:
+def compute_score(graph: ElectricalGraph, scenarios: list[dict]) -> Scorecard:
     """Weighted scalar: WEIGHT_SELF_MRR × self_mrr + WEIGHT_CASCADE_RECALL × cascade_recall."""
     self_mrr = compute_self_mrr(graph)
     cascade_recall, breakdown = compute_cascade_recall(graph, scenarios)
@@ -182,9 +174,7 @@ def _symptoms_from_timeline(timeline) -> dict:
     }
 
 
-def _rank_candidates_for_symptoms(
-    graph: ElectricalGraph, symptoms: dict
-) -> list[tuple[str, str]]:
+def _rank_candidates_for_symptoms(graph: ElectricalGraph, symptoms: dict) -> list[tuple[str, str]]:
     """Brute-force inverse — try every (refdes, mode), score by overlap of
     predicted vs observed symptoms, return ranked descending."""
     pairs: list[tuple[str, str]] = []
@@ -200,18 +190,14 @@ def _rank_candidates_for_symptoms(
     scored: list[tuple[float, tuple[str, str]]] = []
     for refdes, mode in pairs:
         try:
-            tl = SimulationEngine(
-                graph, failures=[_make_failure(refdes, mode)]
-            ).run()
+            tl = SimulationEngine(graph, failures=[_make_failure(refdes, mode)]).run()
         except Exception:
             continue
         last = tl.states[-1] if tl.states else None
         if last is None:
             scored.append((0.0, (refdes, mode)))
             continue
-        pred_dead_rails = {
-            r for r, s in last.rails.items() if s in ("off", "shorted")
-        }
+        pred_dead_rails = {r for r, s in last.rails.items() if s in ("off", "shorted")}
         pred_dead_comps = {c for c, s in last.components.items() if s == "dead"}
         pred_degraded_rails = {r for r, s in last.rails.items() if s == "degraded"}
         # Simple Jaccard sum across the three observation sets.

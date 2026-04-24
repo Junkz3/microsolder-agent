@@ -22,9 +22,7 @@ from api.pipeline.schematic.schemas import ElectricalGraph
 def _load_bench(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    return [
-        json.loads(line) for line in path.read_text().splitlines() if line.strip()
-    ]
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 def main() -> int:

@@ -138,9 +138,7 @@ async def _run_agent_turn(
                 )
                 if unknown:
                     logger.warning("sanitizer wrapped unknown refdes: %s", unknown)
-                await ws.send_json(
-                    {"type": "message", "role": "assistant", "text": clean}
-                )
+                await ws.send_json({"type": "message", "role": "assistant", "text": clean})
             response = await stream.get_final_message()
 
         # Token cost estimate for THIS API call — sent AFTER the text so the
@@ -154,45 +152,53 @@ async def _run_agent_turn(
         # refetches.
         if repair_id and conv_id:
             touch_conversation(
-                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=conv_id,
                 cost_usd=cost.get("cost_usd") if isinstance(cost, dict) else None,
                 model=model,
             )
 
-        assistant_msg = _normalize_message(
-            {"role": "assistant", "content": response.content}
-        )
+        assistant_msg = _normalize_message({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
             messages.append(assistant_msg)
             if conv_id:
                 append_event(
-                    device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
-                    event=assistant_msg, cost=cost,
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    conv_id=conv_id,
+                    event=assistant_msg,
+                    cost=cost,
                 )
             return
 
         messages.append(assistant_msg)
         if conv_id:
             append_event(
-                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
-                event=assistant_msg, cost=cost,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=conv_id,
+                event=assistant_msg,
+                cost=cost,
             )
         tool_results: list[dict] = []
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            await ws.send_json(
-                {"type": "tool_use", "name": block.name, "input": block.input}
-            )
+            await ws.send_json({"type": "tool_use", "name": block.name, "input": block.input})
             if block.name.startswith("bv_"):
                 result = dispatch_bv(session, block.name, block.input or {})
             elif block.name.startswith("profile_"):
                 result = _dispatch_profile_tool(block.name, block.input or {}, session=session)
             else:
                 result = await _dispatch_mb_tool(
-                    block.name, block.input or {}, device_slug,
-                    memory_root, client, session,
+                    block.name,
+                    block.input or {},
+                    device_slug,
+                    memory_root,
+                    client,
+                    session,
                     session_id=repair_id,
                 )
             event = result.get("event")
@@ -210,7 +216,9 @@ async def _run_agent_turn(
         messages.append(tool_results_msg)
         if conv_id:
             append_event(
-                device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=conv_id,
                 event=tool_results_msg,
             )
 
@@ -258,6 +266,7 @@ async def _replay_history_to_ws(
             if cost is not None:
                 await ws.send_json({"type": "turn_cost", **cost, "replay": True})
     await ws.send_json({"type": "history_replay_end"})
+
 
 logger = logging.getLogger("microsolder.agent.direct")
 
@@ -322,6 +331,7 @@ async def _dispatch_mb_tool(
         )
     if name == "mb_hypothesize":
         from api.tools.hypothesize import mb_hypothesize as _mb_hypothesize
+
         return _mb_hypothesize(
             device_slug=device_slug,
             memory_root=memory_root,
@@ -338,8 +348,10 @@ async def _dispatch_mb_tool(
         )
     if name == "mb_record_measurement":
         from api.tools.measurements import mb_record_measurement as _mb_rec
+
         return _mb_rec(
-            device_slug=device_slug, repair_id=session_id or "",
+            device_slug=device_slug,
+            repair_id=session_id or "",
             memory_root=memory_root,
             target=payload.get("target", ""),
             value=payload.get("value", 0.0),
@@ -350,16 +362,20 @@ async def _dispatch_mb_tool(
         )
     if name == "mb_list_measurements":
         from api.tools.measurements import mb_list_measurements as _mb_list
+
         return _mb_list(
-            device_slug=device_slug, repair_id=session_id or "",
+            device_slug=device_slug,
+            repair_id=session_id or "",
             memory_root=memory_root,
             target=payload.get("target"),
             since=payload.get("since"),
         )
     if name == "mb_compare_measurements":
         from api.tools.measurements import mb_compare_measurements as _mb_cmp
+
         return _mb_cmp(
-            device_slug=device_slug, repair_id=session_id or "",
+            device_slug=device_slug,
+            repair_id=session_id or "",
             memory_root=memory_root,
             target=payload.get("target", ""),
             before_ts=payload.get("before_ts"),
@@ -367,26 +383,33 @@ async def _dispatch_mb_tool(
         )
     if name == "mb_observations_from_measurements":
         from api.tools.measurements import mb_observations_from_measurements as _mb_syn
+
         return _mb_syn(
-            device_slug=device_slug, repair_id=session_id or "",
+            device_slug=device_slug,
+            repair_id=session_id or "",
             memory_root=memory_root,
         )
     if name == "mb_set_observation":
         from api.tools.measurements import mb_set_observation as _mb_set
+
         return _mb_set(
-            device_slug=device_slug, repair_id=session_id or "",
+            device_slug=device_slug,
+            repair_id=session_id or "",
             memory_root=memory_root,
             target=payload.get("target", ""),
             mode=payload.get("mode", "unknown"),
         )
     if name == "mb_clear_observations":
         from api.tools.measurements import mb_clear_observations as _mb_clr
+
         return _mb_clr(
-            device_slug=device_slug, repair_id=session_id or "",
+            device_slug=device_slug,
+            repair_id=session_id or "",
             memory_root=memory_root,
         )
     if name == "mb_validate_finding":
         from api.tools.validation import mb_validate_finding as _mb_val
+
         return _mb_val(
             device_slug=device_slug,
             repair_id=session_id or "",
@@ -415,6 +438,7 @@ def _dispatch_profile_tool(name: str, payload: dict, session=None) -> dict:
         profile_get,
         profile_track_skill,
     )
+
     if name == "profile_get":
         return profile_get(session=session)
     if name == "profile_check_skills":
@@ -455,7 +479,7 @@ async def run_diagnostic_session_direct(
         await ws.close()
         return
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)  # noqa: E501
     memory_root = Path(settings.memory_root)
     session = SessionState.from_device(device_slug)
     tier_to_model = {
@@ -472,29 +496,34 @@ async def run_diagnostic_session_direct(
     conversation_count = 0
     if repair_id:
         resolved_conv_id, _created = ensure_conversation(
-            device_slug=device_slug, repair_id=repair_id,
-            conv_id=conv_id, tier=tier,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            tier=tier,
             memory_root=memory_root,
         )
         conversation_count = len(
             list_conversations(
-                device_slug=device_slug, repair_id=repair_id,
+                device_slug=device_slug,
+                repair_id=repair_id,
                 memory_root=memory_root,
             )
         )
 
     await ws.accept()
-    await ws.send_json({
-        "type": "session_ready",
-        "mode": "direct",
-        "device_slug": device_slug,
-        "tier": tier,
-        "model": model,
-        "board_loaded": session.board is not None,
-        "repair_id": repair_id,
-        "conv_id": resolved_conv_id,
-        "conversation_count": conversation_count,
-    })
+    await ws.send_json(
+        {
+            "type": "session_ready",
+            "mode": "direct",
+            "device_slug": device_slug,
+            "tier": tier,
+            "model": model,
+            "board_loaded": session.board is not None,
+            "repair_id": repair_id,
+            "conv_id": resolved_conv_id,
+            "conversation_count": conversation_count,
+        }
+    )
 
     # NOTE: prompt + manifest are a snapshot of the session at open time.
     # If a future task supports loading a board mid-session, both must be
@@ -508,14 +537,18 @@ async def run_diagnostic_session_direct(
     records: list[tuple[dict, dict | None]] = []
     if resolved_conv_id:
         records = load_events_with_costs(
-            device_slug=device_slug, repair_id=repair_id, conv_id=resolved_conv_id,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
             memory_root=memory_root,
         )
     messages: list[dict] = [event for event, _cost in records]
     if records:
         logger.info(
             "[Diag-Direct] Resuming repair=%s conv=%s with %d prior events",
-            repair_id, resolved_conv_id, len(records),
+            repair_id,
+            resolved_conv_id,
+            len(records),
         )
         await _replay_history_to_ws(ws, records)
     elif repair_id and resolved_conv_id:
@@ -528,21 +561,27 @@ async def run_diagnostic_session_direct(
             intro_msg = {"role": "user", "content": intro}
             messages.append(intro_msg)
             append_event(
-                device_slug=device_slug, repair_id=repair_id,
-                conv_id=resolved_conv_id, event=intro_msg,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+                event=intro_msg,
             )
-            await ws.send_json({
-                "type": "context_loaded",
-                "device_slug": device_slug,
-                "repair_id": repair_id,
-            })
+            await ws.send_json(
+                {
+                    "type": "context_loaded",
+                    "device_slug": device_slug,
+                    "repair_id": repair_id,
+                }
+            )
             logger.info(
                 "[Diag-Direct] Stashed session intro for repair=%s conv=%s (awaiting tech input)",
-                repair_id, resolved_conv_id,
+                repair_id,
+                resolved_conv_id,
             )
 
     first_user_seen = any(
-        isinstance(m, dict) and m.get("role") == "user"
+        isinstance(m, dict)
+        and m.get("role") == "user"
         and not (isinstance(m.get("content"), str) and m["content"].startswith("[Nouvelle session"))
         for m in messages
     )
@@ -584,7 +623,8 @@ async def run_diagnostic_session_direct(
                 )
                 if resolved_conv_id:
                     append_event(
-                        device_slug=device_slug, repair_id=repair_id,
+                        device_slug=device_slug,
+                        repair_id=repair_id,
                         conv_id=resolved_conv_id,
                         memory_root=memory_root,
                         event={
@@ -603,16 +643,16 @@ async def run_diagnostic_session_direct(
             # Before the first live exchange, flip the repair's status so the
             # library badge shows it's actively being worked on.
             if not messages:
-                touch_status(
-                    device_slug=device_slug, repair_id=repair_id, status="in_progress"
-                )
+                touch_status(device_slug=device_slug, repair_id=repair_id, status="in_progress")
 
             # Stamp the conversation title from the first real user message —
             # the tech-visible summary in the switcher popover.
             if not first_user_seen and repair_id and resolved_conv_id:
                 touch_conversation(
-                    device_slug=device_slug, repair_id=repair_id,
-                    conv_id=resolved_conv_id, first_message=user_text,
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    conv_id=resolved_conv_id,
+                    first_message=user_text,
                     memory_root=memory_root,
                 )
                 first_user_seen = True
@@ -621,22 +661,31 @@ async def run_diagnostic_session_direct(
             messages.append(user_msg)
             if resolved_conv_id and not is_trigger:
                 append_event(
-                    device_slug=device_slug, repair_id=repair_id,
-                    conv_id=resolved_conv_id, event=user_msg,
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    conv_id=resolved_conv_id,
+                    event=user_msg,
                 )
 
             await _run_agent_turn(
-                ws=ws, client=client, model=model,
-                system_prompt=system_prompt, tools=tools,
-                messages=messages, session=session,
-                device_slug=device_slug, repair_id=repair_id,
+                ws=ws,
+                client=client,
+                model=model,
+                system_prompt=system_prompt,
+                tools=tools,
+                messages=messages,
+                session=session,
+                device_slug=device_slug,
+                repair_id=repair_id,
                 conv_id=resolved_conv_id,
                 memory_root=memory_root,
             )
     except WebSocketDisconnect:
         logger.info(
             "[Diag-Direct] WS closed for device=%s repair=%s conv=%s",
-            device_slug, repair_id, resolved_conv_id,
+            device_slug,
+            repair_id,
+            resolved_conv_id,
         )
     finally:
         set_ws_emitter(None)

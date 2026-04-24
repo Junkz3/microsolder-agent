@@ -23,8 +23,8 @@ class ProbePoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     refdes: str
-    side: str                                  # "top" | "bottom"
-    coords: tuple[float, float]                # (x_mm, y_mm)
+    side: str  # "top" | "bottom"
+    coords: tuple[float, float]  # (x_mm, y_mm)
     bbox_mm: tuple[tuple[float, float], tuple[float, float]] | None = None
     reason: str
     priority: int
@@ -113,12 +113,9 @@ def enrich(timeline: SimulationTimeline, board: Board) -> EnrichedTimeline:
         # timeline.cascade_dead_components when caps are at fault; here we
         # offer the closest physical neighbours as candidates.
         cap_candidates = [
-            p for p in board.parts
-            if p.refdes.startswith("C") and p.refdes != priority1_refdes
+            p for p in board.parts if p.refdes.startswith("C") and p.refdes != priority1_refdes
         ]
-        cap_candidates.sort(
-            key=lambda p: _euclidean_mils((ax, ay), _bbox_center_mils(p))
-        )
+        cap_candidates.sort(key=lambda p: _euclidean_mils((ax, ay), _bbox_center_mils(p)))
         for i, cap in enumerate(cap_candidates[:3]):
             route.append(
                 ProbePoint(
@@ -126,9 +123,7 @@ def enrich(timeline: SimulationTimeline, board: Board) -> EnrichedTimeline:
                     side=_layer_side(cap),
                     coords=_bbox_center_mm(cap),
                     bbox_mm=_bbox_mm(cap),
-                    reason=(
-                        f"Cap near {priority1_refdes} — leak/short suspect"
-                    ),
+                    reason=(f"Cap near {priority1_refdes} — leak/short suspect"),
                     priority=3 + i,
                 )
             )
@@ -179,6 +174,7 @@ def enrich(timeline: SimulationTimeline, board: Board) -> EnrichedTimeline:
 # ----------------------------------------------------------------------
 # Geometry helpers
 # ----------------------------------------------------------------------
+
 
 def _layer_side(part: Part) -> str:
     """Map Layer IntFlag to the workbench convention ("top" | "bottom")."""
