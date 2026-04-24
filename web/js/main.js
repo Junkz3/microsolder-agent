@@ -3,7 +3,7 @@
 // and a section-agnostic wiring block for the Tweaks panel + boardview
 // colour pickers.
 
-import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode } from './router.js';
+import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode, initMode } from './router.js';
 import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
@@ -58,6 +58,8 @@ if (!window.Boardview) {
 
 /* ---------- INIT ---------- */
 (async function bootstrap() {
+  // Apply mode (guided/expert) class on <body> before any DOM-dependent code runs.
+  initMode();
   // Stamp the static version once — chrome state is then handled by navigate().
   document.getElementById("appVersion").textContent = APP_VERSION;
   wireRouter();
