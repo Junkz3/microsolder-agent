@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -742,6 +742,167 @@ async def get_pack_graph(device_slug: str) -> dict:
         rules=rules,
         dictionary=dictionary,
     )
+
+
+# ======================================================================
+# Technician-supplied document uploads — feeds Scout / Registry enrichment
+# ======================================================================
+
+
+_UPLOAD_KINDS = {"schematic_pdf", "boardview", "datasheet", "notes", "other"}
+# Defense in depth — clamp the upload size at a sane ceiling so a 1 GB
+# blob doesn't fill /tmp during a multipart parse. 50 MB is enough for
+# any schematic PDF or datasheet we've seen in the wild.
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+def _safe_filename(name: str) -> str:
+    """Return a path-segment-safe version of `name`.
+
+    Strips directory components, control characters, and leading dots so
+    nothing the technician uploads can escape `memory/{slug}/uploads/`.
+    """
+    base = Path(name).name  # drop any directory traversal
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-_.")
+    return cleaned or "upload"
+
+
+class DocumentUploadResponse(BaseModel):
+    device_slug: str
+    kind: str
+    stored_path: str
+    filename: str
+    size_bytes: int
+
+
+@router.post(
+    "/packs/{device_slug}/documents",
+    response_model=DocumentUploadResponse,
+    status_code=201,
+)
+async def post_pack_document(
+    device_slug: str,
+    kind: str = Form(...),
+    description: str | None = Form(default=None),
+    file: UploadFile = File(...),
+) -> DocumentUploadResponse:
+    """Persist a technician-supplied document under `memory/{slug}/uploads/`.
+
+    Triggers no processing — the orchestrator picks the file up on the
+    next `POST /pipeline/generate` (or `/pipeline/repairs`) call. The
+    `kind` decides how the file is consumed downstream:
+    `schematic_pdf` triggers an inline `ingest_schematic` if the device
+    has no `electrical_graph.json` yet; `boardview` is parsed into a
+    `Board`; `datasheet` is listed for Scout to cite via `local://`;
+    `notes` and `other` are stored but not fed into prompts.
+    """
+    slug = _validate_slug(device_slug)
+    if kind not in _UPLOAD_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown kind={kind!r} — allowed: {sorted(_UPLOAD_KINDS)}",
+        )
+
+    settings = get_settings()
+    uploads_dir = Path(settings.memory_root) / slug / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    filename = _safe_filename(file.filename or "upload")
+    target = uploads_dir / f"{timestamp}-{kind}-{filename}"
+
+    # Stream the upload to disk in chunks so we never hold the entire
+    # blob in memory and we can abort cleanly on the size cap.
+    total = 0
+    try:
+        with target.open("wb") as fh:
+            while True:
+                chunk = await file.read(1 << 20)  # 1 MiB
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_UPLOAD_BYTES:
+                    fh.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"upload exceeds {_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB cap",
+                    )
+                fh.write(chunk)
+    except HTTPException:
+        raise
+    except OSError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"could not persist upload: {exc}") from exc
+    finally:
+        await file.close()
+
+    if description:
+        # Best-effort breadcrumb — failures don't fail the upload.
+        try:
+            (uploads_dir / f"{target.name}.description.txt").write_text(
+                description.strip(), encoding="utf-8"
+            )
+        except OSError:
+            logger.warning(
+                "could not persist description sidecar for %s",
+                target,
+                exc_info=True,
+            )
+
+    logger.info(
+        "[API] /pipeline/packs/%s/documents · kind=%s file=%s bytes=%d",
+        slug,
+        kind,
+        target.name,
+        total,
+    )
+    return DocumentUploadResponse(
+        device_slug=slug,
+        kind=kind,
+        stored_path=str(target),
+        filename=filename,
+        size_bytes=total,
+    )
+
+
+@router.get("/packs/{device_slug}/documents")
+async def list_pack_documents(device_slug: str) -> dict:
+    """List every upload persisted for this pack, grouped by kind."""
+    slug = _validate_slug(device_slug)
+    settings = get_settings()
+    uploads_dir = Path(settings.memory_root) / slug / "uploads"
+    if not uploads_dir.exists():
+        return {"device_slug": slug, "uploads": []}
+
+    items: list[dict] = []
+    for path in sorted(uploads_dir.iterdir()):
+        if not path.is_file() or path.name.endswith(".description.txt"):
+            continue
+        match = re.match(r"^(?P<ts>[^-]+(?:-[^-]+)*?)-(?P<kind>[a-z_]+)-(?P<filename>.+)$", path.name)
+        if match is None:
+            kind = "other"
+            timestamp = ""
+            original = path.name
+        else:
+            kind = match.group("kind")
+            timestamp = match.group("ts")
+            original = match.group("filename")
+        sidecar = uploads_dir / f"{path.name}.description.txt"
+        description = (
+            sidecar.read_text(encoding="utf-8") if sidecar.exists() else None
+        )
+        items.append(
+            {
+                "name": path.name,
+                "kind": kind,
+                "timestamp": timestamp,
+                "filename": original,
+                "size_bytes": path.stat().st_size,
+                "description": description,
+            }
+        )
+    return {"device_slug": slug, "uploads": items}
 
 
 @router.api_route("/packs/{device_slug}/schematic.pdf", methods=["GET", "HEAD"])

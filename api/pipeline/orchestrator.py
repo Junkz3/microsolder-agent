@@ -12,16 +12,19 @@ Persists all intermediate artefacts under `memory/{device_slug}/` on disk:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from anthropic import AsyncAnthropic
 
 from api.agent.memory_seed import seed_memory_store_from_pack
+from api.board.model import Board
 from api.config import get_settings
 from api.pipeline.auditor import run_auditor
 from api.pipeline.drift import compute_drift
@@ -34,11 +37,140 @@ from api.pipeline.schemas import (
     Registry,
     RulesSet,
 )
+from api.pipeline.schematic.schemas import ElectricalGraph
 from api.pipeline.scout import run_scout
 from api.pipeline.telemetry.token_stats import PhaseTokenStats, write_token_stats
 from api.pipeline.writers import run_single_writer_revision, run_writers_parallel
 
 logger = logging.getLogger("microsolder.pipeline.orchestrator")
+
+
+# Upload kinds the orchestrator recognises in `memory/{slug}/uploads/`.
+# Filenames follow `{ISO-timestamp}-{kind}-{original-filename}`. Anything
+# whose filename doesn't match this pattern is left in `other` and not
+# threaded into the prompts.
+_UPLOAD_KINDS = {"schematic_pdf", "boardview", "datasheet", "notes", "other"}
+_UPLOAD_NAME_RE = re.compile(
+    r"^(?P<ts>[^-]+(?:-[^-]+)*?)-(?P<kind>[a-z_]+)-(?P<filename>.+)$"
+)
+
+
+@dataclass(frozen=True)
+class UploadedDocuments:
+    """Grouped technician uploads found under `memory/{slug}/uploads/`.
+
+    Schematic and boardview slots are most-recent-wins (keyed off the
+    timestamp prefix); datasheets, notes, and other accumulate.
+    """
+
+    schematic_pdf: Path | None = None
+    boardview: Path | None = None
+    datasheets: list[Path] = field(default_factory=list)
+    notes: list[Path] = field(default_factory=list)
+    other: list[Path] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return (
+            self.schematic_pdf is None
+            and self.boardview is None
+            and not self.datasheets
+            and not self.notes
+            and not self.other
+        )
+
+
+def scan_uploads(uploads_dir: Path) -> UploadedDocuments:
+    """List the files under `uploads_dir` and group them by kind.
+
+    Empty / missing directories return an empty `UploadedDocuments`.
+    Filenames that don't match `{ts}-{kind}-{name}` land in `other`,
+    so the technician's manually-dropped files are not silently lost.
+    """
+    if not uploads_dir.exists() or not uploads_dir.is_dir():
+        return UploadedDocuments()
+
+    schematic_pdf: Path | None = None
+    schematic_pdf_ts: str | None = None
+    boardview: Path | None = None
+    boardview_ts: str | None = None
+    datasheets: list[Path] = []
+    notes: list[Path] = []
+    other: list[Path] = []
+
+    for path in sorted(uploads_dir.iterdir()):
+        if not path.is_file():
+            continue
+        match = _UPLOAD_NAME_RE.match(path.name)
+        if match is None or match.group("kind") not in _UPLOAD_KINDS:
+            other.append(path)
+            continue
+        kind = match.group("kind")
+        ts = match.group("ts")
+        if kind == "schematic_pdf":
+            if schematic_pdf_ts is None or ts > schematic_pdf_ts:
+                schematic_pdf = path
+                schematic_pdf_ts = ts
+        elif kind == "boardview":
+            if boardview_ts is None or ts > boardview_ts:
+                boardview = path
+                boardview_ts = ts
+        elif kind == "datasheet":
+            datasheets.append(path)
+        elif kind == "notes":
+            notes.append(path)
+        else:  # "other"
+            other.append(path)
+
+    return UploadedDocuments(
+        schematic_pdf=schematic_pdf,
+        boardview=boardview,
+        datasheets=datasheets,
+        notes=notes,
+        other=other,
+    )
+
+
+def _load_uploaded_board(path: Path) -> Board | None:
+    """Parse a technician-uploaded boardview file into a `Board`.
+
+    Returns None on any failure (unknown extension, parse error, file
+    unreadable). The caller logs and continues without `Board`."""
+    try:
+        from api.board.parser.base import UnsupportedFormatError, parser_for
+
+        parser = parser_for(path)
+        raw = path.read_bytes()
+        file_hash = hashlib.sha256(raw).hexdigest()
+        return parser.parse(raw, file_hash=file_hash, board_id=path.stem)
+    except (UnsupportedFormatError, NotImplementedError, OSError, ValueError):
+        logger.warning(
+            "[Pipeline] Could not parse uploaded boardview at %s — continuing without Board",
+            path,
+            exc_info=True,
+        )
+        return None
+    except Exception:  # noqa: BLE001 — defensive: any parser bug must not abort the pipeline
+        logger.exception(
+            "[Pipeline] Unexpected failure parsing uploaded boardview at %s — continuing without Board",
+            path,
+        )
+        return None
+
+
+def _load_existing_electrical_graph(pack_dir: Path) -> ElectricalGraph | None:
+    """Load `electrical_graph.json` if present and parseable. None otherwise."""
+    path = pack_dir / "electrical_graph.json"
+    if not path.exists():
+        return None
+    try:
+        return ElectricalGraph.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — corrupted artefact must not abort
+        logger.exception(
+            "[Pipeline] electrical_graph.json at %s is malformed; "
+            "continuing without graph for Scout/Registry",
+            path,
+        )
+        return None
 
 OnEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -74,6 +206,7 @@ async def generate_knowledge_pack(
     memory_root: Path | None = None,
     max_revise_rounds: int | None = None,
     on_event: OnEvent | None = None,
+    uploaded_documents_dir: Path | None = None,
 ) -> PipelineResult:
     """Run the full pipeline for one device.
 
@@ -116,12 +249,73 @@ async def generate_knowledge_pack(
     pack_dir = _pack_path(device_label, memory_root)
     pack_dir.mkdir(parents=True, exist_ok=True)
 
+    # ---- Technician-supplied documents ----------------------------------
+    # Default search location is the device's per-pack uploads directory;
+    # callers (tests) can point at any other directory. An empty / missing
+    # directory leaves every optional input as None — Scout and Registry
+    # then run their legacy paths byte-for-byte.
+    uploads_dir = uploaded_documents_dir or (pack_dir / "uploads")
+    uploads = scan_uploads(uploads_dir)
+    if not uploads.is_empty():
+        logger.info(
+            "[Pipeline] Found uploads in %s · schematic=%s boardview=%s datasheets=%d notes=%d other=%d",
+            uploads_dir,
+            uploads.schematic_pdf.name if uploads.schematic_pdf else "—",
+            uploads.boardview.name if uploads.boardview else "—",
+            len(uploads.datasheets),
+            len(uploads.notes),
+            len(uploads.other),
+        )
+
+    # If a schematic PDF was uploaded and no electrical_graph yet exists,
+    # ingest the schematic INLINE before Scout. Failure logs and falls
+    # through — the pipeline still runs without a graph.
+    if (
+        uploads.schematic_pdf is not None
+        and not (pack_dir / "electrical_graph.json").exists()
+    ):
+        try:
+            from api.pipeline.schematic.orchestrator import ingest_schematic
+
+            t_ing = time.monotonic()
+            await emit({"type": "phase_started", "phase": "schematic_ingest"})
+            await ingest_schematic(
+                device_slug=slug,
+                pdf_path=uploads.schematic_pdf,
+                client=client,
+                memory_root=memory_root,
+                device_label=device_label,
+            )
+            logger.info(
+                "[Pipeline] Schematic ingestion complete · pack=%s · elapsed=%.1fs",
+                pack_dir,
+                time.monotonic() - t_ing,
+            )
+            await emit({
+                "type": "phase_finished",
+                "phase": "schematic_ingest",
+                "elapsed_s": time.monotonic() - t_ing,
+            })
+        except Exception:  # noqa: BLE001 — falling back is fine, we just lose enrichment
+            logger.exception(
+                "[Pipeline] Inline schematic ingestion failed — continuing without graph"
+            )
+
+    graph = _load_existing_electrical_graph(pack_dir)
+    board = (
+        _load_uploaded_board(uploads.boardview) if uploads.boardview is not None else None
+    )
+    datasheet_paths = list(uploads.datasheets) if uploads.datasheets else None
+
     logger.info("=" * 72)
     logger.info(
-        "Pipeline start · device=%r · models=%s · pack=%s",
+        "Pipeline start · device=%r · models=%s · pack=%s · graph=%s · board=%s · datasheets=%d",
         device_label,
         models_by_role,
         pack_dir,
+        "yes" if graph is not None else "no",
+        "yes" if board is not None else "no",
+        len(datasheet_paths or []),
     )
     logger.info("=" * 72)
 
@@ -130,6 +324,11 @@ async def generate_knowledge_pack(
         "device_slug": slug,
         "device_label": device_label,
         "models": models_by_role,
+        "uploads": {
+            "schematic_pdf": uploads.schematic_pdf.name if uploads.schematic_pdf else None,
+            "boardview": uploads.boardview.name if uploads.boardview else None,
+            "datasheets": [p.name for p in uploads.datasheets],
+        },
     })
 
     phase_stats: list[PhaseTokenStats] = []
@@ -143,6 +342,9 @@ async def generate_knowledge_pack(
             client=client,
             model=models_by_role["scout"],
             device_label=device_label,
+            graph=graph,
+            board=board,
+            datasheet_paths=datasheet_paths,
             min_symptoms=settings.pipeline_scout_min_symptoms,
             min_components=settings.pipeline_scout_min_components,
             min_sources=settings.pipeline_scout_min_sources,
@@ -164,6 +366,7 @@ async def generate_knowledge_pack(
             model=models_by_role["registry"],
             device_label=device_label,
             raw_dump=raw_dump,
+            graph=graph,
             stats=registry_stats,
         )
         registry_stats.duration_s = time.monotonic() - t0
