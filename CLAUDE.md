@@ -225,9 +225,13 @@ PDF schematic → `ElectricalGraph`, independent of the knowledge factory.
    connector), infers boot sequence, emits quality report → `ElectricalGraph`.
 
 Artefacts: `memory/{slug}/schematic_pages/page_NNN.json`, then
-`schematic_graph.json`, then `electrical_graph.json`. CLI at
-`python -m api.pipeline.schematic.cli --pdf=… --slug=…`. All data shapes
-live in `api/pipeline/schematic/schemas.py`.
+`schematic_graph.json`, then `electrical_graph.json`. Full ingestion
+runs from `ingest_schematic()` (typically via an upload on
+`POST /pipeline/packs/{slug}/documents`) — the module's CLI
+(`python -m api.pipeline.schematic.cli PDF PAGE`) is a single-page
+vision debug tool, or a passive re-classifier when invoked with
+`--classify-passives SLUG`, not a full ingestion entry point. All data
+shapes live in `api/pipeline/schematic/schemas.py`.
 
 ### Deterministic engines — simulator + hypothesize
 
