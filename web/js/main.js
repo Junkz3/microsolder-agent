@@ -11,6 +11,7 @@ import { initProfileSection } from './profile.js';
 import { initPipelineProgress } from './pipeline_progress.js';
 import { initLLMPanel, openLLMPanelIfRepairParam } from './llm.js';
 import { loadSchematic, closeSchematicInspector } from './schematic.js';
+import { initLanding, showLanding, hideLanding } from './landing.js';
 
 // Tracks which device slug the graph has already been mounted for. Guards
 // against a second initGraphWithData() call on re-navigation to #graphe —
@@ -68,6 +69,13 @@ if (!window.Boardview) {
   initPipelineProgress();
   await initLLMPanel();
   openLLMPanelIfRepairParam();
+
+  // Landing hero — initialise listeners; show only if no repair param.
+  initLanding();
+  const __landingParams = new URLSearchParams(window.location.search);
+  if (!__landingParams.get("repair") && !__landingParams.get("device")) {
+    showLanding();
+  }
 
   // Legacy redirect: #memory-bank is merged into #graphe with view=md.
   if (window.location.hash === "#memory-bank") {
