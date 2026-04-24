@@ -12,6 +12,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Force C numeric locale — see evolve-bootstrap.sh for rationale.
+export LC_NUMERIC=C
+
 LOCKFILE="/tmp/microsolder-evolve.lock"
 LOGFILE="/tmp/microsolder-evolve.log"
 INTERVAL="${EVOLVE_INTERVAL:-60}"

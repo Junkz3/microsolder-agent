@@ -11,6 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Force C numeric locale so printf "%.6f" writes dots, not locale-aware commas
+# (FR locale turns 0.55 into "0,55" which breaks JSON / float parsing downstream).
+export LC_NUMERIC=C
+
 DATE=$(date +%Y-%m-%d)
 EVOLVE_DIR="evolve"
 RESULTS_TSV="$EVOLVE_DIR/results.tsv"

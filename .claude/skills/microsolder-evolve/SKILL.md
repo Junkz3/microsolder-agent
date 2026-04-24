@@ -181,7 +181,7 @@ json.dump(state, open('evolve/state.json', 'w'), indent=2)
 "
 
 # Append results.tsv
-printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
+LC_NUMERIC=C printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
   "$timestamp" "$NEW_COMMIT" "$new_score" "$new_self_mrr" "$new_cascade" "keep" "$description" \
   >> evolve/results.tsv
 ```
@@ -191,7 +191,7 @@ printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
 ```bash
 git reset --hard HEAD  # annule l'édit non-committée
 
-printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
+LC_NUMERIC=C printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
   "$timestamp" "$baseline_commit" "$new_score" "$new_self_mrr" "$new_cascade" "discard" "$description" \
   >> evolve/results.tsv
 ```
@@ -202,7 +202,7 @@ printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
 git reset --hard HEAD  # annule l'édit non-committée
 
 ERR_EXCERPT=$(head -c 180 /tmp/score.err | tr '\n\t' '  ')
-printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
+LC_NUMERIC=C printf '%s\t%s\t%.6f\t%.6f\t%.6f\t%s\t%s\n' \
   "$timestamp" "$baseline_commit" "0.000000" "0.000000" "0.000000" "crash" "$description — $ERR_EXCERPT" \
   >> evolve/results.tsv
 ```
