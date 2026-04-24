@@ -325,14 +325,31 @@ class SimulationEngine:
                 comp = self.electrical.components.get(f.refdes)
                 if comp is None:
                     continue
-                # An open passive in series cuts power to anything reachable
-                # from its non-source terminal. Brute-force: find every IC
-                # whose power_in lands on a net touched by this passive.
+                # An open passive in series cuts power to consumers on the
+                # DOWNSTREAM side only — upstream consumers still see the
+                # supply rail. Identify which of the two touched nets is
+                # upstream by looking for a registered `power_rail` whose
+                # source is either an IC (`source_refdes` set) or an
+                # external supply (`source_refdes is None` — the always-on
+                # baseline applied in `run()`). The OTHER net's consumers
+                # are the downstream casualties.
                 touched_nets = {pin.net_label for pin in comp.pins if pin.net_label}
-                for refdes, c in self.electrical.components.items():
-                    ins = {p.net_label for p in c.pins if p.role == "power_in" and p.net_label}
-                    if ins & touched_nets:
-                        components[refdes] = "dead"
+                upstream_candidates = {
+                    n for n in touched_nets
+                    if n in self.electrical.power_rails
+                }
+                if len(upstream_candidates) == 1:
+                    upstream = next(iter(upstream_candidates))
+                    downstream_nets = touched_nets - {upstream}
+                    for refdes, c in self.electrical.components.items():
+                        ins = {p.net_label for p in c.pins if p.role == "power_in" and p.net_label}
+                        if ins & downstream_nets:
+                            components[refdes] = "dead"
+                # Ambiguous topology (both touched nets are registered
+                # power rails, or neither is) — under-kill rather than
+                # over-kill. A foundation simulator should never fabricate
+                # a dead set; downstream agents/operators can refine via
+                # explicit `Failure(mode="dead")` on the affected IC.
                 continue
 
         return frozenset(touched_rails)

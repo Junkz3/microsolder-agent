@@ -590,6 +590,26 @@ def graph_with_series_r(graph_with_phase) -> ElectricalGraph:
     return graph_with_phase
 
 
+@pytest.fixture
+def graph_upstream_and_downstream_of_r5(graph_with_series_r) -> ElectricalGraph:
+    """graph_with_series_r + an upstream consumer U20 directly on +5V.
+
+    Topology: +5V (sourced by U7) → [U20 upstream consumer] → R5 → +5V_FILT → U12.
+    Used to verify open-mode passive failures only kill downstream consumers.
+    """
+    graph_with_series_r.components["U20"] = ComponentNode(
+        refdes="U20",
+        type="ic",
+        pins=[PagePin(number="1", role="power_in", net_label="+5V")],
+    )
+    # Add U20 to the +5V rail's consumers list (cosmetic — the engine reads
+    # power_in pins directly, but keeps the rail bookkeeping honest).
+    graph_with_series_r.power_rails["+5V"].consumers = ["U12", "U20"]
+    # Schedule U20 to enter alongside U12 so the phase walk activates it.
+    graph_with_series_r.boot_sequence[0].components_entering = ["U12", "U20"]
+    return graph_with_series_r
+
+
 def test_failure_leaky_short_on_decoupling_cap_degrades_rail(graph_with_decoupling):
     """A leaky_short on a decoupling cap drives the decoupled rail to degraded."""
     engine = SimulationEngine(
@@ -620,3 +640,23 @@ def test_failure_open_on_series_resistor_kills_consumer(graph_with_series_r):
     )
     final = engine.run().states[-1]
     assert final.components.get("U12") == "dead"
+
+
+def test_failure_open_on_series_resistor_spares_upstream_consumer(
+    graph_upstream_and_downstream_of_r5,
+):
+    """open on a series passive must only kill downstream consumers.
+
+    R5 sits between +5V (upstream, sourced by U7) and +5V_FILT (downstream).
+    U20 consumes +5V upstream — its supply is unaffected by R5 opening.
+    U12 consumes +5V_FILT downstream — it loses its supply when R5 opens.
+    """
+    engine = SimulationEngine(
+        graph_upstream_and_downstream_of_r5,
+        failures=[Failure(refdes="R5", mode="open")],
+    )
+    final = engine.run().states[-1]
+    # Downstream consumer is dead.
+    assert final.components.get("U12") == "dead"
+    # Upstream consumer is NOT collateral damage.
+    assert final.components.get("U20") == "on"
