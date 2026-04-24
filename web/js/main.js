@@ -3,7 +3,7 @@
 // and a section-agnostic wiring block for the Tweaks panel + boardview
 // colour pickers.
 
-import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode, initMode } from './router.js';
+import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode, initMode, toggleMode } from './router.js';
 import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
@@ -75,6 +75,52 @@ if (!window.Boardview) {
   const __landingParams = new URLSearchParams(window.location.search);
   if (!__landingParams.get("repair") && !__landingParams.get("device")) {
     showLanding();
+  }
+
+  // ============ Guided mode wiring ============
+
+  // ⚙ mode toggle button — flip between guided / expert (router.js handles localStorage + body class).
+  const modeBtn = document.getElementById("modeToggle");
+  if (modeBtn) {
+    modeBtn.addEventListener("click", () => {
+      toggleMode();
+      modeBtn.style.transform = "scale(0.92)";
+      setTimeout(() => { modeBtn.style.transform = ""; }, 120);
+    });
+  }
+
+  // Sidebar "Accueil" button — return to landing (clears repair + device params).
+  const homeBtn = document.getElementById("gSidebarHome");
+  if (homeBtn) {
+    homeBtn.addEventListener("click", () => {
+      const url = new URL(location.href);
+      url.searchParams.delete("repair");
+      url.searchParams.delete("device");
+      url.searchParams.delete("conv");
+      url.searchParams.delete("confirm_intent");
+      location.href = url.toString();
+    });
+  }
+
+  // "+ nouveau diagnostic" — reopen the landing overlay (creates a new repair from scratch).
+  const newRepairBtn = document.getElementById("gNewRepair");
+  if (newRepairBtn) {
+    newRepairBtn.addEventListener("click", () => {
+      showLanding();
+    });
+  }
+
+  // "+ nouvelle conversation" — uses the existing llm.js switchConv("new") API.
+  const newConvBtn = document.getElementById("gNewConv");
+  if (newConvBtn) {
+    newConvBtn.addEventListener("click", async () => {
+      try {
+        const llm = await import("./llm.js");
+        if (typeof llm.switchConv === "function") llm.switchConv("new");
+      } catch (err) {
+        console.warn("[guided] new conversation failed", err);
+      }
+    });
   }
 
   // Legacy redirect: #memory-bank is merged into #graphe with view=md.
