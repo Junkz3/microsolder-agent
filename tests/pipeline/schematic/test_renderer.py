@@ -1,9 +1,12 @@
 """Integration tests for api.pipeline.schematic.renderer.
 
 Uses the real MNT Reform v2.5 PDF fixture (committed under board_assets/).
-Rendering 12 A4 pages at 200 dpi takes ~2-3 s on a modern laptop; we ship
-it as an integration test under pytest's default run to catch regressions
-in pdftoppm invocation and page-number padding logic.
+Marked `slow` at the module level: rendering 12 A4 pages via pdftoppm is
+the single slowest fixture in the suite (~30 s on a modern laptop, dominated
+by pdftoppm CPU), so we keep it out of `make test` and only run it under
+`make test-all`. Move back to the fast path once the render pipeline is
+optimized (cached vector extraction, fewer pages, lower dpi for the smoke
+checks).
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ from api.pipeline.schematic.renderer import (
     RenderedPage,
     render_pages,
 )
+
+pytestmark = pytest.mark.slow
 
 FIXTURE_PDF = Path("board_assets/mnt-reform-motherboard.pdf")
 
