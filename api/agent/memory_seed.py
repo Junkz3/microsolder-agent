@@ -83,7 +83,7 @@ def stale_files_for_pack(pack_dir: Path) -> list[str]:
     Files absent from disk are ignored (nothing to seed).
     """
     marker = read_seed_marker(pack_dir)
-    marker_files = marker["files"] if marker else {}
+    marker_files = (marker or {}).get("files", {})
 
     stale: list[str] = []
     for file_name, _memory_path in _SEED_FILES:
@@ -166,7 +166,7 @@ async def seed_memory_store_from_pack(
     # re-seed doesn't erase the mtimes of files we didn't touch.
     if seeded_mtimes:
         existing = read_seed_marker(pack_dir)
-        merged = dict(existing["files"]) if existing else {}
+        merged = dict((existing or {}).get("files") or {})
         merged.update(seeded_mtimes)
         write_seed_marker(
             pack_dir=pack_dir,

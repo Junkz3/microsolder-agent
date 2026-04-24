@@ -350,3 +350,55 @@ async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, mo
         )
     # rules.json mtime must have advanced.
     assert marker["files"]["rules.json"] > prior_mtimes["rules.json"]
+
+
+def test_stale_files_handles_legacy_marker_without_files_key(tmp_path: Path):
+    """Legacy managed.json without 'files' key → every on-disk file stale."""
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    (pack / "registry.json").write_text("{}")
+    (pack / "rules.json").write_text("{}")
+    # Legacy marker: no `files` field.
+    (pack / "managed.json").write_text(
+        '{"memory_store_id": "memstore_legacy", "device_slug": "demo"}'
+    )
+    stale = stale_files_for_pack(pack)
+    assert set(stale) == {"registry.json", "rules.json"}
+
+
+@pytest.mark.asyncio
+async def test_seed_merges_into_legacy_marker(tmp_path: Path, monkeypatch):
+    """Partial seed against a legacy marker writes a well-formed marker back."""
+    from api.agent import memory_seed as ms_mod
+    from unittest.mock import AsyncMock
+
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    for name, _ in ms_mod._SEED_FILES:
+        (pack / name).write_text("{}")
+    # Legacy marker — no `files` key.
+    (pack / "managed.json").write_text(
+        '{"memory_store_id": "memstore_legacy", "device_slug": "demo"}'
+    )
+
+    class FakeSettings:
+        ma_memory_store_enabled = True
+    monkeypatch.setattr(ms_mod, "get_settings", lambda: FakeSettings())
+
+    async def fake_ensure(client, slug):
+        return "memstore_xyz"
+    monkeypatch.setattr(ms_mod, "ensure_memory_store", fake_ensure)
+
+    async def fake_upsert(client, *, store_id, path, content):
+        return {"id": "mem_1"}
+    monkeypatch.setattr(ms_mod, "upsert_memory", fake_upsert)
+
+    await ms_mod.seed_memory_store_from_pack(
+        client=AsyncMock(), device_slug="demo", pack_dir=pack,
+        only_files=["rules.json"],
+    )
+
+    marker = ms_mod.read_seed_marker(pack)
+    assert "files" in marker, "legacy marker should be upgraded to new schema"
+    assert "rules.json" in marker["files"]
+    assert marker["store_id"] == "memstore_xyz"
