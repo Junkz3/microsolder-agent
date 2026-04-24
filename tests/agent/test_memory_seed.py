@@ -288,3 +288,65 @@ async def test_seed_only_files_uploads_subset(tmp_path: Path, monkeypatch):
     marker = ms_mod.read_seed_marker(pack)
     assert marker["store_id"] == "memstore_xyz"
     assert "rules.json" in marker["files"]
+
+
+@pytest.mark.asyncio
+async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, monkeypatch):
+    """Partial re-seed must keep the mtimes of files NOT in only_files.
+
+    Regression guard: a naive `merged = seeded_mtimes` (instead of
+    `merged.update(...)`) would drop the three other entries from the
+    marker, triggering re-seed-all on the next session open forever.
+    """
+    from api.agent import memory_seed as ms_mod
+    from unittest.mock import AsyncMock
+
+    pack = tmp_path / "demo"
+    pack.mkdir()
+    for name, _ in ms_mod._SEED_FILES:
+        (pack / name).write_text("{}")
+
+    # Pre-populate a marker with mtimes for ALL four files.
+    prior_mtimes = {name: (pack / name).stat().st_mtime for name, _ in ms_mod._SEED_FILES}
+    ms_mod.write_seed_marker(
+        pack_dir=pack,
+        store_id="memstore_xyz",
+        seeded_files=prior_mtimes,
+    )
+
+    class FakeSettings:
+        ma_memory_store_enabled = True
+    monkeypatch.setattr(ms_mod, "get_settings", lambda: FakeSettings())
+
+    async def fake_ensure(client, slug):
+        return "memstore_xyz"
+    monkeypatch.setattr(ms_mod, "ensure_memory_store", fake_ensure)
+
+    async def fake_upsert(client, *, store_id, path, content):
+        return {"id": "mem_1"}
+    monkeypatch.setattr(ms_mod, "upsert_memory", fake_upsert)
+
+    # Touch rules.json so its mtime advances, then partial-reseed only that file.
+    import time
+    time.sleep(0.01)
+    (pack / "rules.json").write_text('{"rules": [{"id": "new"}]}')
+
+    await ms_mod.seed_memory_store_from_pack(
+        client=AsyncMock(), device_slug="demo", pack_dir=pack,
+        only_files=["rules.json"],
+    )
+
+    marker = ms_mod.read_seed_marker(pack)
+    assert marker is not None
+    # All four filenames must still be in the marker.
+    expected_files = {name for name, _ in ms_mod._SEED_FILES}
+    assert set(marker["files"].keys()) == expected_files, (
+        f"merge must preserve entries for untouched files; got {set(marker['files'].keys())!r}"
+    )
+    # The three untouched files must keep their old mtimes.
+    for name in expected_files - {"rules.json"}:
+        assert marker["files"][name] == prior_mtimes[name], (
+            f"{name} mtime must not change on partial re-seed"
+        )
+    # rules.json mtime must have advanced.
+    assert marker["files"]["rules.json"] > prior_mtimes["rules.json"]
