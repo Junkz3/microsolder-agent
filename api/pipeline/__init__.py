@@ -54,6 +54,27 @@ logger = logging.getLogger("microsolder.pipeline.api")
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
+# Repair ids are generated via `uuid.uuid4().hex[:12]` → 12 hex chars. We
+# keep the validator permissive enough to accept legacy / manually-seeded
+# ids (short alphanumeric + `._-`) while rejecting anything that could
+# escape the `memory/{slug}/repairs/{repair_id}/` subtree when used as a
+# filesystem path segment.
+_REPAIR_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _validate_repair_id(repair_id: str) -> str:
+    """Return `repair_id` when safe to use as a path segment, else raise 400.
+
+    Rejects empty, `..`, anything with `/` or `\\`, and anything outside
+    the `[A-Za-z0-9._-]` alphabet. Path traversal defense in depth for
+    the measurement HTTP routes that append `repair_id` into a filesystem
+    path without further sanitisation.
+    """
+    if not repair_id or repair_id in {".", ".."} or not _REPAIR_ID_RE.match(repair_id):
+        raise HTTPException(status_code=400, detail={"reason": "invalid_repair_id"})
+    return repair_id
+
+
 class GenerateRequest(BaseModel):
     device_label: str = Field(
         min_length=2,
@@ -1272,8 +1293,9 @@ async def post_measurement(
     are observed by the agent only when it polls the journal.
     """
     settings = get_settings()
+    safe_repair_id = _validate_repair_id(repair_id)
     result = _mb_record_measurement(
-        device_slug=_slugify(device_slug), repair_id=repair_id,
+        device_slug=_slugify(device_slug), repair_id=safe_repair_id,
         memory_root=Path(settings.memory_root),
         target=body.target, value=body.value, unit=body.unit,
         nominal=body.nominal, note=body.note, source="ui",
@@ -1295,8 +1317,9 @@ async def get_measurements(
     has no matching entries.
     """
     settings = get_settings()
+    safe_repair_id = _validate_repair_id(repair_id)
     return _mb_list_measurements(
-        device_slug=_slugify(device_slug), repair_id=repair_id,
+        device_slug=_slugify(device_slug), repair_id=safe_repair_id,
         memory_root=Path(settings.memory_root),
         target=target, since=since,
     )
