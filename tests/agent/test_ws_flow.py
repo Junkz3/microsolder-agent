@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -66,24 +67,82 @@ def _board_with_u7() -> Board:
     )
 
 
-def _mock_anthropic(responses: list[MagicMock]) -> MagicMock:
-    """Build an AsyncAnthropic whose messages.create cycles through `responses`."""
-    client = MagicMock()
-    client.messages.create = AsyncMock(side_effect=responses)
-    return client
+class _FakeStream:
+    """Async context manager that doubles as an async iterator — mirrors the
+    shape of `client.messages.stream(...)` just enough for the direct runtime.
+
+    Events are scripted as (event, snapshot_content) pairs: the snapshot
+    accumulates completed blocks so the runtime can read
+    `stream.current_message_snapshot.content[idx]` after each
+    `content_block_stop`.
+    """
+
+    def __init__(self, events: list[tuple], final_message: MagicMock) -> None:
+        self._events = list(events)
+        self._final = final_message
+        self._snapshot_content: list = []
+
+    async def __aenter__(self) -> _FakeStream:
+        return self
+
+    async def __aexit__(self, *exc_info) -> bool:
+        return False
+
+    def __aiter__(self) -> _FakeStream:
+        return self
+
+    async def __anext__(self):
+        if not self._events:
+            raise StopAsyncIteration
+        event, new_snapshot_content = self._events.pop(0)
+        self._snapshot_content = new_snapshot_content
+        return event
+
+    @property
+    def current_message_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(content=list(self._snapshot_content))
+
+    async def get_final_message(self) -> MagicMock:
+        return self._final
 
 
-def _text_response(text: str) -> MagicMock:
+def _stream_text(text: str) -> tuple[list[tuple], MagicMock]:
+    """Scripted stream producing one text block then ending."""
     block = MagicMock(type="text", text=text)
-    return MagicMock(content=[block], stop_reason="end_turn")
+    stop_ev = MagicMock()
+    stop_ev.type = "content_block_stop"
+    stop_ev.index = 0
+    events = [(stop_ev, [block])]
+    final = MagicMock(content=[block], stop_reason="end_turn")
+    return events, final
 
 
-def _tool_use_response(name: str, tool_input: dict, tool_id: str = "toolu_1") -> MagicMock:
-    # NOTE: `name` is a reserved kwarg in MagicMock (sets the mock's display
-    # name, not a data attribute). Set it explicitly after construction.
+def _stream_tool_use(
+    name: str, tool_input: dict, tool_id: str = "toolu_1"
+) -> tuple[list[tuple], MagicMock]:
+    """Scripted stream producing one tool_use block.
+
+    Tool-use blocks don't trigger WS emission in the runtime (it only emits
+    at content_block_stop for *text* blocks), so we yield no events and let
+    `get_final_message` deliver the tool_use for dispatch.
+    """
     block = MagicMock(type="tool_use", input=tool_input, id=tool_id)
     block.name = name
-    return MagicMock(content=[block], stop_reason="tool_use")
+    final = MagicMock(content=[block], stop_reason="tool_use")
+    return [], final
+
+
+def _mock_anthropic(scripted: list[tuple[list[tuple], MagicMock]]) -> MagicMock:
+    """Build an AsyncAnthropic whose messages.stream yields scripted responses."""
+    iterator = iter(scripted)
+    client = MagicMock()
+
+    def _stream_factory(**_kwargs):
+        events, final = next(iterator)
+        return _FakeStream(events, final)
+
+    client.messages.stream = _stream_factory
+    return client
 
 
 def _patch_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,10 +160,10 @@ async def test_bv_highlight_emits_tool_use_then_event(monkeypatch: pytest.Monkey
     _stub_session(monkeypatch, _board_with_u7())
     import api.agent.runtime_direct as rt
     fake_client = _mock_anthropic([
-        _tool_use_response("bv_highlight", {"refdes": "U7"}),
-        _text_response("Done."),
+        _stream_tool_use("bv_highlight", {"refdes": "U7"}),
+        _stream_text("Done."),
     ])
-    monkeypatch.setattr(rt, "AsyncAnthropic", lambda api_key: fake_client)
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
     _patch_settings(monkeypatch)
 
     ws = FakeWS(["show U7"])
@@ -124,10 +183,10 @@ async def test_bv_highlight_unknown_emits_no_boardview_event(monkeypatch: pytest
     _stub_session(monkeypatch, _board_with_u7())
     import api.agent.runtime_direct as rt
     fake_client = _mock_anthropic([
-        _tool_use_response("bv_highlight", {"refdes": "U999"}),
-        _text_response("Couldn't find that one."),
+        _stream_tool_use("bv_highlight", {"refdes": "U999"}),
+        _stream_text("Couldn't find that one."),
     ])
-    monkeypatch.setattr(rt, "AsyncAnthropic", lambda api_key: fake_client)
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
     _patch_settings(monkeypatch)
 
     ws = FakeWS(["show U999"])
@@ -146,15 +205,17 @@ async def test_tool_result_never_contains_event_key(monkeypatch: pytest.MonkeyPa
 
     captured_messages: list[list[dict]] = []
 
-    async def recording_create(**kwargs):
+    def recording_stream(**kwargs):
         captured_messages.append(list(kwargs["messages"]))
         if len(captured_messages) == 1:
-            return _tool_use_response("bv_highlight", {"refdes": "U7"})
-        return _text_response("ok")
+            events, final = _stream_tool_use("bv_highlight", {"refdes": "U7"})
+        else:
+            events, final = _stream_text("ok")
+        return _FakeStream(events, final)
 
     fake_client = MagicMock()
-    fake_client.messages.create = AsyncMock(side_effect=recording_create)
-    monkeypatch.setattr(rt, "AsyncAnthropic", lambda api_key: fake_client)
+    fake_client.messages.stream = recording_stream
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
     _patch_settings(monkeypatch)
 
     ws = FakeWS(["show U7"])
@@ -178,9 +239,9 @@ async def test_sanitizer_wraps_unknown_refdes_in_final_message(monkeypatch: pyte
     _stub_session(monkeypatch, _board_with_u7())
     import api.agent.runtime_direct as rt
     fake_client = _mock_anthropic([
-        _text_response("U999 is suspect"),
+        _stream_text("U999 is suspect"),
     ])
-    monkeypatch.setattr(rt, "AsyncAnthropic", lambda api_key: fake_client)
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
     _patch_settings(monkeypatch)
 
     ws = FakeWS(["what's wrong?"])
@@ -190,3 +251,48 @@ async def test_sanitizer_wraps_unknown_refdes_in_final_message(monkeypatch: pyte
     assert agent_msgs
     assert "⟨?U999⟩" in agent_msgs[0]["text"]
     assert "U999 is suspect" not in agent_msgs[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_each_text_block_at_its_stop_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two text blocks in one response → two separate WS `message` events.
+
+    Proves we emit at each content_block_stop rather than batching the whole
+    response: each stop event carries its own snapshot slice, and the runtime
+    flushes to the WS as soon as a block closes.
+    """
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    block_a = MagicMock(type="text", text="first")
+    block_b = MagicMock(type="text", text="second")
+    stop_a = MagicMock()
+    stop_a.type = "content_block_stop"
+    stop_a.index = 0
+    stop_b = MagicMock()
+    stop_b.type = "content_block_stop"
+    stop_b.index = 1
+    events = [
+        (stop_a, [block_a]),
+        (stop_b, [block_a, block_b]),
+    ]
+    final = MagicMock(content=[block_a, block_b], stop_reason="end_turn")
+
+    def _stream_factory(**_kw):
+        return _FakeStream(events, final)
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_factory
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    _patch_settings(monkeypatch)
+
+    ws = FakeWS(["tell me a story"])
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    agent_msgs = [
+        m for m in ws.sent
+        if m.get("type") == "message" and m.get("role") == "assistant"
+    ]
+    assert len(agent_msgs) == 2
+    assert agent_msgs[0]["text"] == "first"
+    assert agent_msgs[1]["text"] == "second"

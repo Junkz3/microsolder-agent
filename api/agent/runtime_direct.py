@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fallback diagnostic runtime using `messages.create` (no Managed Agents).
+"""Fallback diagnostic runtime using `messages.stream` (no Managed Agents).
 
 Keeps the WebSocket protocol identical to `runtime_managed`, so the frontend
 doesn't care which mode is active. Activated with env var
 `DIAGNOSTIC_MODE=direct`; used when the Managed Agents beta is unavailable
 or when we want a lighter-weight path for local demos.
+
+Uses the streaming Messages API so each completed text block is emitted to
+the WebSocket as soon as it finishes, rather than waiting for the full
+response — CLAUDE.md §"Streaming over polling".
 """
 
 from __future__ import annotations
@@ -105,27 +109,39 @@ async def _run_agent_turn(
     ]
 
     while True:
-        response = await client.messages.create(
+        # Emit each text block the moment it finishes (content_block_stop),
+        # then dispatch any tool_use blocks once stop_reason is known. For a
+        # typical answer with one narrative + N tool calls this means the tech
+        # sees the narrative *before* the model has even finished emitting the
+        # tool-use inputs.
+        async with client.messages.stream(
             model=model,
             max_tokens=8000,
             system=cached_system,
             messages=messages,
             tools=cached_tools,
-        )
-
-        # Two passes over response.content are intentional: emit every
-        # text block first so the user reads the narrative before the
-        # canvas animates, THEN dispatch tool_use blocks (which fire
-        # boardview.* events). Block-level ordering matches the model's
-        # output order, just grouped by kind.
-        for block in response.content:
-            if block.type == "text":
-                clean, unknown = sanitize_agent_text(block.text, session.board)
+        ) as stream:
+            async for event in stream:
+                if getattr(event, "type", None) != "content_block_stop":
+                    continue
+                idx = getattr(event, "index", None)
+                if idx is None:
+                    continue
+                snapshot_blocks = getattr(stream.current_message_snapshot, "content", [])
+                if idx >= len(snapshot_blocks):
+                    continue
+                block = snapshot_blocks[idx]
+                if getattr(block, "type", None) != "text":
+                    continue
+                clean, unknown = sanitize_agent_text(
+                    getattr(block, "text", "") or "", session.board
+                )
                 if unknown:
                     logger.warning("sanitizer wrapped unknown refdes: %s", unknown)
                 await ws.send_json(
                     {"type": "message", "role": "assistant", "text": clean}
                 )
+            response = await stream.get_final_message()
 
         # Token cost estimate for THIS API call — sent AFTER the text so the
         # frontend can attach a "$" chip to the just-rendered assistant bubble
