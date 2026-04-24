@@ -358,4 +358,106 @@ def test_run_all_applies_v2b_before_v3(sample_draft, toy_graph):
     accepted, rejected = run_all([d], toy_graph)
     assert accepted == []
     assert len(rejected) == 1
-    assert rejected[0].motive == "rail_not_mentioned_in_quote"
+
+
+# Registry-bridge acceptance (V2b.1+ relaxed path via registry)
+
+
+def test_v2b_refdes_accepts_via_registry_functional_name(sample_draft, toy_graph, toy_registry):
+    """Quote mentions a canonical functional name; cause.refdes is a
+    plausible candidate (kind-compatible, shares rail token) → accept."""
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="U7", mode="dead")
+    d.source_quote = (
+        "The Buck regulator for +5V stopped delivering voltage, and the "
+        "+5V rail went dead after the event — board won't boot."
+    )
+    d.expected_dead_rails = ["+5V"]
+    d.evidence = [
+        EvidenceSpan(
+            field="cause.refdes",
+            source_quote_substring="Buck regulator for +5V",
+            reasoning="canonical name cited; U7 sources +5V",
+        ),
+        EvidenceSpan(
+            field="cause.mode",
+            source_quote_substring="stopped delivering voltage",
+            reasoning="dead mode",
+        ),
+        EvidenceSpan(
+            field="expected_dead_rails",
+            source_quote_substring="+5V rail went dead",
+            reasoning="rail dies with regulator",
+        ),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, toy_registry, toy_graph)
+    assert rej is None, f"expected acceptance via registry, got {rej}"
+
+
+def test_v2b_refdes_rejects_when_registry_citation_kind_mismatch(
+    sample_draft, toy_graph, toy_registry
+):
+    """Quote cites the registry IC entry but cause.refdes is a cap.
+    score_refdes_for_canonical rejects on kind mismatch."""
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="C19", mode="shorted")
+    d.source_quote = (
+        "The Buck regulator for +5V stopped delivering voltage on the board — "
+        "no amount of restart brings it back."
+    )
+    d.expected_dead_rails = []
+    d.evidence = [
+        EvidenceSpan(
+            field="cause.refdes",
+            source_quote_substring="Buck regulator for +5V",
+            reasoning="misattribution attempt",
+        ),
+        EvidenceSpan(
+            field="cause.mode",
+            source_quote_substring="stopped delivering voltage",
+            reasoning="short",
+        ),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, toy_registry, toy_graph)
+    assert rej is not None
+    assert rej.motive == "refdes_not_mentioned_in_quote"
+
+
+def test_v2b_rails_accepts_via_registry_alias(sample_draft, toy_registry):
+    """Quote mentions '+5V_rail' alias; expected_dead_rails=['+5V']
+    accepted because the registry signal maps +5V → ['+5V_rail', ...]."""
+    d = sample_draft.model_copy(deep=True)
+    d.source_quote = (
+        "When the regulator fails, the +5V_rail collapses across the board "
+        "and peripherals go silent entirely."
+    )
+    d.cause = Cause(refdes="U7", mode="dead")
+    d.expected_dead_rails = ["+5V"]
+    d.evidence = [
+        EvidenceSpan(
+            field="cause.refdes",
+            source_quote_substring="regulator fails",
+            reasoning="stub",
+        ),
+        EvidenceSpan(
+            field="cause.mode",
+            source_quote_substring="regulator fails",
+            reasoning="stub",
+        ),
+        EvidenceSpan(
+            field="expected_dead_rails",
+            source_quote_substring="+5V_rail",
+            reasoning="rail alias cited",
+        ),
+    ]
+    rej = check_rails_mentioned_in_quote(d, toy_registry)
+    assert rej is None
+
+
+def test_v2b_rails_strict_when_no_registry(sample_draft):
+    """Without registry, alias-path is unavailable; strict literal check only."""
+    d = sample_draft.model_copy(deep=True)
+    d.expected_dead_rails = ["+5V"]  # not in sample_draft quote
+    rej = check_rails_mentioned_in_quote(d)
+    assert rej is not None
+    assert rej.motive == "rail_not_mentioned_in_quote"

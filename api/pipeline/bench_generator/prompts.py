@@ -4,9 +4,17 @@
 Kept in one module so the system prompt can be version-controlled in
 isolation. The graph summary deliberately omits edges + pins — the LLM
 only needs to know WHICH refdes and rails exist, not their connectivity.
+
+Functional-bridge section: the Scout dump speaks in human language
+("LPC controller", "charge board") and the graph in refdes ("U14", "BT1").
+`build_functional_candidate_map` pre-computes deterministic candidates
+linking each registry canonical_name to graph refdes so the LLM has a
+legitimate basis for attribution — no fabrication from topology guessing.
 """
 
 from __future__ import annotations
+
+import json
 
 from api.pipeline.schematic.schemas import ElectricalGraph
 
@@ -16,9 +24,11 @@ FORCED_TOOL_NAME = "propose_scenarios"
 SYSTEM_PROMPT = """\
 You are a diagnostic-scenario extractor for a board-level electronics
 simulator benchmark. Given a device's research dump (forums, datasheets,
-community posts — all web-search sourced with URLs) and the device's
-compiled electrical graph (refdes, power rails), you propose a set of
-failure scenarios that can be run against a physics-lite simulator.
+community posts — all web-search sourced with URLs), the device's
+compiled electrical graph (refdes, power rails), and a functional-name
+bridge mapping canonical entities to refdes candidates, you propose a
+set of failure scenarios that can be run against a physics-lite
+simulator.
 
 Your output MUST satisfy these contracts — failures at any of them will
 be discarded downstream:
@@ -31,23 +41,41 @@ be discarded downstream:
    If you cannot find a literal substring that justifies a field, do
    NOT emit that field.
 
-2. TOPOLOGY. Every refdes (cause + expected_dead_components) and every
-   rail name you emit must exist in the provided graph. If the research
-   says "LPC controller" and no such refdes is in the graph, skip that
-   scenario — do not guess.
+2. REFDES BRIDGE. The research dump typically names components by their
+   functional role ("LPC controller", "battery charge board") not their
+   refdes ("U14", "BT1"). You have a FUNCTIONAL CANDIDATE MAP block
+   that lists, for each canonical_name from the registry, the refdes
+   candidates from the graph. To attribute a scenario to a refdes when
+   the quote only mentions a functional name:
+   (a) The functional name (canonical_name or any of its aliases) must
+       appear literally in source_quote.
+   (b) The chosen cause.refdes must be one of the refdes candidates
+       listed in the FUNCTIONAL CANDIDATE MAP for that canonical_name.
+   (c) State the mapping explicitly in the evidence[].reasoning.
+   If no candidate matches, SKIP the scenario — do not guess a refdes
+   from graph topology alone.
 
-3. PROVENANCE. source_url must be an http(s) URL from the dump. source_quote
+3. TOPOLOGY. Every refdes (cause + expected_dead_components) and every
+   rail name you emit must exist in the provided graph.
+
+4. RAIL BRIDGE. If a rail is named in the dump by a descriptive phrase
+   ("the 3.3V rail", "USB power") rather than its graph label, you may
+   cite the descriptive phrase IF the graph's rail label also appears
+   somewhere in source_quote (even in parentheses or an adjacent
+   sentence). If only the descriptive phrase exists, skip the rail.
+
+5. PROVENANCE. source_url must be an http(s) URL from the dump. source_quote
    is verbatim from the dump (≥ 50 chars). If the dump is vague, emit
    fewer scenarios with high confidence; do not pad.
 
-4. FAILURE MODES. Exactly one of: dead | shorted | open | leaky_short |
+6. FAILURE MODES. Exactly one of: dead | shorted | open | leaky_short |
    regulating_low. leaky_short requires value_ohms (typical 100-500 Ω),
    regulating_low requires voltage_pct (typical 0.75-0.95).
 
-5. DEDUP. Do not emit two scenarios with the same (refdes, mode, rails,
+7. DEDUP. Do not emit two scenarios with the same (refdes, mode, rails,
    components) tuple.
 
-6. ZERO CASCADE IS VALID. If the source describes a silent / local
+8. ZERO CASCADE IS VALID. If the source describes a silent / local
    failure, emit empty expected_dead_rails AND expected_dead_components.
    This is a legitimate anti-pattern scenario the bench needs.
 
@@ -57,12 +85,7 @@ Return the scenarios via the `propose_scenarios` tool. No prose output.
 
 def graph_summary(graph: ElectricalGraph) -> str:
     """Compact projection of ElectricalGraph for the user prompt. Drops
-    edges and pin-level detail; keeps refdes + kind + role + rails.
-
-    NB — PowerRail field is `voltage_nominal` (not `nominal_voltage`) and
-    its label field is `label` (not `id`). These match the current
-    schematic schema; tests assert on these names.
-    """
+    edges and pin-level detail; keeps refdes + kind + role + rails."""
     lines = [f"Device slug: {graph.device_slug}"]
     lines.append(f"\n## Components ({len(graph.components)})")
     for refdes in sorted(graph.components):
@@ -82,6 +105,140 @@ def graph_summary(graph: ElectricalGraph) -> str:
     return "\n".join(lines)
 
 
+def score_refdes_for_canonical(
+    refdes: str,
+    refdes_kind: str | None,
+    canonical_name: str,
+    aliases: list[str],
+    reg_kind: str | None,
+    graph: ElectricalGraph,
+) -> tuple[float, str] | None:
+    """Return (score, reason) or None if this refdes is not a plausible
+    candidate for the given canonical_name. Deterministic heuristics only."""
+    names_lc = [n.lower() for n in [canonical_name] + aliases]
+
+    # 1. Direct refdes mention in the canonical or any alias (e.g. "D9 LED" → D9)
+    for n in names_lc:
+        # Treat refdes as a token; avoid matching "C1" inside "CSA1" etc.
+        tokens = {t.strip(".,;:()[]") for t in n.replace("/", " ").split()}
+        if refdes.lower() in tokens:
+            return (1.0, f"refdes token appears literally in '{canonical_name}' or alias")
+
+    # 2. Kind compatibility (soft prerequisite). If registry says ic and
+    # graph says passive_c, skip — almost certainly not the same entity.
+    if reg_kind and refdes_kind and reg_kind != refdes_kind:
+        return None
+
+    # 3. Rail-name overlap: does the refdes source a rail whose label shares
+    # a significant token with any alias? Uses len>=2 threshold to keep
+    # rail-name tokens like "5v", "3v3" (common in schematic conventions).
+    rail_bonus = 0.0
+    rail_reason = ""
+    for rail_id, rail in graph.power_rails.items():
+        if rail.source_refdes != refdes:
+            continue
+        rail_tokens = {
+            t for t in rail_id.lower().replace("_", " ").replace("+", "").split() if len(t) >= 2
+        }
+        for n in names_lc:
+            alias_tokens = {t.strip(".,;:()[]") for t in n.split() if len(t) >= 2}
+            # Also check tokens normalized by +/-/_ removal in alias side
+            alias_tokens |= {t for t in n.replace("+", "").replace("-", " ").split() if len(t) >= 2}
+            shared = rail_tokens & alias_tokens
+            if shared:
+                rail_bonus = 0.8
+                rail_reason = (
+                    f"sources rail {rail_id} sharing token(s) "
+                    f"{sorted(shared)} with canonical/alias '{n}'"
+                )
+                break
+        if rail_bonus:
+            break
+
+    if rail_bonus:
+        return (rail_bonus, rail_reason)
+
+    # 4. Role keyword match (weak): if the canonical description contains the
+    # refdes's role (e.g. role="buck_regulator" in a canonical described as
+    # "regulator for +3V3")
+    # Skipped for now — too noisy without description text.
+
+    return None
+
+
+def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> str:
+    """Pre-compute deterministic refdes candidates for each registry
+    canonical_name. Produces a structured block for the user prompt so the
+    LLM has a legitimate basis for attribution.
+
+    Output shape (Markdown-like, human+LLM readable):
+
+        ## Functional → refdes candidate map
+        ### LPC controller
+          aliases: system controller, reform2_lpc, LPC, LPC MCU
+          kind: ic
+          description: Embedded MCU that manages power sequencing...
+          candidates:
+            - U14 (score=0.8): sources rail LPC_VCC sharing token ['lpc']
+          rail aliases for rails in expected_dead_rails evidence:
+            ...
+
+    Canonical entries with zero candidates are emitted as
+    `candidates: (none — do not attribute scenarios to this entity)`
+    so the LLM is explicitly warned off.
+    """
+    components = registry.get("components", [])
+    lines = ["## Functional → refdes candidate map"]
+    lines.append(
+        "When the dump names a functional entity (canonical_name or alias), "
+        "only the refdes candidates listed here may be used for cause.refdes."
+    )
+    for entry in components:
+        canonical = entry.get("canonical_name", "")
+        aliases = entry.get("aliases", []) or []
+        reg_kind = entry.get("kind")
+        desc = entry.get("description", "") or ""
+        lines.append(f"\n### {canonical}")
+        if aliases:
+            lines.append(f"  aliases: {', '.join(aliases)}")
+        if reg_kind:
+            lines.append(f"  kind: {reg_kind}")
+        if desc:
+            lines.append(f"  description: {desc[:240]}")
+        # Score all graph refdes
+        scored: list[tuple[float, str, str]] = []
+        for refdes, comp in graph.components.items():
+            res = score_refdes_for_canonical(refdes, comp.kind, canonical, aliases, reg_kind, graph)
+            if res is not None:
+                scored.append((res[0], refdes, res[1]))
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        if not scored:
+            lines.append("  candidates: (none — do not attribute scenarios to this entity)")
+        else:
+            lines.append("  candidates:")
+            for score, refdes, reason in scored[:5]:
+                lines.append(f"    - {refdes} (score={score:.2f}): {reason}")
+    return "\n".join(lines)
+
+
+def build_rail_alias_map(registry: dict, graph: ElectricalGraph) -> str:
+    """Produce a signals/rail alias block so the LLM knows which graph
+    rail corresponds to descriptive phrases in the dump."""
+    signals = registry.get("signals", []) or []
+    lines = ["## Rail alias map (from registry.signals)"]
+    graph_rails_lc = {k.lower(): k for k in graph.power_rails}
+    for s in signals:
+        canonical = s.get("canonical_name", "")
+        aliases = s.get("aliases", []) or []
+        kind = s.get("kind", "")
+        lines.append(f"  '{canonical}' (aliases: {', '.join(aliases) or '—'}) kind={kind}")
+        # Try to match canonical to an actual rail in the graph
+        candidate = graph_rails_lc.get(canonical.lower())
+        if candidate:
+            lines.append(f"    → graph rail: {candidate}")
+    return "\n".join(lines)
+
+
 def build_user_message(
     *,
     raw_dump: str,
@@ -89,7 +246,22 @@ def build_user_message(
     registry_json: str,
     graph: ElectricalGraph,
 ) -> str:
-    """Concatenate the 4 input blocks in a stable order for caching."""
+    """Concatenate the input blocks in a stable order for caching.
+
+    Structure:
+      1. Research dump (Scout) — narrative, functional-name language
+      2. Rules (Clinicien) — structured symptom→cause→sources
+      3. Registry (canonical vocabulary) — raw JSON reference
+      4. Functional → refdes candidate map — the BRIDGE between (1) and (5)
+      5. Rail alias map — secondary bridge for rails
+      6. Electrical graph summary — refdes + rails + sourcing topology
+    """
+    try:
+        registry = json.loads(registry_json) if registry_json.strip() else {}
+    except json.JSONDecodeError:
+        registry = {}
+    bridge = build_functional_candidate_map(registry, graph)
+    rail_map = build_rail_alias_map(registry, graph)
     return (
         "# Research dump (Scout)\n"
         f"{raw_dump}\n"
@@ -97,6 +269,9 @@ def build_user_message(
         f"{rules_json}\n"
         "\n# Registry (canonical vocabulary)\n"
         f"{registry_json}\n"
+        "\n# Functional bridge\n"
+        f"{bridge}\n"
+        f"\n{rail_map}\n"
         "\n# Electrical graph summary\n"
         f"{graph_summary(graph)}\n"
         "\nEmit the propose_scenarios tool call now."

@@ -145,33 +145,105 @@ def check_grounding(draft: ProposedScenarioDraft) -> Rejection | None:
     return None
 
 
-def check_refdes_mentioned_in_quote(draft: ProposedScenarioDraft) -> Rejection | None:
-    """V2b.1: cause.refdes must appear literally (case-insensitive) in
-    source_quote. Prevents attaching any refdes to any quote."""
+def check_refdes_mentioned_in_quote(
+    draft: ProposedScenarioDraft,
+    registry: dict | None = None,
+    graph: ElectricalGraph | None = None,
+) -> Rejection | None:
+    """V2b.1: cause.refdes must be grounded in source_quote.
+
+    Accepts EITHER:
+      (a) cause.refdes appears literally (case-insensitive) in source_quote.
+      (b) A registry canonical_name or alias appears literally in
+          source_quote, AND cause.refdes is a plausible candidate for
+          that registry entry per `score_refdes_for_canonical` heuristic.
+
+    Path (b) requires both `registry` and `graph`. When either is None,
+    only path (a) applies — preserving strict behaviour for test
+    fixtures that don't wire a registry.
+    """
+    from api.pipeline.bench_generator.prompts import score_refdes_for_canonical
+
     refdes = draft.cause.refdes
-    if refdes.lower() not in draft.source_quote.lower():
+    quote_lc = draft.source_quote.lower()
+
+    # Path (a)
+    if refdes.lower() in quote_lc:
+        return None
+
+    # Path (b): functional-name bridge via registry
+    if registry and graph:
+        graph_comp = graph.components.get(refdes)
+        refdes_kind = graph_comp.kind if graph_comp is not None else None
+        for entry in registry.get("components", []) or []:
+            canonical = entry.get("canonical_name", "")
+            aliases = entry.get("aliases", []) or []
+            reg_kind = entry.get("kind")
+            all_names = [canonical] + aliases
+            if not any(n and n.lower() in quote_lc for n in all_names):
+                continue
+            scored = score_refdes_for_canonical(
+                refdes=refdes,
+                refdes_kind=refdes_kind,
+                canonical_name=canonical,
+                aliases=aliases,
+                reg_kind=reg_kind,
+                graph=graph,
+            )
+            if scored is not None:
+                return None
+
+    return Rejection(
+        local_id=draft.local_id,
+        motive="refdes_not_mentioned_in_quote",
+        detail=(
+            f"cause.refdes={refdes!r} neither appears in source_quote nor "
+            "maps to any registry canonical/alias cited in the quote"
+        ),
+        original_draft=draft,
+    )
+
+
+def check_rails_mentioned_in_quote(
+    draft: ProposedScenarioDraft,
+    registry: dict | None = None,
+) -> Rejection | None:
+    """V2b.2: every rail in expected_dead_rails must be grounded in
+    source_quote.
+
+    Accepts EITHER:
+      (a) rail label appears literally (case-insensitive) in source_quote.
+      (b) a registry signal canonical_name or alias that matches the rail
+          label appears literally in source_quote.
+    """
+    quote_lc = draft.source_quote.lower()
+    # Build rail-aliases index from registry.signals (keyed by canonical_name).
+    rail_aliases: dict[str, list[str]] = {}
+    if registry:
+        for s in registry.get("signals", []) or []:
+            name = (s.get("canonical_name") or "").lower()
+            if not name:
+                continue
+            aliases = [a for a in (s.get("aliases") or []) if a]
+            rail_aliases[name] = aliases
+
+    for rail in draft.expected_dead_rails:
+        rail_lc = rail.lower()
+        if rail_lc in quote_lc:
+            continue
+        # Path (b): check if any alias for this rail is in the quote
+        aliases = rail_aliases.get(rail_lc, [])
+        if aliases and any(a.lower() in quote_lc for a in aliases):
+            continue
         return Rejection(
             local_id=draft.local_id,
-            motive="refdes_not_mentioned_in_quote",
-            detail=f"cause.refdes={refdes!r} absent from source_quote",
+            motive="rail_not_mentioned_in_quote",
+            detail=(
+                f"expected rail {rail!r} neither appears in source_quote "
+                "nor maps to any registry signal alias cited in the quote"
+            ),
             original_draft=draft,
         )
-    return None
-
-
-def check_rails_mentioned_in_quote(draft: ProposedScenarioDraft) -> Rejection | None:
-    """V2b.2: every rail in expected_dead_rails must appear literally
-    (case-insensitive) in source_quote. Prevents attaching a specific
-    rail to a generic failure-mode quote."""
-    quote_lc = draft.source_quote.lower()
-    for rail in draft.expected_dead_rails:
-        if rail.lower() not in quote_lc:
-            return Rejection(
-                local_id=draft.local_id,
-                motive="rail_not_mentioned_in_quote",
-                detail=f"expected rail {rail!r} absent from source_quote",
-                original_draft=draft,
-            )
     return None
 
 
@@ -295,30 +367,34 @@ def check_pertinence(draft: ProposedScenarioDraft, graph: ElectricalGraph) -> Re
 def run_all(
     drafts: list[ProposedScenarioDraft],
     graph: ElectricalGraph,
+    registry: dict | None = None,
 ) -> tuple[list[ProposedScenarioDraft], list[Rejection]]:
     """V1 → V2 → V2b.1/V2b.2 → V3 → V2b.3 → V4 (per draft, short-circuit
     on first failure) then V5 dedup over the survivors.
 
-    V2b.1 and V2b.2 run before V3 since they don't need the graph.
-    V2b.3 runs after V3 since it needs the rail to exist in the graph."""
+    `registry`, when provided, relaxes V2b.1 and V2b.2 to accept matches
+    via registry canonical_names / aliases in addition to literal refdes
+    or rail mentions. Without it, the strict refdes-in-quote rule applies.
+    """
     survivors: list[ProposedScenarioDraft] = []
     rejected: list[Rejection] = []
     for draft in drafts:
         # Per-draft chain, short-circuit on first failure
-        pre_graph_checks = (
-            check_sanity,  # V1
-            check_grounding,  # V2
-            check_refdes_mentioned_in_quote,  # V2b.1
-            check_rails_mentioned_in_quote,  # V2b.2
-        )
-        failed = False
-        for check in pre_graph_checks:
-            rej = check(draft)
-            if rej is not None:
-                rejected.append(rej)
-                failed = True
-                break
-        if failed:
+        rej = check_sanity(draft)  # V1
+        if rej is not None:
+            rejected.append(rej)
+            continue
+        rej = check_grounding(draft)  # V2
+        if rej is not None:
+            rejected.append(rej)
+            continue
+        rej = check_refdes_mentioned_in_quote(draft, registry, graph)  # V2b.1
+        if rej is not None:
+            rejected.append(rej)
+            continue
+        rej = check_rails_mentioned_in_quote(draft, registry)  # V2b.2
+        if rej is not None:
+            rejected.append(rej)
             continue
         rej = check_topology(draft, graph)  # V3
         if rej is not None:

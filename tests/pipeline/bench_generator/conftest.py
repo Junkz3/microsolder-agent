@@ -49,6 +49,39 @@ def toy_graph() -> ElectricalGraph:
 
 
 @pytest.fixture
+def toy_registry() -> dict:
+    """Minimal registry shape matching what the pipeline emits, with a
+    few canonical functional entities and signal aliases."""
+    return {
+        "schema_version": "1.0",
+        "device_label": "toy-board",
+        "taxonomy": {},
+        "components": [
+            {
+                "canonical_name": "Buck regulator for +5V",
+                "aliases": ["5V regulator", "main buck"],
+                "kind": "ic",
+                "description": "Sources the +5V rail for the motherboard.",
+            },
+            {
+                "canonical_name": "+3V3 regulator",
+                "aliases": ["3V3 regulator", "3.3V buck"],
+                "kind": "ic",
+                "description": "Sources the +3V3 rail.",
+            },
+        ],
+        "signals": [
+            {
+                "canonical_name": "+5V",
+                "aliases": ["+5V_rail", "5V main"],
+                "kind": "power_rail",
+                "nominal_voltage": 5.0,
+            },
+        ],
+    }
+
+
+@pytest.fixture
 def sample_draft() -> ProposedScenarioDraft:
     """A clean draft that passes V1-V5 against toy_graph. Tests derive
     invalid variants from this by mutating one field."""

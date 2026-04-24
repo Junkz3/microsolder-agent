@@ -14,6 +14,7 @@ No global state; all dependencies injected (client, paths, clocks).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -114,6 +115,12 @@ async def generate_from_pack(
     pack_dir = memory_root / device_slug
     raw_dump, rules_json, registry_json, graph = _load_pack(pack_dir)
 
+    # Parse registry for validator V2b.1/V2b.2 functional-name bridging.
+    try:
+        registry = json.loads(registry_json) if registry_json.strip() else {}
+    except json.JSONDecodeError:
+        registry = {}
+
     # Capture mtimes for the manifest (traceability only).
     input_mtimes = {
         name: (pack_dir / name).stat().st_mtime
@@ -132,7 +139,7 @@ async def generate_from_pack(
     drafts = payload.scenarios
     n_proposed = len(drafts)
 
-    accepted_drafts, rejects = run_all(drafts, graph)
+    accepted_drafts, rejects = run_all(drafts, graph, registry)
 
     if escalate_rejects and rejects:
         rescued, rejects = await rescue_with_opus(
@@ -142,7 +149,7 @@ async def generate_from_pack(
             graph=graph,
         )
         if rescued:
-            accepted_again, more_rejects = run_all(rescued, graph)
+            accepted_again, more_rejects = run_all(rescued, graph, registry)
             accepted_drafts.extend(accepted_again)
             rejects.extend(more_rejects)
 
