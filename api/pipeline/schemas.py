@@ -64,6 +64,36 @@ class DeviceTaxonomy(BaseModel):
 # ======================================================================
 
 
+class RefdesCandidate(BaseModel):
+    """A graph refdes proposed as a match for a registry canonical_name.
+
+    Emitted only when the Registry Builder is given an `ElectricalGraph`
+    at phase-2 time (technician supplied a schematic). Each candidate
+    must justify its mapping in `evidence` — either by quoting a source
+    that ties the canonical to the refdes (via MPN / datasheet) or by
+    citing an inference from a technician-supplied BOM. Never fabricate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    refdes: str = Field(
+        description="Refdes from the supplied ElectricalGraph (e.g. U7, C29, J1)."
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Subjective confidence in this canonical→refdes mapping.",
+    )
+    evidence: str = Field(
+        description=(
+            "One sentence justifying the mapping. Either a paraphrased quote "
+            "from the dump (with URL when available) or 'inference from BOM "
+            "MPN match' / 'inference from schematic MPN match'. Never empty."
+        ),
+        min_length=4,
+    )
+
+
 class RegistryComponent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -100,6 +130,15 @@ class RegistryComponent(BaseModel):
     description: str = Field(
         default="",
         description="One sentence describing the role of the component.",
+    )
+    refdes_candidates: list[RefdesCandidate] | None = Field(
+        default=None,
+        description=(
+            "Graph refdes candidates that match this canonical_name, emitted "
+            "only when an ElectricalGraph is supplied at registry time. Each "
+            "candidate carries its own evidence. Null on legacy packs and on "
+            "any pipeline run where the technician did not supply a schematic."
+        ),
     )
 
 
