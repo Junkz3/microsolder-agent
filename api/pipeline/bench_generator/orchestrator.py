@@ -47,8 +47,14 @@ from api.pipeline.schematic.schemas import ElectricalGraph
 logger = logging.getLogger("microsolder.bench_generator.orchestrator")
 
 
-def _load_pack(pack_dir: Path) -> tuple[str, str, str, ElectricalGraph]:
-    """Load the 4 inputs or raise BenchGeneratorPreconditionError."""
+def _load_pack(
+    pack_dir: Path,
+) -> tuple[str, str, str, ElectricalGraph, list[dict] | None]:
+    """Load the 5 inputs or raise BenchGeneratorPreconditionError.
+
+    The fifth element is the Mapper's attributions list (Phase 2.5
+    output); None when `refdes_attributions.json` is absent — the
+    bench generator falls back to the heuristic rail-overlap bridge."""
     graph_path = pack_dir / "electrical_graph.json"
     if not graph_path.exists():
         raise BenchGeneratorPreconditionError(
@@ -64,7 +70,21 @@ def _load_pack(pack_dir: Path) -> tuple[str, str, str, ElectricalGraph]:
     registry_path = pack_dir / "registry.json"
     registry_json = registry_path.read_text(encoding="utf-8") if registry_path.exists() else "{}"
     graph = ElectricalGraph.model_validate_json(graph_path.read_text(encoding="utf-8"))
-    return raw_dump, rules_json, registry_json, graph
+
+    attributions: list[dict] | None = None
+    attr_path = pack_dir / "refdes_attributions.json"
+    if attr_path.exists():
+        try:
+            payload = json.loads(attr_path.read_text(encoding="utf-8"))
+            attributions = payload.get("attributions") or []
+        except json.JSONDecodeError:
+            logger.warning(
+                "[bench_generator] refdes_attributions.json at %s is malformed; "
+                "falling back to heuristic bridge",
+                attr_path,
+            )
+            attributions = None
+    return raw_dump, rules_json, registry_json, graph, attributions
 
 
 def _promote(
@@ -113,7 +133,7 @@ async def generate_from_pack(
     Never raises on an empty-scenarios outcome (valid result for sparse
     packs); does raise BenchGeneratorPreconditionError on missing inputs."""
     pack_dir = memory_root / device_slug
-    raw_dump, rules_json, registry_json, graph = _load_pack(pack_dir)
+    raw_dump, rules_json, registry_json, graph, attributions = _load_pack(pack_dir)
 
     # Parse registry for validator V2b.1/V2b.2 functional-name bridging.
     try:
@@ -135,11 +155,12 @@ async def generate_from_pack(
         rules_json=rules_json,
         registry_json=registry_json,
         graph=graph,
+        attributions=attributions,
     )
     drafts = payload.scenarios
     n_proposed = len(drafts)
 
-    accepted_drafts, rejects = run_all(drafts, graph, registry)
+    accepted_drafts, rejects = run_all(drafts, graph, registry, attributions)
 
     if escalate_rejects and rejects:
         rescued, rejects = await rescue_with_opus(

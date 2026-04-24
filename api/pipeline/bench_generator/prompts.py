@@ -174,12 +174,17 @@ def score_refdes_for_canonical(
 
 
 def _candidates_from_registry(entry: dict) -> list[tuple[float, str, str]] | None:
-    """Read `refdes_candidates` off a registry component, when present.
+    """Read legacy `refdes_candidates` off a registry component, when present.
 
     Returns a list of (confidence, refdes, evidence) tuples sorted by
     descending confidence, or None when the entry has no candidates
     field, an empty list, or malformed shape. None means "fall back to
-    the heuristic" — the registry didn't speak about this canonical."""
+    the heuristic" — the registry didn't speak about this canonical.
+
+    Deprecated path: refdes_candidates was emitted by the 2026-04-24
+    Registry-with-graph design that has since been reverted. Kept for
+    back-compat with packs already on disk; the active code path is
+    `_candidates_from_attributions` reading the Mapper's output JSON."""
     raw = entry.get("refdes_candidates")
     if not raw:
         return None
@@ -198,17 +203,50 @@ def _candidates_from_registry(entry: dict) -> list[tuple[float, str, str]] | Non
     return out
 
 
-def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> str:
+def _index_attributions(
+    attributions: list[dict] | None,
+) -> dict[str, list[tuple[float, str, str]]]:
+    """Group Refdes Mapper attributions by canonical_name.
+
+    Input is the raw `attributions` list from `refdes_attributions.json`
+    (the Mapper's persisted output, server-side-validated). Output maps
+    each canonical_name → sorted (confidence, refdes, reasoning) tuples
+    so callers can look up by canonical without re-walking the list.
+    Returns an empty dict when input is None / empty / malformed.
+    """
+    out: dict[str, list[tuple[float, str, str]]] = {}
+    if not attributions:
+        return out
+    for a in attributions:
+        try:
+            canonical = str(a["canonical_name"])
+            refdes = str(a["refdes"])
+            confidence = float(a["confidence"])
+            reasoning = str(a.get("reasoning") or a.get("evidence_quote", ""))
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.setdefault(canonical, []).append((confidence, refdes, reasoning))
+    for items in out.values():
+        items.sort(key=lambda x: (-x[0], x[1]))
+    return out
+
+
+def build_functional_candidate_map(
+    registry: dict,
+    graph: ElectricalGraph,
+    attributions: list[dict] | None = None,
+) -> str:
     """Pre-compute deterministic refdes candidates for each registry
     canonical_name. Produces a structured block for the user prompt so the
     LLM has a legitimate basis for attribution.
 
-    Source order per canonical:
-      1. `registry.components[i].refdes_candidates` when populated by the
-         Registry Builder (Scout-with-graph path) — these carry their
-         own provenance evidence and are preferred.
-      2. Else, the deterministic `score_refdes_for_canonical` heuristic
-         (legacy path: rail-overlap, refdes-token mention, kind match).
+    Source order per canonical (highest priority first):
+      1. **Mapper attributions** from `memory/{slug}/refdes_attributions.json`
+         (Phase 2.5, server-side-validated against literal-quote rules).
+      2. Legacy `registry.components[i].refdes_candidates` from the
+         reverted 2026-04-24 design — kept for back-compat on existing packs.
+      3. Deterministic `score_refdes_for_canonical` heuristic
+         (rail-overlap, refdes-token mention, kind match).
 
     Output shape (Markdown-like, human+LLM readable):
 
@@ -217,15 +255,16 @@ def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> st
           aliases: system controller, reform2_lpc, LPC, LPC MCU
           kind: ic
           description: Embedded MCU that manages power sequencing...
-          source: registry  (or 'heuristic')
+          source: mapper  (or 'registry' / 'heuristic')
           candidates:
-            - U14 (score=0.95): forum quote ties LPC to U14 in the rev 2.0 schematic
+            - U14 (score=0.95): dump quote ties LPC to U14 literally
 
     Canonical entries with zero candidates are emitted as
     `candidates: (none — do not attribute scenarios to this entity)`
     so the LLM is explicitly warned off.
     """
     components = registry.get("components", [])
+    attr_index = _index_attributions(attributions)
     lines = ["## Functional → refdes candidate map"]
     lines.append(
         "When the dump names a functional entity (canonical_name or alias), "
@@ -244,7 +283,17 @@ def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> st
         if desc:
             lines.append(f"  description: {desc[:240]}")
 
-        # 1. Registry-provided candidates take precedence.
+        # 1. Mapper attributions take absolute precedence — they carry
+        # server-validated evidence (literal refdes / MPN in quote).
+        mapper_cands = attr_index.get(canonical)
+        if mapper_cands:
+            lines.append("  source: mapper (refdes_attributions.json, phase 2.5)")
+            lines.append("  candidates:")
+            for score, refdes, reason in mapper_cands[:5]:
+                lines.append(f"    - {refdes} (score={score:.2f}): {reason}")
+            continue
+
+        # 2. Legacy registry refdes_candidates (reverted 2026-04-24 design).
         registry_cands = _candidates_from_registry(entry)
         if registry_cands is not None:
             lines.append("  source: registry (refdes_candidates from phase 2)")
@@ -253,7 +302,7 @@ def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> st
                 lines.append(f"    - {refdes} (score={score:.2f}): {evidence}")
             continue
 
-        # 2. Fallback — deterministic heuristic over the graph.
+        # 3. Fallback — deterministic heuristic over the graph.
         scored: list[tuple[float, str, str]] = []
         for refdes, comp in graph.components.items():
             res = score_refdes_for_canonical(refdes, comp.kind, canonical, aliases, reg_kind, graph)
@@ -295,6 +344,7 @@ def build_user_message(
     rules_json: str,
     registry_json: str,
     graph: ElectricalGraph,
+    attributions: list[dict] | None = None,
 ) -> str:
     """Concatenate the input blocks in a stable order for caching.
 
@@ -305,12 +355,17 @@ def build_user_message(
       4. Functional → refdes candidate map — the BRIDGE between (1) and (5)
       5. Rail alias map — secondary bridge for rails
       6. Electrical graph summary — refdes + rails + sourcing topology
+
+    `attributions`, when supplied (typically loaded from
+    `memory/{slug}/refdes_attributions.json`), takes precedence over the
+    legacy registry.refdes_candidates and the rail-overlap heuristic for
+    the functional bridge in step 4.
     """
     try:
         registry = json.loads(registry_json) if registry_json.strip() else {}
     except json.JSONDecodeError:
         registry = {}
-    bridge = build_functional_candidate_map(registry, graph)
+    bridge = build_functional_candidate_map(registry, graph, attributions)
     rail_map = build_rail_alias_map(registry, graph)
     return (
         "# Research dump (Scout)\n"

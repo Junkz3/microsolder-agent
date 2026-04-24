@@ -49,13 +49,20 @@ async def extract_drafts(
     rules_json: str,
     registry_json: str,
     graph: ElectricalGraph,
+    attributions: list[dict] | None = None,
 ) -> ProposalsPayload:
-    """Single-call extraction. Returns the validated payload."""
+    """Single-call extraction. Returns the validated payload.
+
+    `attributions`, when supplied, takes precedence over the legacy
+    registry.refdes_candidates and the rail-overlap heuristic for the
+    functional bridge presented to the LLM.
+    """
     user_message = build_user_message(
         raw_dump=raw_dump,
         rules_json=rules_json,
         registry_json=registry_json,
         graph=graph,
+        attributions=attributions,
     )
     payload = await call_with_forced_tool(
         client=client,

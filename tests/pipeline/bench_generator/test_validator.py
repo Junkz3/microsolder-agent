@@ -552,3 +552,119 @@ def test_v2b_refdes_rejects_when_not_in_registry_candidates(sample_draft, toy_gr
     rej = check_refdes_mentioned_in_quote(d, registry, toy_graph)
     assert rej is not None
     assert rej.motive == "refdes_not_mentioned_in_quote"
+
+
+# Mapper-attributions strict bridge (Phase 2.5 output, supersedes registry/heuristic)
+
+
+def _mapper_attributions(canonical_to_refdes: dict[str, list[str]]) -> list[dict]:
+    """Helper: build a Mapper attributions list (the persisted JSON shape)."""
+    out: list[dict] = []
+    for canonical, refdes_list in canonical_to_refdes.items():
+        for r in refdes_list:
+            out.append({
+                "canonical_name": canonical,
+                "refdes": r,
+                "confidence": 0.95,
+                "evidence_kind": "literal_refdes_in_quote",
+                "evidence_quote": "the dump fragment that justifies this attribution",
+                "reasoning": "test fixture",
+            })
+    return out
+
+
+def test_v2b_refdes_accepts_when_in_mapper_attributions(sample_draft, toy_graph):
+    """Mapper attributions cover 'main buck' → ['U7'], cause.refdes=U7,
+    quote cites 'main buck' canonical → V2b.1 accepts via the strict
+    Mapper path."""
+    registry = {
+        "components": [
+            {
+                "canonical_name": "main buck",
+                "aliases": [],
+                "kind": "ic",
+                "description": "main buck",
+            }
+        ],
+    }
+    attributions = _mapper_attributions({"main buck": ["U7"]})
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="U7", mode="dead")
+    d.source_quote = (
+        "The main buck failed and the regulator stopped converting input "
+        "to its programmed output voltage on this board."
+    )
+    d.expected_dead_rails = []
+    d.evidence = [
+        EvidenceSpan(field="cause.refdes", source_quote_substring="main buck", reasoning="x"),
+        EvidenceSpan(field="cause.mode", source_quote_substring="failed", reasoning="y"),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, registry, toy_graph, attributions)
+    assert rej is None
+
+
+def test_v2b_refdes_rejects_when_not_in_mapper_attributions(sample_draft, toy_graph):
+    """Mapper covers 'main buck' → ['U7'] only. cause.refdes=U13 — heuristic
+    would have accepted (kind-compatible regulator) but the Mapper said no.
+    V2b.1 rejects strictly."""
+    registry = {
+        "components": [
+            {
+                "canonical_name": "main buck",
+                "aliases": [],
+                "kind": "ic",
+                "description": "main buck",
+            }
+        ],
+    }
+    attributions = _mapper_attributions({"main buck": ["U7"]})
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="U13", mode="dead")
+    d.source_quote = (
+        "The main buck failed and the regulator stopped converting input "
+        "to its programmed output voltage on this board."
+    )
+    d.expected_dead_rails = []
+    d.evidence = [
+        EvidenceSpan(field="cause.refdes", source_quote_substring="main buck", reasoning="x"),
+        EvidenceSpan(field="cause.mode", source_quote_substring="failed", reasoning="y"),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, registry, toy_graph, attributions)
+    assert rej is not None
+    assert rej.motive == "refdes_not_mentioned_in_quote"
+
+
+def test_v2b_refdes_falls_back_to_heuristic_when_no_mapper_for_canonical(
+    sample_draft, toy_graph, toy_registry
+):
+    """attributions is non-empty but doesn't cover the canonical cited in
+    the quote → V2b.1 falls back to the heuristic for that canonical, like
+    before. (Mapper opted out of attributing 'Buck regulator for +5V'; the
+    heuristic should still try.)"""
+    attributions = _mapper_attributions({"Some other canonical": ["U99"]})
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="U7", mode="dead")
+    d.source_quote = (
+        "The Buck regulator for +5V stopped delivering voltage, and the "
+        "+5V rail went dead after the event — board won't boot."
+    )
+    d.expected_dead_rails = ["+5V"]
+    d.evidence = [
+        EvidenceSpan(
+            field="cause.refdes",
+            source_quote_substring="Buck regulator for +5V",
+            reasoning="canonical cited",
+        ),
+        EvidenceSpan(
+            field="cause.mode",
+            source_quote_substring="stopped delivering voltage",
+            reasoning="dead",
+        ),
+        EvidenceSpan(
+            field="expected_dead_rails",
+            source_quote_substring="+5V rail went dead",
+            reasoning="rail death",
+        ),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, toy_registry, toy_graph, attributions)
+    assert rej is None  # heuristic still accepts because Mapper didn't cover this canonical

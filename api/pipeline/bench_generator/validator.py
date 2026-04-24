@@ -149,6 +149,7 @@ def check_refdes_mentioned_in_quote(
     draft: ProposedScenarioDraft,
     registry: dict | None = None,
     graph: ElectricalGraph | None = None,
+    attributions: list[dict] | None = None,
 ) -> Rejection | None:
     """V2b.1: cause.refdes must be grounded in source_quote.
 
@@ -156,13 +157,16 @@ def check_refdes_mentioned_in_quote(
       (a) cause.refdes appears literally (case-insensitive) in source_quote.
       (b) A registry canonical_name or alias appears literally in
           source_quote, AND cause.refdes is a legitimate candidate for
-          that registry entry. "Legitimate" means:
-          - When the registry entry carries `refdes_candidates` (Scout-
-            with-graph path), `cause.refdes` MUST appear in that list —
-            no fallback to the heuristic.
-          - Otherwise (legacy path), `cause.refdes` must satisfy the
-            deterministic `score_refdes_for_canonical` heuristic
-            (rail-overlap / refdes-token mention / kind compat).
+          that registry entry. Bridge precedence per canonical:
+          - If the Mapper's `attributions` list (Phase 2.5 output)
+            covers the canonical, `cause.refdes` MUST appear in that
+            list — no heuristic fallback for that canonical.
+          - Else if the registry entry carries legacy `refdes_candidates`
+            (reverted 2026-04-24 design, kept for back-compat),
+            `cause.refdes` MUST appear in that list.
+          - Else (legacy heuristic path), `cause.refdes` must satisfy
+            `score_refdes_for_canonical` (rail-overlap, refdes-token,
+            kind-compat).
 
     Path (b) requires both `registry` and `graph`. When either is None,
     only path (a) applies — preserving strict behaviour for test
@@ -170,6 +174,7 @@ def check_refdes_mentioned_in_quote(
     """
     from api.pipeline.bench_generator.prompts import (
         _candidates_from_registry,
+        _index_attributions,
         score_refdes_for_canonical,
     )
 
@@ -182,6 +187,7 @@ def check_refdes_mentioned_in_quote(
 
     # Path (b): functional-name bridge via registry
     if registry and graph:
+        attr_index = _index_attributions(attributions)
         graph_comp = graph.components.get(refdes)
         refdes_kind = graph_comp.kind if graph_comp is not None else None
         for entry in registry.get("components", []) or []:
@@ -192,19 +198,24 @@ def check_refdes_mentioned_in_quote(
             if not any(n and n.lower() in quote_lc for n in all_names):
                 continue
 
-            # When the registry phase emitted refdes_candidates for this
-            # canonical, the bridge is strict — only those refdes count.
+            # 1. Mapper attributions take absolute precedence.
+            mapper_cands = attr_index.get(canonical)
+            if mapper_cands:
+                if any(refdes == cand_refdes for _, cand_refdes, _ in mapper_cands):
+                    return None
+                # Canonical cited in quote, but refdes is NOT among the
+                # Mapper's attributions → the Mapper already weighed in
+                # for this canonical. Don't fall back to anything else.
+                continue
+
+            # 2. Legacy registry refdes_candidates (reverted 2026-04-24).
             registry_cands = _candidates_from_registry(entry)
             if registry_cands is not None:
                 if any(refdes == cand_refdes for _, cand_refdes, _ in registry_cands):
                     return None
-                # Canonical cited in quote, but refdes is NOT among the
-                # registry's candidates → fall through to other entries
-                # or to the rejection. Don't fall back to the heuristic
-                # for this canonical: the registry already weighed in.
                 continue
 
-            # Legacy path — heuristic.
+            # 3. Legacy heuristic.
             scored = score_refdes_for_canonical(
                 refdes=refdes,
                 refdes_kind=refdes_kind,
@@ -398,6 +409,7 @@ def run_all(
     drafts: list[ProposedScenarioDraft],
     graph: ElectricalGraph,
     registry: dict | None = None,
+    attributions: list[dict] | None = None,
 ) -> tuple[list[ProposedScenarioDraft], list[Rejection]]:
     """V1 → V2 → V2b.1/V2b.2 → V3 → V2b.3 → V4 (per draft, short-circuit
     on first failure) then V5 dedup over the survivors.
@@ -405,6 +417,10 @@ def run_all(
     `registry`, when provided, relaxes V2b.1 and V2b.2 to accept matches
     via registry canonical_names / aliases in addition to literal refdes
     or rail mentions. Without it, the strict refdes-in-quote rule applies.
+    `attributions`, when provided (typically from
+    `memory/{slug}/refdes_attributions.json`), is the Mapper's strict
+    canonical→refdes index — it supersedes legacy registry.refdes_candidates
+    and the rail-overlap heuristic for any canonical it covers.
     """
     survivors: list[ProposedScenarioDraft] = []
     rejected: list[Rejection] = []
@@ -418,7 +434,7 @@ def run_all(
         if rej is not None:
             rejected.append(rej)
             continue
-        rej = check_refdes_mentioned_in_quote(draft, registry, graph)  # V2b.1
+        rej = check_refdes_mentioned_in_quote(draft, registry, graph, attributions)  # V2b.1
         if rej is not None:
             rejected.append(rej)
             continue
