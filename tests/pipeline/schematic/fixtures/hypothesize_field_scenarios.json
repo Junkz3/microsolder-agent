@@ -84,6 +84,27 @@
     "symptom": "no boot, no LED, no sign of life; +1V2 rail collapsed to 0.02V"
   },
   {
+    "id": "report-20260424T001529Z-u13",
+    "slug": "mnt-reform-motherboard",
+    "source": "field_report",
+    "observations": {
+      "state_comps": {},
+      "state_rails": {},
+      "metrics_comps": {},
+      "metrics_rails": {}
+    },
+    "ground_truth_kill": [
+      "U13"
+    ],
+    "ground_truth_modes": [
+      "dead"
+    ],
+    "rationales": [
+      "U13 buck converter dead (MP2458 internal failure)"
+    ],
+    "symptom": "no boot, no LED, no sign of life, +1V2 rail collapsed to 0.02V"
+  },
+  {
     "id": "live-mnt-reform-motherboard-f2aaf6d98e7b",
     "slug": "mnt-reform-motherboard",
     "source": "live",
