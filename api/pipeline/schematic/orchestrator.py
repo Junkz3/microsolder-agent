@@ -31,16 +31,23 @@ from anthropic import AsyncAnthropic
 from api.config import get_settings
 from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence
 from api.pipeline.schematic.compiler import compile_electrical_graph
-from api.pipeline.schematic.net_classifier import classify_nets
-from api.pipeline.schematic.passive_classifier import classify_passives
 from api.pipeline.schematic.grounding import (
     extract_grounding,
     format_grounding_for_prompt,
 )
 from api.pipeline.schematic.merger import merge_pages
+from api.pipeline.schematic.net_classifier import (
+    apply_power_rail_classification,
+    classify_nets,
+)
 from api.pipeline.schematic.page_vision import extract_page
+from api.pipeline.schematic.passive_classifier import classify_passives
 from api.pipeline.schematic.renderer import render_pages
-from api.pipeline.schematic.schemas import ElectricalGraph, SchematicPageGraph
+from api.pipeline.schematic.schemas import (
+    ElectricalGraph,
+    NetClassification,
+    SchematicPageGraph,
+)
 
 logger = logging.getLogger("microsolder.pipeline.schematic.orchestrator")
 
@@ -209,7 +216,94 @@ async def ingest_schematic(
         "ok" if analyzer_results[2] else "failed",
     )
 
+    # If net_classifier succeeded, lift its `domain=power_rail` decisions
+    # back into `SchematicGraph.nets[...].is_power` and re-compile. This
+    # catches rails the vision pass missed (e.g. PVIN on MNT Reform) so
+    # they show up in `electrical.power_rails` and unlock the downstream
+    # cascades in hypothesize. We preserve any LLM-filled passive roles
+    # across the re-compile.
+    if analyzer_results[1]:
+        electrical = _upgrade_rails_from_classification(
+            electrical=electrical,
+            schematic_graph=schematic_graph,
+            page_confidences=page_confidences,
+            output_dir=output_dir,
+        )
+
     return electrical
+
+
+def _upgrade_rails_from_classification(
+    *,
+    electrical: ElectricalGraph,
+    schematic_graph,
+    page_confidences: dict[int, float],
+    output_dir: Path,
+) -> ElectricalGraph:
+    """Apply net_classifier's power_rail decisions and re-compile.
+
+    Returns the (possibly re-compiled) electrical graph. On any failure
+    returns the input graph unchanged — the pipeline never regresses on
+    a successful initial compile.
+    """
+    try:
+        classification = NetClassification.model_validate_json(
+            (output_dir / "nets_classified.json").read_text()
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "could not read nets_classified.json for re-compile",
+            exc_info=True,
+        )
+        return electrical
+
+    promoted = apply_power_rail_classification(schematic_graph, classification)
+    if not promoted:
+        return electrical
+
+    # Snapshot every non-IC role (heuristic + LLM). `compile_electrical_graph`
+    # re-runs the heuristic passive classifier from scratch, and its rules
+    # are topology-sensitive — promoting nets can shift a pass-FET's rule
+    # path from "load_switch" (exactly 2 rails + 1 non-rail) to no match
+    # when the non-rail becomes a rail. Restoring the pre-promotion roles
+    # guards against that regression.
+    preserved_roles = {
+        refdes: (comp.kind, comp.role)
+        for refdes, comp in electrical.components.items()
+        if comp.kind != "ic" and comp.role is not None
+    }
+
+    rails_before = len(electrical.power_rails)
+    try:
+        recompiled = compile_electrical_graph(
+            schematic_graph, page_confidences=page_confidences
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "re-compile after net_classifier failed — keeping initial graph",
+            exc_info=True,
+        )
+        return electrical
+
+    enriched = dict(recompiled.components)
+    for refdes, (kind, role) in preserved_roles.items():
+        node = enriched.get(refdes)
+        if node is None or role is None:
+            continue
+        if node.role is None:
+            enriched[refdes] = node.model_copy(update={"kind": kind, "role": role})
+    recompiled.__dict__["components"] = enriched
+
+    (output_dir / "electrical_graph.json").write_text(
+        recompiled.model_dump_json(indent=2)
+    )
+    logger.info(
+        "re-compiled after net_classifier: rails=%d (+%d) promoted=%s",
+        len(recompiled.power_rails),
+        len(recompiled.power_rails) - rails_before,
+        ",".join(sorted(promoted)),
+    )
+    return recompiled
 
 
 async def _run_boot_analyzer(electrical, client, output_dir: Path) -> bool:
