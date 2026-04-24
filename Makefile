@@ -1,4 +1,4 @@
-.PHONY: install run test test-eval lint format clean help build-field-corpus
+.PHONY: install run test test-eval lint format clean help build-field-corpus demo-fallback pin-cdn
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -62,6 +62,17 @@ clean:
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type d -name ".ruff_cache" -exec rm -rf {} +
 	find . -type d -name "*.egg-info" -exec rm -rf {} +
+
+# Demo plan B — restart uvicorn in direct (non-Managed-Agents) mode.
+# Use if Managed Agents API has an outage during the demo.
+demo-fallback:
+	@echo "Switching to direct (non-MA) diagnostic mode and restarting uvicorn"
+	DIAGNOSTIC_MODE=direct $(UVICORN) api.main:app --host 0.0.0.0 --port $(PORT)
+
+# Mirror the CDN dependencies into web/vendor/ for offline-resilient demo.
+# Vendored files are gitignored (re-fetched on demand).
+pin-cdn:
+	bash scripts/pin_cdn.sh
 
 # --- Evolve (overnight self-improvement loop) ---
 

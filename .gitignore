@@ -123,3 +123,8 @@ evolve/*
 !evolve/reports
 evolve/reports/*
 !evolve/reports/.gitkeep
+
+# --- Demo / offline fallback ---
+# Vendored CDN assets pulled by `make pin-cdn` (D3, marked, DOMPurify).
+# Regenerated on demand; not tracked.
+web/vendor/*.js
