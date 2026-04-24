@@ -664,10 +664,22 @@ class SimulationEngine:
         dead_rails: set[str] = set(self._forced_dead_rails)
         for label, rail in self.electrical.power_rails.items():
             final_state = rails.get(label)
-            if final_state == "stable":
-                continue
+            # Transitive source death — check this FIRST, before the
+            # `final_state == "stable"` skip. `_stabilise_rails` only marks a
+            # rail "off" when its immediate source IC is already "dead" at
+            # phase-walk time. A source that is merely transitively dead
+            # (sourced the rail but itself never activated because its own
+            # `power_in` rail was off one hop up) leaves the rail stuck at
+            # "stable" in the phase-walk output. Step 2 updated
+            # `dead_components` to cover exactly that transitive case, so
+            # we consult it here regardless of `final_state`. This is safe:
+            # a rail whose source is genuinely live cannot have its source
+            # in `dead_components` (step 1+2 only add live-input or
+            # construction-dead components).
             if rail.source_refdes and rail.source_refdes in dead_components:
                 dead_rails.add(label)
+                continue
+            if final_state == "stable":
                 continue
             if final_state == "shorted":
                 dead_rails.add(label)
