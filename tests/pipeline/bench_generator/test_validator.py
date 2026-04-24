@@ -110,3 +110,38 @@ def test_v2_rejects_evidence_on_empty_field(sample_draft):
     rej = check_grounding(bad)
     assert rej is not None
     assert rej.motive == "evidence_field_empty"
+
+
+from api.pipeline.bench_generator.validator import check_topology
+
+
+def test_v3_accepts_known_refdes_and_rail(sample_draft, toy_graph):
+    rej = check_topology(sample_draft, toy_graph)
+    assert rej is None
+
+
+def test_v3_rejects_unknown_refdes(sample_draft, toy_graph):
+    bad = sample_draft.model_copy(deep=True)
+    bad.cause = Cause(refdes="XZ999", mode="shorted")
+    rej = check_topology(bad, toy_graph)
+    assert rej is not None
+    assert rej.motive == "refdes_not_in_graph"
+    assert "XZ999" in rej.detail
+
+
+def test_v3_rejects_unknown_rail(sample_draft, toy_graph):
+    bad = sample_draft.model_copy(deep=True)
+    bad.expected_dead_rails = ["+3V3", "+42V_MYSTERY"]
+    rej = check_topology(bad, toy_graph)
+    assert rej is not None
+    assert rej.motive == "rail_name_not_in_graph"
+    assert "+42V_MYSTERY" in rej.detail
+
+
+def test_v3_rejects_unknown_component(sample_draft, toy_graph):
+    bad = sample_draft.model_copy(deep=True)
+    bad.expected_dead_components = ["U7", "U_HIDDEN"]
+    rej = check_topology(bad, toy_graph)
+    assert rej is not None
+    assert rej.motive == "component_not_in_graph"
+    assert "U_HIDDEN" in rej.detail

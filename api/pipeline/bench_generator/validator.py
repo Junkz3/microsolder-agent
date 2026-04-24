@@ -24,6 +24,7 @@ from api.pipeline.bench_generator.schemas import (
     ProposedScenarioDraft,
     Rejection,
 )
+from api.pipeline.schematic.schemas import ElectricalGraph
 
 _URL_RE = re.compile(r"^https?://[^\s]+$")
 
@@ -141,4 +142,40 @@ def check_grounding(draft: ProposedScenarioDraft) -> Rejection | None:
             original_draft=draft,
         )
 
+    return None
+
+
+def check_topology(
+    draft: ProposedScenarioDraft, graph: ElectricalGraph
+) -> Rejection | None:
+    """V3: every refdes and rail in the draft must exist in the graph."""
+    if draft.cause.refdes not in graph.components:
+        return Rejection(
+            local_id=draft.local_id,
+            motive="refdes_not_in_graph",
+            detail=(
+                f"cause.refdes={draft.cause.refdes!r} not among "
+                f"{len(graph.components)} components"
+            ),
+            original_draft=draft,
+        )
+    for rail in draft.expected_dead_rails:
+        if rail not in graph.power_rails:
+            return Rejection(
+                local_id=draft.local_id,
+                motive="rail_name_not_in_graph",
+                detail=(
+                    f"expected rail {rail!r} not among "
+                    f"{list(graph.power_rails)}"
+                ),
+                original_draft=draft,
+            )
+    for refdes in draft.expected_dead_components:
+        if refdes not in graph.components:
+            return Rejection(
+                local_id=draft.local_id,
+                motive="component_not_in_graph",
+                detail=f"expected dead component {refdes!r} not in graph",
+                original_draft=draft,
+            )
     return None

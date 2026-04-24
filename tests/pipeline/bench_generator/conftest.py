@@ -15,6 +15,7 @@ from api.pipeline.schematic.schemas import (
     ComponentNode,
     ElectricalGraph,
     PowerRail,
+    SchematicQualityReport,
 )
 
 
@@ -22,17 +23,17 @@ from api.pipeline.schematic.schemas import (
 def toy_graph() -> ElectricalGraph:
     """6 components + 2 rails + one decoupling relationship."""
     components = {
-        "U7": ComponentNode(refdes="U7", kind="ic", role="buck_regulator"),
-        "U13": ComponentNode(refdes="U13", kind="ic", role="buck_regulator"),
-        "U1": ComponentNode(refdes="U1", kind="ic", role="cpu"),
-        "C19": ComponentNode(refdes="C19", kind="passive_c", role="decoupling"),
-        "R100": ComponentNode(refdes="R100", kind="passive_r", role="pullup"),
-        "R200": ComponentNode(refdes="R200", kind="passive_r", role="series"),
+        "U7": ComponentNode(refdes="U7", type="ic", kind="ic", role="buck_regulator"),
+        "U13": ComponentNode(refdes="U13", type="ic", kind="ic", role="buck_regulator"),
+        "U1": ComponentNode(refdes="U1", type="ic", kind="ic", role="cpu"),
+        "C19": ComponentNode(refdes="C19", type="capacitor", kind="passive_c", role="decoupling"),
+        "R100": ComponentNode(refdes="R100", type="resistor", kind="passive_r", role="pullup"),
+        "R200": ComponentNode(refdes="R200", type="resistor", kind="passive_r", role="series"),
     }
     rails = {
-        "+5V": PowerRail(id="+5V", nominal_voltage=5.0, source_refdes="U7"),
+        "+5V": PowerRail(label="+5V", voltage_nominal=5.0, source_refdes="U7"),
         "+3V3": PowerRail(
-            id="+3V3", nominal_voltage=3.3, source_refdes="U13",
+            label="+3V3", voltage_nominal=3.3, source_refdes="U13",
             decoupling=["C19"],
         ),
     }
@@ -40,8 +41,8 @@ def toy_graph() -> ElectricalGraph:
         device_slug="toy-board",
         components=components,
         power_rails=rails,
-        edges=[],
-        quality_report={},
+        typed_edges=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
     )
 
 
