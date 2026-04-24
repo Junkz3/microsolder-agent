@@ -847,3 +847,268 @@ body.sch-mode-railfocus .sch-boot-timeline{left:240px}
 .sim-mh-mode--shorted   { color: var(--amber);   border-color: var(--amber); }
 .sim-mh-note  { color: var(--text-3); font-size: 10px; }
 .sim-mh-empty { color: var(--text-3); font-size: 10px; font-style: italic; }
+
+/* =========== SURFACE TOGGLE (Graphe / PDF) + PDF VIEW =========== */
+/* Top-level choice between the derived graph view and the original schematic
+   PDF. Positioned top-center so it reads as the most prominent control. */
+.sch-surface-toggle{
+  position:absolute;
+  top:14px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:7;
+  display:inline-flex;
+  background:rgba(10,17,32,.92);
+  border:1px solid var(--border);
+  border-radius:22px;
+  overflow:hidden;
+  backdrop-filter:blur(8px);
+  box-shadow:0 6px 18px rgba(0,0,0,.35);
+}
+.sch-surface-btn{
+  padding:7px 16px;
+  background:transparent;
+  border:0;
+  color:var(--text-3);
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.5px;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:all .15s;
+  border-right:1px solid var(--border);
+  font-weight:600;
+}
+.sch-surface-btn:last-child{border-right:0}
+.sch-surface-btn:hover{color:var(--text);background:rgba(30,42,60,.5)}
+.sch-surface-btn.on{background:rgba(56,189,248,.16);color:var(--cyan)}
+
+/* PDF surface — custom dark viewer. Occupies the same area as the graph
+   canvas; hidden by default and shown when `.sch-root.surface-pdf` is set. */
+.sch-pdf-view{
+  position:absolute;
+  inset:0;
+  display:none;
+  background:var(--bg-deep);
+  z-index:2;
+}
+
+/* Vertical scroll of page cards. Top gutter reserves space for the surface
+   toggle + search pill; bottom gutter for the page indicator. */
+.sch-pdf-scroll{
+  position:absolute;
+  inset:58px 0 44px 0;
+  overflow:auto;
+  /* scroll horizontal activé — sans ça, `max-width:100%` sur les figures
+     clampe la largeur, l'img déborde mais l'overlay des anchors reste
+     clampé, et les highlights se décalent quand on zoome. */
+  padding:20px 32px 40px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:24px;
+  scroll-behavior:smooth;
+}
+.sch-pdf-scroll::-webkit-scrollbar{width:10px}
+.sch-pdf-scroll::-webkit-scrollbar-track{background:var(--bg-deep)}
+.sch-pdf-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
+.sch-pdf-scroll::-webkit-scrollbar-thumb:hover{background:var(--border-soft)}
+
+/* Page card — the rasterised schematic with a mono page chip on top and
+   the anchors-overlay stacked on top of the PNG. Pro-tool aesthetic:
+   subtle border, soft shadow, no rounded-cartoon vibe. */
+.sch-pdf-page{
+  position:relative;
+  /* PNG fournit déjà son propre fond blanc (rendu par pdftoppm depuis le
+     PDF vectoriel) — pas de background ici pour éviter la bande crème
+     derrière l'image. */
+  background:transparent;
+  border:1px solid var(--border);
+  box-shadow:0 8px 24px rgba(0,0,0,.45);
+  /* Largeur calée exactement sur l'image (qui porte le zoom). Pas de
+     max-width: le container a un scroll horizontal pour les forts
+     zooms, et l'overlay des anchors DOIT matcher la largeur de l'img
+     sans clamping sinon les highlights se décalent. */
+  width:fit-content;
+  margin:0;
+  flex-shrink:0;
+}
+.sch-pdf-page img{
+  display:block;
+  /* La largeur de base (--sch-pdf-base) est appliquée par JS après load
+     d'après img.naturalWidth (borné à 1400px), puis multipliée par le
+     zoom --sch-pdf-zoom. Pas de transform ici. */
+  width:calc(var(--sch-pdf-base, 100%) * var(--sch-pdf-zoom, 1));
+  height:auto;
+  user-select:none;
+  -webkit-user-drag:none;
+}
+.sch-pdf-page-chip{
+  position:absolute;
+  top:-11px;
+  left:12px;
+  padding:3px 8px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:3px;
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:.5px;
+  color:var(--text-2);
+  text-transform:uppercase;
+  z-index:2;
+}
+.sch-pdf-page.current .sch-pdf-page-chip{
+  color:var(--cyan);
+  border-color:rgba(56,189,248,.45);
+  background:rgba(10,17,32,.95);
+}
+
+/* Anchors overlay — absolute-positioned layer matching the PNG pixel box.
+   Individual anchor rects are invisible by default (but still clickable);
+   `.hit` class is toggled by the search to light them up cyan. */
+.sch-pdf-anchors{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+.sch-pdf-anchor{
+  position:absolute;
+  /* box-sizing: border-box pour que les 1.5px de border ne s'ajoutent pas
+     à la largeur % calculée — sans ça, la border pixel-fixe décalait le
+     rectangle vs la bbox quand l'utilisateur zoomait. */
+  box-sizing:border-box;
+  border:1.5px solid transparent;
+  border-radius:2px;
+  pointer-events:auto;
+  cursor:pointer;
+  transition:border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+.sch-pdf-anchor.hit{
+  border-color:var(--cyan);
+  background:rgba(56,189,248,.28);
+  box-shadow:0 0 0 3px rgba(56,189,248,.22), 0 0 18px rgba(56,189,248,.5);
+  animation:sch-pdf-hit-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sch-pdf-hit-pulse{
+  0%,100%{box-shadow:0 0 0 3px rgba(56,189,248,.22), 0 0 18px rgba(56,189,248,.5)}
+  50%    {box-shadow:0 0 0 5px rgba(56,189,248,.34), 0 0 24px rgba(56,189,248,.7)}
+}
+
+/* Floating search pill — top-right, same glass aesthetic as .sch-filter */
+.sch-pdf-search{
+  position:absolute;
+  top:16px;
+  right:16px;
+  z-index:6;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  background:rgba(10,17,32,.92);
+  border:1px solid var(--border);
+  border-radius:20px;
+  backdrop-filter:blur(6px);
+  padding:4px 10px;
+  color:var(--text-3);
+}
+.sch-pdf-search input{
+  background:transparent;
+  border:0;
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:11px;
+  padding:4px 6px;
+  min-width:170px;
+  outline:none;
+}
+.sch-pdf-search input::placeholder{color:var(--text-3)}
+.sch-pdf-search-status{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--text-3);
+  min-width:70px;
+  text-align:right;
+}
+.sch-pdf-search-status.hit{color:var(--cyan)}
+.sch-pdf-search-status.miss{color:var(--amber)}
+
+/* Zoom controls (bottom-right), mirrors .sch-zoom */
+.sch-pdf-zoom{
+  position:absolute;
+  right:16px;
+  bottom:16px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  background:rgba(20,32,48,.85);
+  border:1px solid var(--border);
+  backdrop-filter:blur(8px);
+  border-radius:8px;
+  padding:6px;
+  z-index:5;
+}
+.sch-pdf-zoom-btn{
+  width:34px;
+  height:34px;
+  border-radius:5px;
+  background:transparent;
+  border:0;
+  color:var(--text-2);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  transition:all .15s;
+}
+.sch-pdf-zoom-btn:hover{background:var(--panel-2);color:var(--text)}
+.sch-pdf-zoom-label{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--text-3);
+  text-align:center;
+  padding:2px 0;
+}
+
+/* Page indicator (bottom-center) — sticky readout of the page currently
+   dominant in the viewport. */
+.sch-pdf-pagepill{
+  position:absolute;
+  bottom:16px;
+  left:50%;
+  transform:translateX(-50%);
+  padding:6px 14px;
+  background:rgba(10,17,32,.92);
+  border:1px solid var(--border);
+  border-radius:20px;
+  backdrop-filter:blur(6px);
+  font-family:var(--mono);
+  font-size:10.5px;
+  letter-spacing:.4px;
+  color:var(--text-2);
+  z-index:5;
+  text-transform:uppercase;
+}
+
+.sch-pdf-empty{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--bg);
+  z-index:4;
+}
+.sch-pdf-empty.hidden{display:none}
+
+/* When surface=pdf: reveal the iframe, hide every graph-specific chrome so
+   the PDF viewer gets the full workspace. Surface toggle stays pinned. */
+.sch-root.surface-pdf .sch-pdf-view{display:block}
+.sch-root.surface-pdf .sch-canvas,
+.sch-root.surface-pdf .sch-statsbar,
+.sch-root.surface-pdf .sch-filter,
+.sch-root.surface-pdf .sch-zoom,
+.sch-root.surface-pdf .sch-railbar,
+.sch-root.surface-pdf .sch-boot-timeline,
+.sch-root.surface-pdf .sch-grid,
+.sch-root.surface-pdf .sch-inspector,
+.sch-root.surface-pdf .sch-empty{display:none !important}

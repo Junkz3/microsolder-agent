@@ -34,6 +34,14 @@ const STATE = {
   layoutMode: (typeof localStorage !== "undefined" && localStorage.getItem("schLayoutMode")) || "railfocus",
   // In railfocus mode, which rail is currently shown in the canvas.
   selectedRailId: (typeof localStorage !== "undefined" && localStorage.getItem("schSelectedRail")) || null,
+  // "graph" (default, derived views) or "pdf" (original schematic pages).
+  // Persisted so the user's pick survives section re-entries.
+  surface: (typeof localStorage !== "undefined" && localStorage.getItem("schSurface")) || "graph",
+  // PDF viewer state — pages payload, last primed slug, current zoom.
+  pdfPrimedSlug: null,
+  pdfPages: null,        // server response {count, pages:[{n,url,width_pt,height_pt,anchors}]}
+  pdfZoom: 1.0,          // CSS zoom multiplier applied to each .sch-pdf-page
+  pdfCurrentPage: 1,     // dominant page in viewport (updated by scroll observer)
 };
 
 // Infer the nominal voltage from a canonical rail label.
@@ -3025,6 +3033,10 @@ export async function loadSchematic() {
 
   const slug = getDeviceSlug();
   STATE.slug = slug;
+  // Wire the surface toggle first — the user must always be able to flip
+  // Graphe / PDF regardless of whether the electrical graph was compiled
+  // (the PDF may exist in board_assets/ even when no pipeline has run).
+  wireSurfaceToggle();
   if (!slug) {
     showEmptyState("Aucune réparation en cours", "Ouvre une réparation depuis le Journal pour charger son graphe électrique.");
     return;
@@ -3102,6 +3114,308 @@ function wireControls() {
       if (STATE.graph) fullRender(STATE.graph);
     });
   });
+}
+
+/* ---------------------------------------------------------------------- *
+ * Surface toggle wiring — idempotent, called on every loadSchematic()    *
+ * so the Graphe/PDF buttons work even when the electrical graph is       *
+ * missing. Click listeners are attached once; a dataset flag guards      *
+ * against re-wiring on repeated section entries.                         *
+ * ---------------------------------------------------------------------- */
+
+function wireSurfaceToggle() {
+  applySurface(STATE.surface);
+  document.querySelectorAll("[data-sch-surface]").forEach(btn => {
+    if (btn.dataset.schSurfaceWired === "1") return;
+    btn.dataset.schSurfaceWired = "1";
+    btn.addEventListener("click", (ev) => {
+      const surface = ev.currentTarget.dataset.schSurface;
+      if (!surface || surface === STATE.surface) return;
+      STATE.surface = surface;
+      try { localStorage.setItem("schSurface", surface); } catch (_) { /* ignore */ }
+      applySurface(surface);
+    });
+  });
+}
+
+/* ---------------------------------------------------------------------- *
+ * Surface switching — flip between the derived graph view and the        *
+ * original schematic PDF. The PDF iframe src is primed lazily on first   *
+ * use and again only when the slug changes, so flipping back and forth   *
+ * preserves the native viewer's scroll position.                         *
+ * ---------------------------------------------------------------------- */
+
+async function applySurface(surface) {
+  const root = document.getElementById("schematicSection");
+  if (!root) return;
+  // Sync button on/off state so the two buttons stay in lockstep even when
+  // the surface is set programmatically (e.g. from persisted localStorage).
+  document.querySelectorAll("[data-sch-surface]").forEach(btn => {
+    btn.classList.toggle("on", btn.dataset.schSurface === surface);
+  });
+  root.classList.toggle("surface-pdf", surface === "pdf");
+  if (surface !== "pdf") return;
+  await primePdfViewer(STATE.slug);
+}
+
+/* ---------------------------------------------------------------------- *
+ * PDF VIEWER — anchor-aware, dark-themed, renders rasterised page PNGs   *
+ * with a sémantique search overlay. Replaces the native browser PDF UI   *
+ * so the design tokens (dark, mono, cyan accents for components) stay    *
+ * coherent with the rest of the workbench.                               *
+ * ---------------------------------------------------------------------- */
+
+async function primePdfViewer(slug) {
+  const scroll = document.getElementById("schPdfScroll");
+  const empty = document.getElementById("schPdfEmpty");
+  if (!scroll || !empty) return;
+  if (!slug) {
+    scroll.innerHTML = "";
+    empty.classList.remove("hidden");
+    return;
+  }
+  // Already primed for this slug — leave the user's scroll position alone.
+  if (STATE.pdfPrimedSlug === slug && STATE.pdfPages) {
+    empty.classList.add("hidden");
+    return;
+  }
+  let data;
+  try {
+    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/schematic/pages`);
+    if (!res.ok) {
+      scroll.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    data = await res.json();
+  } catch (_) {
+    scroll.innerHTML = "";
+    empty.classList.remove("hidden");
+    return;
+  }
+  STATE.pdfPages = data;
+  STATE.pdfPrimedSlug = slug;
+  empty.classList.add("hidden");
+  renderPdfPages(data);
+  wirePdfZoom();
+  wirePdfSearch();
+}
+
+function renderPdfPages(data) {
+  const scroll = document.getElementById("schPdfScroll");
+  if (!scroll) return;
+  scroll.innerHTML = "";
+  // Set the zoom on the scroll container so all descendant pages pick it
+  // up via `calc(var(--sch-pdf-base) * var(--sch-pdf-zoom))`.
+  scroll.style.setProperty("--sch-pdf-zoom", String(STATE.pdfZoom));
+  const pagePill = document.getElementById("schPdfPagePill");
+  if (pagePill) pagePill.textContent = `Page 1 / ${data.count}`;
+  const frag = document.createDocumentFragment();
+  for (const page of data.pages) {
+    const fig = document.createElement("figure");
+    fig.className = "sch-pdf-page";
+    fig.dataset.page = String(page.n);
+
+    const chip = document.createElement("div");
+    chip.className = "sch-pdf-page-chip";
+    chip.textContent = `Page ${page.n} / ${data.count}`;
+    fig.appendChild(chip);
+
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = `Schématique page ${page.n}`;
+    img.src = page.url;
+    // Set the base width once the image has loaded: borne à 1400px pour
+    // rester digeste à DPI=150 sur un écran standard, sinon naturalWidth.
+    img.addEventListener("load", () => {
+      const base = Math.min(1400, img.naturalWidth || 1400);
+      img.style.setProperty("--sch-pdf-base", `${base}px`);
+    }, { once: true });
+    fig.appendChild(img);
+
+    const overlay = document.createElement("div");
+    overlay.className = "sch-pdf-anchors";
+    fig.appendChild(overlay);
+
+    // Anchor rects are positioned as % of the PDF page size (from pdfplumber
+    // points). Converting to % rather than pixels decouples the overlay from
+    // the PNG's intrinsic resolution — zoom works by scaling the img/figure
+    // together, and the anchor rectangles stay aligned.
+    //
+    // pdfplumber returns the *ink bbox* of the refdes glyphs — typically 1%
+    // of the page. That's invisible as a highlight. We expand it by 3pt on
+    // each side so the rectangle reads as a halo around the text rather
+    // than a tight outline on the glyph itself.
+    const pw = page.width_pt || 1;
+    const ph = page.height_pt || 1;
+    const PAD_PT = 3;
+    for (const a of page.anchors || []) {
+      const rect = document.createElement("div");
+      rect.className = "sch-pdf-anchor";
+      rect.dataset.refdes = a.refdes;
+      const x0 = Math.max(0, a.x0 - PAD_PT);
+      const y0 = Math.max(0, a.top - PAD_PT);
+      const x1 = Math.min(pw, a.x1 + PAD_PT);
+      const y1 = Math.min(ph, a.bottom + PAD_PT);
+      rect.style.left = `${(x0 / pw) * 100}%`;
+      rect.style.top = `${(y0 / ph) * 100}%`;
+      rect.style.width = `${((x1 - x0) / pw) * 100}%`;
+      rect.style.height = `${((y1 - y0) / ph) * 100}%`;
+      rect.title = a.refdes;
+      overlay.appendChild(rect);
+    }
+    frag.appendChild(fig);
+  }
+  scroll.appendChild(frag);
+
+  // Observe which page is dominant in the viewport to keep the bottom pill
+  // and the .current chip styling in sync.
+  observePdfPages();
+}
+
+function observePdfPages() {
+  const scroll = document.getElementById("schPdfScroll");
+  const pill = document.getElementById("schPdfPagePill");
+  if (!scroll || !pill) return;
+  const pages = scroll.querySelectorAll(".sch-pdf-page");
+  if (!pages.length) return;
+  const io = new IntersectionObserver((entries) => {
+    // Pick the intersecting entry with the largest visible ratio.
+    const best = entries
+      .filter(e => e.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (!best) return;
+    const n = parseInt(best.target.dataset.page, 10);
+    STATE.pdfCurrentPage = n;
+    pill.textContent = `Page ${n} / ${STATE.pdfPages?.count || "?"}`;
+    pages.forEach(p => p.classList.toggle("current", p === best.target));
+  }, { root: scroll, threshold: [0.2, 0.5, 0.8] });
+  pages.forEach(p => io.observe(p));
+}
+
+function wirePdfZoom() {
+  const applyZoom = () => {
+    const label = document.getElementById("schPdfZoomLabel");
+    if (label) label.textContent = `${Math.round(STATE.pdfZoom * 100)}%`;
+    // One CSS var on the scroll root — every img picks it up via calc().
+    // The figure wraps around the img's new size (width:fit-content), so
+    // the flex-gap stays honest and pages don't overlap.
+    const scroll = document.getElementById("schPdfScroll");
+    if (scroll) scroll.style.setProperty("--sch-pdf-zoom", String(STATE.pdfZoom));
+  };
+  // Zoom-around-anchor: before changing the zoom level, capture the
+  // viewport-relative position of a reference element (the .hit search
+  // result if there is one, else the page currently in view). After the
+  // reflow we shift the scroll so the same element lands back at the same
+  // spot in the viewport — without this, zooming loses whatever the tech
+  // was looking at and they have to re-hunt for their refdes.
+  const bump = (delta) => {
+    const newZoom = Math.max(0.4, Math.min(3.0, STATE.pdfZoom + delta));
+    if (newZoom === STATE.pdfZoom) return;
+
+    const scroll = document.getElementById("schPdfScroll");
+    const ref = scroll && (
+      scroll.querySelector(".sch-pdf-anchor.hit") ||
+      scroll.querySelector(".sch-pdf-page.current") ||
+      scroll.querySelector(".sch-pdf-page")
+    );
+    if (!scroll || !ref) {
+      STATE.pdfZoom = newZoom;
+      applyZoom();
+      return;
+    }
+
+    const scrollRect = scroll.getBoundingClientRect();
+    const refRect = ref.getBoundingClientRect();
+    const refVpX = refRect.left + refRect.width / 2 - scrollRect.left;
+    const refVpY = refRect.top + refRect.height / 2 - scrollRect.top;
+
+    STATE.pdfZoom = newZoom;
+    applyZoom();
+
+    // The img width changes synchronously via CSS vars, but the browser
+    // still needs a frame to reflow the figure + anchors. Restore scroll
+    // on the next rAF so getBoundingClientRect reports the new layout.
+    requestAnimationFrame(() => {
+      const newScrollRect = scroll.getBoundingClientRect();
+      const newRefRect = ref.getBoundingClientRect();
+      const newRefVpX = newRefRect.left + newRefRect.width / 2 - newScrollRect.left;
+      const newRefVpY = newRefRect.top + newRefRect.height / 2 - newScrollRect.top;
+      scroll.scrollLeft += (newRefVpX - refVpX);
+      scroll.scrollTop  += (newRefVpY - refVpY);
+    });
+  };
+  const wireOnce = (id, handler) => {
+    const btn = document.getElementById(id);
+    if (!btn || btn.dataset.schPdfWired === "1") return;
+    btn.dataset.schPdfWired = "1";
+    btn.addEventListener("click", handler);
+  };
+  wireOnce("schPdfZoomIn",  () => bump(+0.15));
+  wireOnce("schPdfZoomOut", () => bump(-0.15));
+  applyZoom();
+}
+
+function wirePdfSearch() {
+  const input = document.getElementById("schPdfSearchInput");
+  const status = document.getElementById("schPdfSearchStatus");
+  if (!input || input.dataset.schPdfWired === "1") return;
+  input.dataset.schPdfWired = "1";
+
+  let debounceTimer = null;
+  input.addEventListener("input", (ev) => {
+    clearTimeout(debounceTimer);
+    const query = ev.target.value.trim().toUpperCase();
+    debounceTimer = setTimeout(() => runPdfSearch(query), 120);
+  });
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      ev.target.value = "";
+      runPdfSearch("");
+    }
+  });
+}
+
+function runPdfSearch(query) {
+  const status = document.getElementById("schPdfSearchStatus");
+  const scroll = document.getElementById("schPdfScroll");
+  if (!scroll) return;
+  // Strip all previous hits first so a fresh search doesn't accumulate.
+  scroll.querySelectorAll(".sch-pdf-anchor.hit").forEach(el => el.classList.remove("hit"));
+  if (!query) {
+    if (status) { status.textContent = ""; status.className = "sch-pdf-search-status"; }
+    return;
+  }
+  // Match rule: exact refdes OR refdes starts with the query. Keeps "U13"
+  // from matching "U130", which would be noisy on dense boards.
+  const hits = [...scroll.querySelectorAll(".sch-pdf-anchor")]
+    .filter(a => a.dataset.refdes === query);
+  if (!hits.length) {
+    // Fall back to prefix match so the tech can probe "U1" to see every U1x.
+    const prefix = [...scroll.querySelectorAll(".sch-pdf-anchor")]
+      .filter(a => a.dataset.refdes.startsWith(query));
+    if (!prefix.length) {
+      if (status) { status.textContent = "aucun"; status.className = "sch-pdf-search-status miss"; }
+      return;
+    }
+    prefix.forEach(a => a.classList.add("hit"));
+    if (status) { status.textContent = `${prefix.length} (préfixe)`; status.className = "sch-pdf-search-status hit"; }
+    scrollToAnchor(prefix[0]);
+    return;
+  }
+  hits.forEach(a => a.classList.add("hit"));
+  if (status) { status.textContent = `${hits.length} match${hits.length > 1 ? "s" : ""}`; status.className = "sch-pdf-search-status hit"; }
+  scrollToAnchor(hits[0]);
+}
+
+function scrollToAnchor(anchor) {
+  const scroll = document.getElementById("schPdfScroll");
+  const page = anchor.closest(".sch-pdf-page");
+  if (!scroll || !page) return;
+  // Prefer centering the page (match the closest anchor's page), not the
+  // anchor itself — on A3-landscape schematics the anchor scroll would
+  // land mid-air and lose context.
+  page.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 export function closeSchematicInspector() { clearFocus(); }
