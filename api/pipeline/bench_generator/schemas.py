@@ -83,9 +83,7 @@ class ProposedScenarioDraft(BaseModel):
 class ProposalsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scenarios: list[ProposedScenarioDraft] = Field(
-        default_factory=list, max_length=50
-    )
+    scenarios: list[ProposedScenarioDraft] = Field(default_factory=list, max_length=50)
 
 
 class ProposedScenario(BaseModel):
@@ -140,8 +138,8 @@ class RunManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     device_slug: str
-    run_date: str            # YYYY-MM-DD
-    run_timestamp: str       # ISO UTC
+    run_date: str  # YYYY-MM-DD
+    run_timestamp: str  # ISO UTC
     model: str
     n_proposed: int
     n_accepted: int

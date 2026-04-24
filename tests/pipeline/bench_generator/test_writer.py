@@ -8,12 +8,16 @@ from api.pipeline.bench_generator.schemas import (
     Cause,
     ProposedScenario,
     Rejection,
+    ReliabilityCard,
     RunManifest,
 )
 from api.pipeline.bench_generator.writer import (
+    update_latest_json,
     write_per_run_files,
+    write_reliability_card,
+    write_source_archives,
 )
-from api.pipeline.schematic.evaluator import Scorecard, ScenarioResult
+from api.pipeline.schematic.evaluator import ScenarioResult, Scorecard
 
 
 def _scenario(i: int) -> ProposedScenario:
@@ -47,7 +51,10 @@ def _manifest(n_acc=2, n_rej=1) -> RunManifest:
 
 def _scorecard() -> Scorecard:
     return Scorecard(
-        score=0.7, self_mrr=0.8, cascade_recall=0.55, n_scenarios=2,
+        score=0.7,
+        self_mrr=0.8,
+        cascade_recall=0.55,
+        n_scenarios=2,
         per_scenario=[
             ScenarioResult(scenario_id="toy-s1", cascade_recall=1.0),
             ScenarioResult(scenario_id="toy-s2", cascade_recall=0.1),
@@ -107,27 +114,27 @@ def test_atomic_replace_no_stale_temp(tmp_path: Path):
     assert tmp_left == []
 
 
-from api.pipeline.bench_generator.schemas import ReliabilityCard
-from api.pipeline.bench_generator.writer import (
-    update_latest_json,
-    write_source_archives,
-    write_reliability_card,
-)
-
-
 def test_update_latest_merges_new_slug(tmp_path: Path):
     latest = tmp_path / "_latest.json"
     latest.write_text(
-        json.dumps({
-            "other-board": {"score": 0.5, "self_mrr": 0.5,
-                            "cascade_recall": 0.5, "n_scenarios": 3,
-                            "run_date": "2026-04-23"},
-        }),
+        json.dumps(
+            {
+                "other-board": {
+                    "score": 0.5,
+                    "self_mrr": 0.5,
+                    "cascade_recall": 0.5,
+                    "n_scenarios": 3,
+                    "run_date": "2026-04-23",
+                },
+            }
+        ),
         encoding="utf-8",
     )
     update_latest_json(
-        latest_path=latest, slug="toy-board",
-        scorecard=_scorecard(), run_date="2026-04-24",
+        latest_path=latest,
+        slug="toy-board",
+        scorecard=_scorecard(),
+        run_date="2026-04-24",
     )
     d = json.loads(latest.read_text())
     assert "toy-board" in d
@@ -138,8 +145,10 @@ def test_update_latest_merges_new_slug(tmp_path: Path):
 def test_update_latest_creates_fresh_file(tmp_path: Path):
     latest = tmp_path / "_latest.json"
     update_latest_json(
-        latest_path=latest, slug="toy-board",
-        scorecard=_scorecard(), run_date="2026-04-24",
+        latest_path=latest,
+        slug="toy-board",
+        scorecard=_scorecard(),
+        run_date="2026-04-24",
     )
     d = json.loads(latest.read_text())
     assert list(d.keys()) == ["toy-board"]
@@ -151,9 +160,7 @@ def test_write_source_archives_one_file_per_scenario(tmp_path: Path):
     write_source_archives(archive_dir=archive_dir, scenarios=accepted)
     assert (archive_dir / "toy-s1.txt").exists()
     assert (archive_dir / "toy-s2.txt").exists()
-    assert (archive_dir / "toy-s1.txt").read_text().startswith(
-        accepted[0].source_url
-    )
+    assert (archive_dir / "toy-s1.txt").read_text().startswith(accepted[0].source_url)
 
 
 def test_write_reliability_card(tmp_path: Path):

@@ -75,10 +75,12 @@ async def extract_drafts(
     return payload
 
 
-_ELIGIBLE_MOTIVES = frozenset({
-    "evidence_span_not_literal",
-    "refdes_not_in_graph",
-})
+_ELIGIBLE_MOTIVES = frozenset(
+    {
+        "evidence_span_not_literal",
+        "refdes_not_in_graph",
+    }
+)
 
 
 async def rescue_with_opus(
@@ -124,7 +126,8 @@ async def rescue_with_opus(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[bench_generator.rescue] local_id=%s Opus call failed: %s",
-                rej.local_id, exc,
+                rej.local_id,
+                exc,
             )
             still_rejected.append(
                 Rejection(

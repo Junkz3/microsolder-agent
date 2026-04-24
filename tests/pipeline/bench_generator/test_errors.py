@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from api.pipeline.bench_generator.errors import (
     BenchGeneratorError,
-    BenchGeneratorPreconditionError,
     BenchGeneratorLLMError,
+    BenchGeneratorPreconditionError,
 )
 
 

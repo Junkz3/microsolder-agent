@@ -59,8 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print summary, do not write. (Currently still hits LLM — "
-             "budget the tokens.)",
+        help="Print summary, do not write. (Currently still hits LLM — budget the tokens.)",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
@@ -73,11 +72,10 @@ async def main_async(argv: list[str]) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     settings = get_settings()
-    model = args.model or (
-        getattr(settings, "anthropic_model_sonnet", None) or "claude-sonnet-4-6"
-    )
+    model = args.model or (getattr(settings, "anthropic_model_sonnet", None) or "claude-sonnet-4-6")
     client = AsyncAnthropic(
-        api_key=settings.anthropic_api_key, max_retries=5,
+        api_key=settings.anthropic_api_key,
+        max_retries=5,
     )
     output_dir = Path(args.output_dir)
     latest_path = output_dir / "_latest.json"

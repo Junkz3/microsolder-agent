@@ -30,7 +30,9 @@ logger = logging.getLogger("microsolder.bench_generator.writer")
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path_s = tempfile.mkstemp(
-        prefix=path.name + ".", suffix=".tmp", dir=path.parent,
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=path.parent,
     )
     tmp_path = Path(tmp_path_s)
     try:
@@ -77,7 +79,10 @@ def write_per_run_files(
     logger.info(
         "[bench_generator.writer] wrote 4 files for slug=%s run_date=%s "
         "(n_accepted=%d, n_rejected=%d)",
-        slug, run_date, len(accepted), len(rejected),
+        slug,
+        run_date,
+        len(accepted),
+        len(rejected),
     )
 
 
@@ -126,11 +131,7 @@ def write_source_archives(
     archive_dir.mkdir(parents=True, exist_ok=True)
     for s in scenarios:
         archive_path = archive_dir / f"{s.id}.txt"
-        content = (
-            f"{s.source_url}\n\n"
-            f"---\n\n"
-            f"{s.source_quote}\n"
-        )
+        content = f"{s.source_url}\n\n---\n\n{s.source_quote}\n"
         _atomic_write_text(archive_path, content)
 
 

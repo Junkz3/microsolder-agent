@@ -33,7 +33,9 @@ def toy_graph() -> ElectricalGraph:
     rails = {
         "+5V": PowerRail(label="+5V", voltage_nominal=5.0, source_refdes="U7"),
         "+3V3": PowerRail(
-            label="+3V3", voltage_nominal=3.3, source_refdes="U13",
+            label="+3V3",
+            voltage_nominal=3.3,
+            source_refdes="U13",
             decoupling=["C19"],
         ),
     }

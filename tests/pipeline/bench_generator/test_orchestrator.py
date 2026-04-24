@@ -24,8 +24,10 @@ class _StubResponse:
     def __init__(self, payload: dict):
         self.content = [_StubBlock("propose_scenarios", payload)]
         self.usage = MagicMock(
-            input_tokens=10, output_tokens=5,
-            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+            input_tokens=10,
+            output_tokens=5,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
         )
 
 
@@ -45,7 +47,8 @@ class _StubStream:
 
 def _write_graph(pack_dir: Path, toy_graph) -> None:
     (pack_dir / "electrical_graph.json").write_text(
-        toy_graph.model_dump_json(), encoding="utf-8",
+        toy_graph.model_dump_json(),
+        encoding="utf-8",
     )
 
 
@@ -65,15 +68,17 @@ async def test_missing_graph_raises_precondition(pack_dir, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_writes_six_files(
-    pack_dir, toy_graph, sample_draft, tmp_path
-):
+async def test_end_to_end_writes_six_files(pack_dir, toy_graph, sample_draft, tmp_path):
     _write_graph(pack_dir, toy_graph)
     client = MagicMock()
     client.messages.stream = MagicMock(
-        return_value=_StubStream(_StubResponse({
-            "scenarios": [sample_draft.model_dump()],
-        }))
+        return_value=_StubStream(
+            _StubResponse(
+                {
+                    "scenarios": [sample_draft.model_dump()],
+                }
+            )
+        )
     )
     out_dir = tmp_path / "auto_proposals"
     result = await generate_from_pack(
@@ -98,9 +103,7 @@ async def test_end_to_end_writes_six_files(
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_mixed_batch(
-    pack_dir, toy_graph, sample_draft, tmp_path
-):
+async def test_end_to_end_mixed_batch(pack_dir, toy_graph, sample_draft, tmp_path):
     """One good, one topology reject, one dup — verify partitioning."""
     _write_graph(pack_dir, toy_graph)
     dup = sample_draft.model_dump()
@@ -111,9 +114,13 @@ async def test_end_to_end_mixed_batch(
 
     client = MagicMock()
     client.messages.stream = MagicMock(
-        return_value=_StubStream(_StubResponse({
-            "scenarios": [sample_draft.model_dump(), dup, bad],
-        }))
+        return_value=_StubStream(
+            _StubResponse(
+                {
+                    "scenarios": [sample_draft.model_dump(), dup, bad],
+                }
+            )
+        )
     )
     out_dir = tmp_path / "auto_proposals"
     result = await generate_from_pack(
@@ -130,7 +137,9 @@ async def test_end_to_end_mixed_batch(
     rejected = [
         json.loads(line)
         for line in (out_dir / "toy-board-2026-04-24.rejected.jsonl")
-            .read_text().strip().split("\n")
+        .read_text()
+        .strip()
+        .split("\n")
     ]
     motives = {r["motive"] for r in rejected}
     assert "refdes_not_in_graph" in motives

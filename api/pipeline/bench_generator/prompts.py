@@ -77,8 +77,7 @@ def graph_summary(graph: ElectricalGraph) -> str:
         dec = ",".join(r.decoupling or []) or "-"
         voltage = r.voltage_nominal if r.voltage_nominal is not None else float("nan")
         lines.append(
-            f"  {r.label} voltage_nominal={voltage:.2f} "
-            f"source_refdes={src} decoupling={dec}"
+            f"  {r.label} voltage_nominal={voltage:.2f} source_refdes={src} decoupling={dec}"
         )
     return "\n".join(lines)
 

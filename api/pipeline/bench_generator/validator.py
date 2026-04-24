@@ -93,8 +93,7 @@ def check_grounding(draft: ProposedScenarioDraft) -> Rejection | None:
                 local_id=draft.local_id,
                 motive="evidence_span_not_literal",
                 detail=(
-                    f"field={span.field!r} substring="
-                    f"{span.source_quote_substring!r} not in quote"
+                    f"field={span.field!r} substring={span.source_quote_substring!r} not in quote"
                 ),
                 original_draft=draft,
             )
@@ -131,10 +130,7 @@ def check_grounding(draft: ProposedScenarioDraft) -> Rejection | None:
             detail="evidence points at expected_dead_rails but list is empty",
             original_draft=draft,
         )
-    if (
-        "expected_dead_components" in evidence_fields
-        and not draft.expected_dead_components
-    ):
+    if "expected_dead_components" in evidence_fields and not draft.expected_dead_components:
         return Rejection(
             local_id=draft.local_id,
             motive="evidence_field_empty",
@@ -145,17 +141,14 @@ def check_grounding(draft: ProposedScenarioDraft) -> Rejection | None:
     return None
 
 
-def check_topology(
-    draft: ProposedScenarioDraft, graph: ElectricalGraph
-) -> Rejection | None:
+def check_topology(draft: ProposedScenarioDraft, graph: ElectricalGraph) -> Rejection | None:
     """V3: every refdes and rail in the draft must exist in the graph."""
     if draft.cause.refdes not in graph.components:
         return Rejection(
             local_id=draft.local_id,
             motive="refdes_not_in_graph",
             detail=(
-                f"cause.refdes={draft.cause.refdes!r} not among "
-                f"{len(graph.components)} components"
+                f"cause.refdes={draft.cause.refdes!r} not among {len(graph.components)} components"
             ),
             original_draft=draft,
         )
@@ -164,10 +157,7 @@ def check_topology(
             return Rejection(
                 local_id=draft.local_id,
                 motive="rail_name_not_in_graph",
-                detail=(
-                    f"expected rail {rail!r} not among "
-                    f"{list(graph.power_rails)}"
-                ),
+                detail=(f"expected rail {rail!r} not among {list(graph.power_rails)}"),
                 original_draft=draft,
             )
     for refdes in draft.expected_dead_components:
@@ -184,16 +174,16 @@ def check_topology(
 # Kept in sync with api/pipeline/schematic/evaluator._is_pertinent. We
 # MIRROR the rules inline rather than import the private function — the
 # duplication is ~15 lines, documented, and survives renames in evaluator.
-_PASSIVE_R_ROLES_WITH_REAL_OPEN_CASCADE: frozenset[str] = frozenset({
-    "series",
-    "damping",
-    "inrush_limiter",
-})
+_PASSIVE_R_ROLES_WITH_REAL_OPEN_CASCADE: frozenset[str] = frozenset(
+    {
+        "series",
+        "damping",
+        "inrush_limiter",
+    }
+)
 
 
-def check_pertinence(
-    draft: ProposedScenarioDraft, graph: ElectricalGraph
-) -> Rejection | None:
+def check_pertinence(draft: ProposedScenarioDraft, graph: ElectricalGraph) -> Rejection | None:
     """V4: reject (refdes, mode) pairs that don't produce an observable
     simulator effect. Mirror of evaluator._is_pertinent."""
     refdes = draft.cause.refdes
@@ -214,9 +204,7 @@ def check_pertinence(
         )
 
     if kind == "ic" and mode == "regulating_low":
-        sources_any = any(
-            rail.source_refdes == refdes for rail in graph.power_rails.values()
-        )
+        sources_any = any(rail.source_refdes == refdes for rail in graph.power_rails.values())
         if not sources_any:
             return _reject(f"IC {refdes} sources no rail; regulating_low is silent")
     if kind == "passive_c" and mode == "leaky_short":
@@ -224,15 +212,11 @@ def check_pertinence(
             refdes in (rail.decoupling or []) for rail in graph.power_rails.values()
         )
         if not in_decoupling:
-            return _reject(
-                f"cap {refdes} not in any rail.decoupling; leaky_short silent"
-            )
+            return _reject(f"cap {refdes} not in any rail.decoupling; leaky_short silent")
     if kind == "passive_r" and mode == "open":
         role = (comp.role or "").lower()
         if role not in _PASSIVE_R_ROLES_WITH_REAL_OPEN_CASCADE:
-            return _reject(
-                f"resistor {refdes} role={role!r} — open produces no cascade"
-            )
+            return _reject(f"resistor {refdes} role={role!r} — open produces no cascade")
     return None
 
 

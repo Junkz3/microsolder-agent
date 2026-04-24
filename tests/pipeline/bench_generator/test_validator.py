@@ -7,9 +7,12 @@ from api.pipeline.bench_generator.schemas import (
     ProposedScenarioDraft,
 )
 from api.pipeline.bench_generator.validator import (
-    check_sanity,
     check_duplicates,
     check_grounding,
+    check_pertinence,
+    check_sanity,
+    check_topology,
+    run_all,
 )
 
 
@@ -28,20 +31,24 @@ def test_v1_rejects_too_short_quote(sample_draft):
     # this would already fail at Pydantic load time — V1 is defence in depth
     # when we later relax Pydantic. For now, construct through .model_construct
     # to bypass validation.
-    d = ProposedScenarioDraft.model_construct(**{
-        **sample_draft.model_dump(),
-        "source_quote": "too short",
-    })
+    d = ProposedScenarioDraft.model_construct(
+        **{
+            **sample_draft.model_dump(),
+            "source_quote": "too short",
+        }
+    )
     rej = check_sanity(d)
     assert rej is not None
     assert rej.motive == "source_quote_too_short"
 
 
 def test_v1_rejects_malformed_url(sample_draft):
-    d = ProposedScenarioDraft.model_construct(**{
-        **sample_draft.model_dump(),
-        "source_url": "not-a-url",
-    })
+    d = ProposedScenarioDraft.model_construct(
+        **{
+            **sample_draft.model_dump(),
+            "source_url": "not-a-url",
+        }
+    )
     rej = check_sanity(d)
     assert rej is not None
     assert rej.motive == "source_url_malformed"
@@ -88,9 +95,7 @@ def test_v2_rejects_nonliteral_span(sample_draft):
 def test_v2_rejects_missing_evidence_for_nonempty_rails(sample_draft):
     """If expected_dead_rails is non-empty, at least one evidence must target it."""
     bad = sample_draft.model_copy(deep=True)
-    bad.evidence = [
-        e for e in bad.evidence if e.field != "expected_dead_rails"
-    ]
+    bad.evidence = [e for e in bad.evidence if e.field != "expected_dead_rails"]
     rej = check_grounding(bad)
     assert rej is not None
     assert rej.motive == "evidence_missing"
@@ -110,9 +115,6 @@ def test_v2_rejects_evidence_on_empty_field(sample_draft):
     rej = check_grounding(bad)
     assert rej is not None
     assert rej.motive == "evidence_field_empty"
-
-
-from api.pipeline.bench_generator.validator import check_topology
 
 
 def test_v3_accepts_known_refdes_and_rail(sample_draft, toy_graph):
@@ -147,9 +149,6 @@ def test_v3_rejects_unknown_component(sample_draft, toy_graph):
     assert "U_HIDDEN" in rej.detail
 
 
-from api.pipeline.bench_generator.validator import check_pertinence
-
-
 def test_v4_accepts_ic_dead(sample_draft, toy_graph):
     """dead is pertinent for any IC regardless of rail-sourcing."""
     d = sample_draft.model_copy(deep=True)
@@ -178,8 +177,12 @@ def test_v4_accepts_regulating_low_on_source_ic(sample_draft, toy_graph):
 def test_v4_rejects_leaky_short_on_non_decoupling_cap(sample_draft, toy_graph):
     """Add a cap that is NOT in any rail's decoupling list."""
     from api.pipeline.schematic.schemas import ComponentNode
+
     toy_graph.components["C99"] = ComponentNode(
-        refdes="C99", type="capacitor", kind="passive_c", role="decoupling",
+        refdes="C99",
+        type="capacitor",
+        kind="passive_c",
+        role="decoupling",
     )
     d = sample_draft.model_copy(deep=True)
     d.cause = Cause(refdes="C99", mode="leaky_short", value_ohms=200.0)
@@ -204,9 +207,6 @@ def test_v4_accepts_open_on_series_r(sample_draft, toy_graph):
     assert rej is None
 
 
-from api.pipeline.bench_generator.validator import run_all
-
-
 def test_run_all_accepts_clean_draft(sample_draft, toy_graph):
     accepted, rejected = run_all([sample_draft], toy_graph)
     assert [d.local_id for d in accepted] == ["c19-short"]
@@ -219,10 +219,10 @@ def test_run_all_partitions_mixed_batch(sample_draft, toy_graph):
     bad_topology.local_id = "bad-topo"
     bad_topology.cause = Cause(refdes="XZ999", mode="shorted")
     bad_topology.evidence = [
-        EvidenceSpan(field="cause.refdes", source_quote_substring="C19",
-                     reasoning="stale but literal"),
-        EvidenceSpan(field="cause.mode", source_quote_substring="short",
-                     reasoning="literal"),
+        EvidenceSpan(
+            field="cause.refdes", source_quote_substring="C19", reasoning="stale but literal"
+        ),
+        EvidenceSpan(field="cause.mode", source_quote_substring="short", reasoning="literal"),
     ]
     bad_topology.expected_dead_rails = []
 

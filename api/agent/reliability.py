@@ -32,7 +32,8 @@ def load_reliability_line(device_slug: str) -> str | None:
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning(
             "[reliability] failed to load %s: %s — ignoring",
-            path, exc,
+            path,
+            exc,
         )
         return None
     try:
@@ -47,6 +48,8 @@ def load_reliability_line(device_slug: str) -> str | None:
         )
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning(
-            "[reliability] malformed %s: %s — ignoring", path, exc,
+            "[reliability] malformed %s: %s — ignoring",
+            path,
+            exc,
         )
         return None

@@ -56,19 +56,13 @@ def _load_pack(pack_dir: Path) -> tuple[str, str, str, ElectricalGraph]:
         )
     dump_path = pack_dir / "raw_research_dump.md"
     if not dump_path.exists() or len(dump_path.read_text(encoding="utf-8")) < 500:
-        raise BenchGeneratorPreconditionError(
-            f"Scout dump at {dump_path} is empty or < 500 chars"
-        )
+        raise BenchGeneratorPreconditionError(f"Scout dump at {dump_path} is empty or < 500 chars")
     raw_dump = dump_path.read_text(encoding="utf-8")
     rules_path = pack_dir / "rules.json"
     rules_json = rules_path.read_text(encoding="utf-8") if rules_path.exists() else "{}"
     registry_path = pack_dir / "registry.json"
-    registry_json = (
-        registry_path.read_text(encoding="utf-8") if registry_path.exists() else "{}"
-    )
-    graph = ElectricalGraph.model_validate_json(
-        graph_path.read_text(encoding="utf-8")
-    )
+    registry_json = registry_path.read_text(encoding="utf-8") if registry_path.exists() else "{}"
+    graph = ElectricalGraph.model_validate_json(graph_path.read_text(encoding="utf-8"))
     return raw_dump, rules_json, registry_json, graph
 
 
@@ -123,15 +117,17 @@ async def generate_from_pack(
     # Capture mtimes for the manifest (traceability only).
     input_mtimes = {
         name: (pack_dir / name).stat().st_mtime
-        for name in ("raw_research_dump.md", "rules.json", "registry.json",
-                     "electrical_graph.json")
+        for name in ("raw_research_dump.md", "rules.json", "registry.json", "electrical_graph.json")
         if (pack_dir / name).exists()
     }
 
     payload = await extract_drafts(
-        client=client, model=model,
-        raw_dump=raw_dump, rules_json=rules_json,
-        registry_json=registry_json, graph=graph,
+        client=client,
+        model=model,
+        raw_dump=raw_dump,
+        rules_json=rules_json,
+        registry_json=registry_json,
+        graph=graph,
     )
     drafts = payload.scenarios
     n_proposed = len(drafts)
@@ -140,8 +136,10 @@ async def generate_from_pack(
 
     if escalate_rejects and rejects:
         rescued, rejects = await rescue_with_opus(
-            client=client, model=opus_model,
-            rejections=rejects, graph=graph,
+            client=client,
+            model=opus_model,
+            rejections=rejects,
+            graph=graph,
         )
         if rescued:
             accepted_again, more_rejects = run_all(rescued, graph)
@@ -154,7 +152,8 @@ async def generate_from_pack(
 
     accepted: list[ProposedScenario] = [
         _promote(
-            d, device_slug=device_slug,
+            d,
+            device_slug=device_slug,
             generated_by=generated_by,
             generated_at=generated_at,
             archive_subdir=archive_subdir,
@@ -176,16 +175,23 @@ async def generate_from_pack(
     )
 
     write_per_run_files(
-        output_dir=output_dir, run_date=run_date, slug=device_slug,
-        accepted=accepted, rejected=rejects, manifest=manifest,
+        output_dir=output_dir,
+        run_date=run_date,
+        slug=device_slug,
+        accepted=accepted,
+        rejected=rejects,
+        manifest=manifest,
         scorecard=scorecard,
     )
     write_source_archives(
-        archive_dir=output_dir / "sources", scenarios=accepted,
+        archive_dir=output_dir / "sources",
+        scenarios=accepted,
     )
     update_latest_json(
-        latest_path=latest_path, slug=device_slug,
-        scorecard=scorecard, run_date=run_date,
+        latest_path=latest_path,
+        slug=device_slug,
+        scorecard=scorecard,
+        run_date=run_date,
     )
     reliability_card = ReliabilityCard(
         device_slug=device_slug,
@@ -197,8 +203,7 @@ async def generate_from_pack(
         source_run_date=run_date,
         notes=[
             "Based on auto-generated scenarios, not human-validated.",
-            f"Per-scenario breakdown: "
-            f"benchmark/auto_proposals/{device_slug}-{run_date}.score.json",
+            f"Per-scenario breakdown: benchmark/auto_proposals/{device_slug}-{run_date}.score.json",
         ],
     )
     write_reliability_card(memory_dir=pack_dir, card=reliability_card)
@@ -206,7 +211,11 @@ async def generate_from_pack(
     logger.info(
         "[bench_generator] device=%s run_date=%s n_proposed=%d "
         "n_accepted=%d n_rejected=%d score=%.3f",
-        device_slug, run_date, n_proposed, len(accepted), len(rejects),
+        device_slug,
+        run_date,
+        n_proposed,
+        len(accepted),
+        len(rejects),
         scorecard.score,
     )
     return {

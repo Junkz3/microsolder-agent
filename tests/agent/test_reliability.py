@@ -17,16 +17,18 @@ def test_returns_formatted_line_when_file_present(tmp_path: Path):
     memory = tmp_path / "memory" / "mnt-reform-motherboard"
     memory.mkdir(parents=True)
     (memory / "simulator_reliability.json").write_text(
-        json.dumps({
-            "device_slug": "mnt-reform-motherboard",
-            "score": 0.78,
-            "self_mrr": 0.82,
-            "cascade_recall": 0.72,
-            "n_scenarios": 17,
-            "generated_at": "2026-04-24T21:00:00Z",
-            "source_run_date": "2026-04-24",
-            "notes": [],
-        }),
+        json.dumps(
+            {
+                "device_slug": "mnt-reform-motherboard",
+                "score": 0.78,
+                "self_mrr": 0.82,
+                "cascade_recall": 0.72,
+                "n_scenarios": 17,
+                "generated_at": "2026-04-24T21:00:00Z",
+                "source_run_date": "2026-04-24",
+                "notes": [],
+            }
+        ),
         encoding="utf-8",
     )
     with patch("api.agent.reliability._memory_root", return_value=tmp_path / "memory"):
