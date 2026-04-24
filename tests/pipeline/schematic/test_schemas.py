@@ -316,7 +316,7 @@ def test_component_node_accepts_passive_kind():
 
 def test_component_node_rejects_unknown_kind():
     with pytest.raises(ValidationError):
-        ComponentNode(refdes="Q5", type="transistor", kind="passive_q")
+        ComponentNode(refdes="Q5", type="transistor", kind="passive_unknown")
 
 
 def test_component_node_role_is_free_form_string():
@@ -336,3 +336,23 @@ def test_component_node_round_trip_preserves_kind_and_role():
     restored = ComponentNode.model_validate(original.model_dump())
     assert restored.kind == "passive_fb"
     assert restored.role == "filter"
+
+
+def test_component_node_accepts_passive_q_kind():
+    """Phase 4.5 adds passive_q to ComponentKind. Transistor nodes get it."""
+    node = ComponentNode(
+        refdes="Q5", type="transistor",
+        kind="passive_q", role="load_switch",
+    )
+    assert node.kind == "passive_q"
+    assert node.role == "load_switch"
+
+
+def test_component_node_passive_q_round_trip():
+    original = ComponentNode(
+        refdes="Q7", type="transistor",
+        kind="passive_q", role="level_shifter",
+    )
+    restored = ComponentNode.model_validate(original.model_dump())
+    assert restored.kind == "passive_q"
+    assert restored.role == "level_shifter"

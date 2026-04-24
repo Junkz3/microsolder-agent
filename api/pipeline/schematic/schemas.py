@@ -80,13 +80,14 @@ ComponentKind = Literal[
     "passive_c",
     "passive_d",
     "passive_fb",
+    "passive_q",
 ]
 """Kind of component in the electrical graph. `ic` is the Phase 1 default
-(active components: ICs, modules, transistors, connectors, LEDs, crystals,
-oscillators). Passive kinds (`passive_r`, `passive_c`, `passive_d`,
-`passive_fb`) are Phase 4 additions and are assigned by the passive role
-classifier during `compile_electrical_graph`. `passive_q` reserved for a
-future Phase 4.5 and intentionally not included."""
+(active components: ICs, modules, connectors, LEDs, crystals, oscillators).
+Passive kinds (`passive_r`, `passive_c`, `passive_d`, `passive_fb`) are
+Phase 4 additions. `passive_q` (discrete transistors — MOSFET/BJT) is
+Phase 4.5 and is assigned by the transistor classifier during
+`compile_electrical_graph`."""
 
 
 PageKind = Literal[
