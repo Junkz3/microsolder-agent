@@ -52,3 +52,41 @@ clean:
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type d -name ".ruff_cache" -exec rm -rf {} +
 	find . -type d -name "*.egg-info" -exec rm -rf {} +
+
+# --- Evolve (overnight self-improvement loop) ---
+
+.PHONY: evolve-bootstrap evolve-run evolve-run-bg evolve-stop evolve-status
+
+evolve-bootstrap:
+	@./scripts/evolve-bootstrap.sh
+
+evolve-run:
+	@./scripts/evolve-runner.sh
+
+evolve-run-bg:
+	@nohup ./scripts/evolve-runner.sh >> /tmp/microsolder-evolve.log 2>&1 &
+	@echo "Evolve runner started in background. Tail: tail -f /tmp/microsolder-evolve.log"
+	@echo "Stop:  make evolve-stop"
+
+evolve-stop:
+	@if [ -f /tmp/microsolder-evolve.lock ]; then \
+		PID=$$(cat /tmp/microsolder-evolve.lock); \
+		echo "Killing runner PID $$PID"; \
+		kill $$PID 2>/dev/null || true; \
+		rm -f /tmp/microsolder-evolve.lock; \
+	fi
+	@pkill -f '[e]volve-runner.sh' 2>/dev/null || true
+	@echo "Evolve runner stopped."
+
+evolve-status:
+	@echo "=== State ==="
+	@cat evolve/state.json 2>/dev/null || echo "(not initialized)"
+	@echo ""
+	@echo "=== Last 10 results ==="
+	@tail -10 evolve/results.tsv 2>/dev/null || echo "(no results yet)"
+	@echo ""
+	@echo "=== Lock ==="
+	@if [ -f /tmp/microsolder-evolve.lock ]; then echo "Locked by PID $$(cat /tmp/microsolder-evolve.lock)"; else echo "No lock"; fi
+	@echo ""
+	@echo "=== Last 20 log lines ==="
+	@tail -20 /tmp/microsolder-evolve.log 2>/dev/null || echo "(no log)"
