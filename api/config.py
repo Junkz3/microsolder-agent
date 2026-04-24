@@ -59,12 +59,15 @@ class Settings(BaseSettings):
         ),
     )
     pipeline_cache_warmup_seconds: float = Field(
-        default=1.0,
+        default=3.0,
         ge=0.0,
         le=10.0,
         description=(
-            "Seconds to wait between dispatching writer 1 and writers 2+3, so Anthropic "
-            "materializes the cache entry before the parallel readers arrive."
+            "Seconds to wait between dispatching writer 1 (Cartographe) and writers 2+3 "
+            "(Clinicien + Lexicographe), so Anthropic materializes the ephemeral cache "
+            "entry before the parallel readers arrive. Observed cache materialization "
+            "takes 2–3s; 1.0s was too aggressive and caused cache misses with subsequent "
+            "token re-writes."
         ),
     )
     pipeline_scout_min_symptoms: int = Field(
