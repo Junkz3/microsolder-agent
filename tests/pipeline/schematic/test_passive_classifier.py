@@ -236,3 +236,98 @@ def test_ferrite_between_rail_and_variant_is_filter():
     kind, role, _ = classify_passive_refdes(graph, fb)
     assert kind == "passive_fb"
     assert role == "filter"
+
+
+# --------- transistors ---------
+
+def test_transistor_load_switch_heuristic():
+    """Q with upstream rail pin + downstream rail pin + gate on EN-labelled
+    net = load_switch."""
+    graph = _graph_with_rails("+5V", "+3V3_USB")
+    graph.nets["5V_PWR_EN"] = NetNode(label="5V_PWR_EN")
+    q = ComponentNode(
+        refdes="Q5", type="transistor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="+5V"),
+            PagePin(number="2", role="unknown", net_label="+3V3_USB"),
+            PagePin(number="3", role="unknown", net_label="5V_PWR_EN"),
+        ],
+    )
+    graph.components["Q5"] = q
+    kind, role, _conf = classify_passive_refdes(graph, q)
+    assert kind == "passive_q"
+    assert role == "load_switch"
+
+
+def test_transistor_level_shifter_heuristic():
+    """Q between two signal nets in different voltage domains = level_shifter."""
+    graph = _graph_with_rails("+3V3", "+1V8")
+    graph.nets["I2C1_3V3_SDA"] = NetNode(label="I2C1_3V3_SDA")
+    graph.nets["I2C1_1V8_SDA"] = NetNode(label="I2C1_1V8_SDA")
+    q = ComponentNode(
+        refdes="Q2", type="transistor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="I2C1_3V3_SDA"),
+            PagePin(number="2", role="unknown", net_label="I2C1_1V8_SDA"),
+            PagePin(number="3", role="unknown", net_label="+3V3"),
+        ],
+    )
+    graph.components["Q2"] = q
+    _kind, role, _ = classify_passive_refdes(graph, q)
+    assert role == "level_shifter"
+
+
+def test_transistor_inrush_limiter_heuristic():
+    """Q in series from VIN to a regulator input, gate on RC soft-start."""
+    graph = _graph_with_rails("VIN", "VIN_BUCK")
+    graph.nets["SOFT_START"] = NetNode(label="SOFT_START")
+    graph.components["U20"] = ComponentNode(
+        refdes="U20", type="ic",
+        pins=[PagePin(number="1", role="power_in", net_label="VIN_BUCK")],
+    )
+    graph.power_rails["VIN_BUCK"].consumers = ["U20"]
+    q = ComponentNode(
+        refdes="Q1", type="transistor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="VIN"),
+            PagePin(number="2", role="unknown", net_label="VIN_BUCK"),
+            PagePin(number="3", role="unknown", net_label="SOFT_START"),
+        ],
+    )
+    graph.components["Q1"] = q
+    _kind, role, _ = classify_passive_refdes(graph, q)
+    assert role == "inrush_limiter"
+
+
+def test_transistor_unclassified_returns_none_role():
+    """Q with no rail pins and no distinctive topology stays role=None."""
+    graph = _graph_with_rails()
+    graph.nets["RANDOM_A"] = NetNode(label="RANDOM_A")
+    graph.nets["RANDOM_B"] = NetNode(label="RANDOM_B")
+    q = ComponentNode(
+        refdes="Q99", type="transistor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="RANDOM_A"),
+            PagePin(number="2", role="unknown", net_label="RANDOM_B"),
+        ],
+    )
+    graph.components["Q99"] = q
+    kind, role, _ = classify_passive_refdes(graph, q)
+    assert kind == "passive_q"
+    assert role is None
+
+
+def test_heuristic_emits_passive_q_entry_in_whole_graph_pass():
+    graph = _graph_with_rails("+5V", "+3V3_USB")
+    graph.nets["EN_5V"] = NetNode(label="EN_5V")
+    graph.components["Q5"] = ComponentNode(
+        refdes="Q5", type="transistor",
+        pins=[
+            PagePin(number="1", role="unknown", net_label="+5V"),
+            PagePin(number="2", role="unknown", net_label="+3V3_USB"),
+            PagePin(number="3", role="unknown", net_label="EN_5V"),
+        ],
+    )
+    result = classify_passives_heuristic(graph)
+    assert "Q5" in result
+    assert result["Q5"][0] == "passive_q"

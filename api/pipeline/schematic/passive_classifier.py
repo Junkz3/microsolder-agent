@@ -35,10 +35,11 @@ logger = logging.getLogger("microsolder.pipeline.schematic.passive_classifier")
 
 # Map schema `ComponentType` → `ComponentKind` for passives we handle.
 _TYPE_TO_KIND: dict[str, str] = {
-    "resistor":  "passive_r",
-    "capacitor": "passive_c",
-    "diode":     "passive_d",
-    "ferrite":   "passive_fb",
+    "resistor":   "passive_r",
+    "capacitor":  "passive_c",
+    "diode":      "passive_d",
+    "ferrite":    "passive_fb",
+    "transistor": "passive_q",
 }
 
 _GND_TOKENS = frozenset({"GND", "AGND", "DGND", "PGND", "SGND"})
@@ -212,6 +213,67 @@ def _classify_ferrite(
 
 
 # ---------------------------------------------------------------------------
+# Transistors
+# ---------------------------------------------------------------------------
+
+_EN_NET_TOKENS = ("EN", "_PWR_EN", "POWER", "_CTRL", "SOFT_START")
+_VIN_NET_TOKENS = ("VIN", "BAT", "+12V", "+24V")
+
+
+def _classify_transistor(
+    graph: ElectricalGraph, comp: ComponentNode,
+) -> tuple[str | None, float]:
+    """Return (role, confidence) for a transistor. Heuristic covers three
+    roles: load_switch, level_shifter, inrush_limiter. Falls back to None
+    when topology doesn't narrow it down — Opus pass fills the holes."""
+    nets = _pin_nets(comp)
+    if len(nets) < 3:
+        # Only 2 pins (unusual — most transistors are 3+); bail.
+        return None, 0.0
+    rail_nets = [n for n in nets if n in graph.power_rails]
+    gnd_nets = [n for n in nets if _is_ground_net(n)]
+    nonrail_nonGND = [n for n in nets if n not in rail_nets and n not in gnd_nets]
+
+    # ---- Rule 1 (pre-check): inrush_limiter — upstream = VIN/BAT, downstream
+    # feeds a consumer IC's power_in pin. Gate on RC / SOFT_START signal.
+    # Checked before load_switch so that a VIN → regulated rail topology with
+    # a soft-start gate doesn't mis-classify as load_switch.
+    if len(rail_nets) == 2:
+        for n in rail_nets:
+            up = n.upper()
+            if any(tok in up for tok in _VIN_NET_TOKENS):
+                # The OTHER rail should feed a consumer.
+                other = next(r for r in rail_nets if r != n)
+                rail = graph.power_rails.get(other)
+                if rail and rail.consumers:
+                    return "inrush_limiter", 0.6
+
+    # ---- Rule 2: load_switch — 2 rails + 1 EN-labelled net
+    if len(rail_nets) == 2 and nonrail_nonGND:
+        gate_net = nonrail_nonGND[0]
+        upper = gate_net.upper()
+        if any(tok in upper for tok in _EN_NET_TOKENS):
+            return "load_switch", 0.75
+        # Even without EN label, if the two rails differ clearly in voltage
+        # (VIN vs +3V3 etc), it's still likely a load switch; use 0.55 conf.
+        return "load_switch", 0.55
+
+    # ---- Rule 3: level_shifter — 2 signal nets (non-rail) + a rail gate
+    # AND the two signal nets hint at different voltage domains
+    if len(nonrail_nonGND) >= 2 and rail_nets:
+        n1, n2 = nonrail_nonGND[0], nonrail_nonGND[1]
+        up1, up2 = n1.upper(), n2.upper()
+        # Both nets share a bus name but different domain tokens
+        domain_tokens = ("1V8", "1V2", "3V3", "+5V", "+12V", "LV", "HV")
+        d1 = next((t for t in domain_tokens if t in up1), None)
+        d2 = next((t for t in domain_tokens if t in up2), None)
+        if d1 and d2 and d1 != d2:
+            return "level_shifter", 0.65
+
+    return None, 0.0
+
+
+# ---------------------------------------------------------------------------
 # Public dispatchers
 # ---------------------------------------------------------------------------
 
@@ -230,6 +292,8 @@ def classify_passive_refdes(
         role, conf = _classify_diode(graph, comp)
     elif comp.type == "ferrite":
         role, conf = _classify_ferrite(graph, comp)
+    elif comp.type == "transistor":
+        role, conf = _classify_transistor(graph, comp)
     else:
         role, conf = None, 0.0
     return kind, role, conf
