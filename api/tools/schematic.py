@@ -16,7 +16,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from api.session.state import SessionState
 
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 from api.pipeline.schematic.simulator import SimulationEngine
@@ -35,19 +38,31 @@ _VALID_QUERIES = (
 )
 
 
-def _load_graph(device_slug: str, memory_root: Path) -> tuple[dict | None, str | None]:
+def _load_graph(
+    device_slug: str,
+    memory_root: Path,
+    session: "SessionState | None" = None,
+) -> tuple[dict | None, str | None]:
     path = memory_root / device_slug / "electrical_graph.json"
+    analyzed_path = memory_root / device_slug / "boot_sequence_analyzed.json"
+    classified_path = memory_root / device_slug / "nets_classified.json"
     if not path.exists():
         return None, "no_schematic_graph"
+
+    tracked = [p for p in (path, analyzed_path, classified_path) if p.exists()]
+    max_mtime = max(p.stat().st_mtime for p in tracked)
+
+    if session is not None:
+        cached = session.schematic_graph_cache.get(device_slug)
+        if cached is not None and cached[0] >= max_mtime:
+            return cached[1], None
+
     try:
         graph = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return None, "malformed_graph"
 
-    # If an Opus-refined boot analysis is on disk, surface its phases as the
-    # primary `boot_sequence` and tag the source. The compiler version stays
-    # available under `boot_sequence_compiler` for callers that want both.
-    analyzed_path = memory_root / device_slug / "boot_sequence_analyzed.json"
+    # Opus-refined boot analysis overlay (kept verbatim from the pre-cache version).
     if analyzed_path.exists():
         try:
             analyzed = json.loads(analyzed_path.read_text())
@@ -65,9 +80,7 @@ def _load_graph(device_slug: str, memory_root: Path) -> tuple[dict | None, str |
     else:
         graph["boot_sequence_source"] = "compiler"
 
-    # Attach net classification (Opus-produced when available, regex fallback
-    # otherwise). `net_domains` = map of net label → ClassifiedNet dict.
-    classified_path = memory_root / device_slug / "nets_classified.json"
+    # Net classification overlay.
     if classified_path.exists():
         try:
             classified = json.loads(classified_path.read_text())
@@ -84,6 +97,8 @@ def _load_graph(device_slug: str, memory_root: Path) -> tuple[dict | None, str |
         graph["net_domains"] = {}
         graph["net_domains_meta"] = {}
 
+    if session is not None:
+        session.schematic_graph_cache[device_slug] = (max_mtime, graph)
     return graph, None
 
 
@@ -644,6 +659,7 @@ def mb_schematic_graph(
     index: int | None = None,
     domain: str | None = None,
     killed_refdes: list[str] | None = None,
+    session: "SessionState | None" = None,
 ) -> dict[str, Any]:
     """Deterministic read over `memory/{device_slug}/electrical_graph.json`.
 
@@ -658,7 +674,7 @@ def mb_schematic_graph(
 
     Always returns a dict; `found: false` with a `reason` on any miss.
     """
-    graph, err = _load_graph(device_slug, memory_root)
+    graph, err = _load_graph(device_slug, memory_root, session=session)
     if err:
         return {"found": False, "reason": err, "device_slug": device_slug}
     assert graph is not None  # narrow for the type checker

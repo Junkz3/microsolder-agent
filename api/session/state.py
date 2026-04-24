@@ -55,6 +55,8 @@ class SessionState:
     COMPONENT_CACHE_MAX: ClassVar[int] = 64
     # R3: profile snapshot cache — mtime-checked on every lookup.
     profile_cache: tuple[float, dict[str, Any]] | None = None
+    # R4: electrical_graph.json cache (and analyzer overlay) keyed by device_slug.
+    schematic_graph_cache: dict[str, tuple[float, dict[str, Any]]] = field(default_factory=dict)
 
     def invalidate_pack_cache(self, device_slug: str) -> None:
         """Drop the cached pack AND all derived component results for `device_slug`.

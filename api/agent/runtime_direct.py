@@ -298,6 +298,7 @@ async def _dispatch_mb_tool(
             refdes=payload.get("refdes"),
             index=payload.get("index"),
             domain=payload.get("domain"),
+            session=session,
         )
     if name == "mb_hypothesize":
         from api.tools.hypothesize import mb_hypothesize as _mb_hypothesize
