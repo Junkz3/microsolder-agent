@@ -345,7 +345,8 @@ class PassiveAssignment(BaseModel):
             "Canonical role for this kind. passive_r: series · feedback · pull_up · "
             "pull_down · current_sense · damping. passive_c: decoupling · bulk · "
             "filter · ac_coupling · tank · bypass. passive_d: flyback · rectifier · "
-            "esd · reverse_protection · signal_clamp. passive_fb: filter. Use null "
+            "esd · reverse_protection · signal_clamp. passive_fb: filter. passive_q: "
+            "load_switch · level_shifter · inrush_limiter. Use null "
             "when topology + notes genuinely don't narrow it down — never guess."
         ),
     )
@@ -427,6 +428,19 @@ Canonical roles (use exactly these strings, or null if genuinely undecidable):
   passive_fb (ferrite beads):
     - filter          — the only canonical role; between a rail and a filtered
                          variant of it (e.g. +3V3 → +3V3_AUDIO)
+
+  passive_q (transistors — discrete MOSFET / BJT):
+    - load_switch     — high-side gating of a rail (source = upstream rail,
+                         drain = downstream rail, gate = EN / _PWR_EN signal).
+                         Most common Q on embedded boards. Failure signatures:
+                         D-S short → downstream rail permanently on (stuck_on);
+                         channel open → downstream rail dead.
+    - level_shifter   — Q between two signal nets in different logic voltage
+                         domains (3V3 ↔ 1V8, 1V8 ↔ 1V2). Typical on I2C bridges.
+                         Failure: signal stuck in one state, peripheral silent.
+    - inrush_limiter  — Q in series with a power input, gate controlled by
+                         an RC delay for soft-start. Classic on laptop VIN paths.
+                         Failure: channel open → main rail never powers up.
 
 Use the input context for each passive:
   - `refdes`      — identifier, kept verbatim
