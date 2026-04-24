@@ -18,15 +18,52 @@ from api.board.parser.base import (
     UnsupportedFormatError,
     parser_for,
 )
+from api.config import get_settings
 
 router = APIRouter(prefix="/api/board", tags=["board"])
+
+_UPLOAD_CHUNK = 1 << 20  # 1 MB
 
 
 @router.post("/parse")
 async def parse_board(file: UploadFile = File(...)) -> dict:  # noqa: B008
     name = file.filename or "upload.brd"
     suffix = Path(name).suffix or ".brd"
-    data = await file.read()
+
+    max_bytes = get_settings().board_upload_max_bytes
+    # Cheap upfront check on the declared Content-Length. It can be absent or
+    # lied about, so we still enforce the authoritative chunked check below.
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "detail": "file-too-large",
+                "max_bytes": max_bytes,
+                "message": f"upload exceeds {max_bytes} bytes",
+            },
+        )
+
+    # Authoritative read: abort the stream as soon as we cross max_bytes so a
+    # malicious client can't force us to buffer the whole payload.
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "detail": "file-too-large",
+                    "max_bytes": max_bytes,
+                    "message": f"upload exceeds {max_bytes} bytes",
+                },
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(
             status_code=400,

@@ -44,6 +44,19 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="HTTP server port.")
     log_level: str = Field(default="INFO", description="Log level name.")
 
+    # --- Upload hardening -----------------------------------------------------
+    # .kicad_pcb files for full boards can exceed 100 MB (MNT Reform is ~25 MB,
+    # larger mainboards push past 100 MB). 200 MB leaves headroom while protecting
+    # /tmp and RAM from a malicious oversized upload on POST /api/board/parse.
+    board_upload_max_bytes: int = Field(
+        default=200 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Maximum accepted size in bytes for POST /api/board/parse uploads. "
+            "Requests exceeding this cap are rejected with 413 before parsing."
+        ),
+    )
+
     # --- Pipeline V2 settings -------------------------------------------------
     memory_root: str = Field(
         default="memory",

@@ -45,6 +45,22 @@ def test_parse_rejects_empty_upload():
     assert r.json()["detail"]["detail"] == "empty-file"
 
 
+def test_parse_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch):
+    """An upload exceeding board_upload_max_bytes is refused with 413 before parsing."""
+    from api.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "board_upload_max_bytes", 1024, raising=True)
+    big_payload = b"x" * 2048  # 2 KB, over the 1 KB test cap
+    r = client.post(
+        "/api/board/parse",
+        files={"file": ("huge.brd", big_payload, "application/octet-stream")},
+    )
+    assert r.status_code == 413
+    body = r.json()["detail"]
+    assert body["detail"] == "file-too-large"
+    assert body["max_bytes"] == 1024
+
+
 def test_parse_returns_501_for_stub_parser_extensions():
     """A registered but not-yet-implemented format must yield 501, not 500."""
     r = client.post(
