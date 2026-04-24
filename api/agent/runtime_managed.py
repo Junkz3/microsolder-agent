@@ -485,10 +485,11 @@ async def run_diagnostic_session_managed(
             {
                 "type": "memory_store",
                 "memory_store_id": memory_store_id,
-                "access": "read_write",
+                "access": "read_only",
                 "prompt": (
-                    "Repair history for this specific device. Check before "
-                    "starting diagnosis, write durable learnings at the end."
+                    "Repair history for this specific device. Read it at "
+                    "the start of diagnosis. New findings are written by "
+                    "the server — you do not write through this mount."
                 ),
             }
         ]
