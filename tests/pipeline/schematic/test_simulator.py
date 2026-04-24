@@ -22,6 +22,10 @@ from api.pipeline.schematic.schemas import (
 )
 from api.pipeline.schematic.simulator import (
     BoardState,
+    ComponentState,  # noqa: F401 — verifies public export; tested in later tasks
+    Failure,
+    RailOverride,
+    RailState,  # noqa: F401 — verifies public export; tested in later tasks
     SimulationEngine,  # noqa: F401 — verifies public export; tested in later tasks
     SimulationTimeline,
 )
@@ -396,3 +400,37 @@ def test_cascade_transitive_dead_rails_via_dead_source():
     )
     assert "U2" in tl.cascade_dead_components
     assert "U3" in tl.cascade_dead_components
+
+
+def test_board_state_accepts_degraded_rail_with_voltage_pct():
+    state = BoardState(
+        phase_index=1,
+        phase_name="Phase 1",
+        rails={"+5V": "degraded"},
+        rail_voltage_pct={"+5V": 0.94},
+    )
+    assert state.rails["+5V"] == "degraded"
+    assert state.rail_voltage_pct["+5V"] == 0.94
+
+
+def test_board_state_accepts_degraded_component():
+    state = BoardState(
+        phase_index=1,
+        phase_name="Phase 1",
+        components={"U7": "degraded"},
+    )
+    assert state.components["U7"] == "degraded"
+
+
+def test_failure_requires_value_ohms_for_leaky_short():
+    # Failure type accepts the new modes; validation of mode-specific
+    # required fields lives in the engine, not the type itself.
+    f = Failure(refdes="C42", mode="leaky_short", value_ohms=200.0)
+    assert f.mode == "leaky_short"
+    assert f.value_ohms == 200.0
+
+
+def test_rail_override_carries_state_and_voltage_pct():
+    o = RailOverride(label="+5V", state="degraded", voltage_pct=0.94)
+    assert o.state == "degraded"
+    assert o.voltage_pct == 0.94

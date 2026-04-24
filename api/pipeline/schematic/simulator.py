@@ -19,10 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 
-RailState = Literal["off", "rising", "stable"]
-ComponentState = Literal["off", "on", "dead"]
+RailState = Literal["off", "rising", "stable", "degraded", "shorted"]
+ComponentState = Literal["off", "on", "degraded", "dead"]
 SignalState = Literal["low", "high", "floating"]
-FinalVerdict = Literal["completed", "blocked", "cascade"]
+FinalVerdict = Literal["completed", "blocked", "cascade", "degraded"]
 
 
 class BoardState(BaseModel):
@@ -33,6 +33,14 @@ class BoardState(BaseModel):
     phase_index: int
     phase_name: str
     rails: dict[str, RailState] = Field(default_factory=dict)
+    rail_voltage_pct: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-rail voltage as a fraction of nominal. Present "
+            "only when the rail is `degraded`/`shorted` (with finite R) "
+            "or was explicitly observed via rail_overrides."
+        ),
+    )
     components: dict[str, ComponentState] = Field(default_factory=dict)
     signals: dict[str, SignalState] = Field(default_factory=dict)
     blocked: bool = False
@@ -51,6 +59,43 @@ class SimulationTimeline(BaseModel):
     blocked_at_phase: int | None = None
     cascade_dead_components: list[str] = Field(default_factory=list)
     cascade_dead_rails: list[str] = Field(default_factory=list)
+
+
+class Failure(BaseModel):
+    """A cause prescribed by the caller — the simulator computes the
+    consequences (which rails sag, which components degrade)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    refdes: str
+    mode: Literal[
+        "dead",
+        "shorted",
+        "leaky_short",
+        "regulating_low",
+        "open",
+    ]
+    value_ohms: float | None = Field(
+        default=None,
+        description="Required for `leaky_short`. Path resistance to GND (Ω).",
+    )
+    voltage_pct: float | None = Field(
+        default=None,
+        description="Required for `regulating_low`. Output as fraction of nominal.",
+    )
+
+
+class RailOverride(BaseModel):
+    """An observation supplied by the caller — forces a rail to a state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    state: RailState
+    voltage_pct: float | None = Field(
+        default=None,
+        description="Required when state is `degraded`.",
+    )
 
 
 class SimulationEngine:
