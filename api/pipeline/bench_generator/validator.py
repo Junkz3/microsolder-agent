@@ -326,6 +326,64 @@ def check_cause_rail_connection(
     return None
 
 
+def check_refdes_in_url_content(
+    draft: ProposedScenarioDraft,
+    fetched_text: str | None,
+) -> Rejection | None:
+    """V6: cause.refdes must appear literally in the fetched body of source_url.
+
+    Catches "cross-source contamination" — Scout writing a quote attributed
+    to URL A but with refdes that only appear in URL B (e.g. handbook refdes
+    glued onto a forum-thread symptom). The Mapper's V2b.1 strict-attributions
+    path checks the refdes against the dump-level vocabulary; V6 is the
+    URL-level mirror that closes the gap.
+
+    `fetched_text` is None when the source URL was unreachable (network
+    failure, 404, etc.) — that's a soft reject under a separate motive so
+    callers can quantify the impact of network conditions.
+
+    The check is case-insensitive and uses word-boundary matching to avoid
+    false positives like "U7" matching "U70" / "AU7T" embedded in
+    unrelated identifiers.
+    """
+    if fetched_text is None:
+        return Rejection(
+            local_id=draft.local_id,
+            motive="source_url_unreachable",
+            detail=f"could not fetch {draft.source_url!r} for V6 verification",
+            original_draft=draft,
+        )
+    refdes = draft.cause.refdes
+    if not _refdes_in_text(refdes, fetched_text):
+        return Rejection(
+            local_id=draft.local_id,
+            motive="refdes_not_in_url_content",
+            detail=(
+                f"cause.refdes={refdes!r} does not appear in the fetched "
+                f"content of {draft.source_url!r} — likely cross-source "
+                "contamination (refdes literal in dump but not in cited URL)"
+            ),
+            original_draft=draft,
+        )
+    return None
+
+
+_REFDES_BOUNDARY_RE_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _refdes_in_text(refdes: str, text: str) -> bool:
+    """Word-boundary, case-insensitive presence test.
+
+    Avoids matching "U7" inside "AU7T" or "U70" — only freestanding
+    refdes tokens count. Uses a tiny per-refdes regex cache so the V6
+    pass over many drafts citing the same URL is cheap."""
+    pattern = _REFDES_BOUNDARY_RE_CACHE.get(refdes)
+    if pattern is None:
+        pattern = re.compile(rf"\b{re.escape(refdes)}\b", re.IGNORECASE)
+        _REFDES_BOUNDARY_RE_CACHE[refdes] = pattern
+    return pattern.search(text) is not None
+
+
 def check_topology(draft: ProposedScenarioDraft, graph: ElectricalGraph) -> Rejection | None:
     """V3: every refdes and rail in the draft must exist in the graph."""
     if draft.cause.refdes not in graph.components:
@@ -410,8 +468,9 @@ def run_all(
     graph: ElectricalGraph,
     registry: dict | None = None,
     attributions: list[dict] | None = None,
+    url_texts: dict[str, str | None] | None = None,
 ) -> tuple[list[ProposedScenarioDraft], list[Rejection]]:
-    """V1 → V2 → V2b.1/V2b.2 → V3 → V2b.3 → V4 (per draft, short-circuit
+    """V1 → V2 → V2b.1/V2b.2 → V3 → V2b.3 → V4 → V6 (per draft, short-circuit
     on first failure) then V5 dedup over the survivors.
 
     `registry`, when provided, relaxes V2b.1 and V2b.2 to accept matches
@@ -421,6 +480,9 @@ def run_all(
     `memory/{slug}/refdes_attributions.json`), is the Mapper's strict
     canonical→refdes index — it supersedes legacy registry.refdes_candidates
     and the rail-overlap heuristic for any canonical it covers.
+    `url_texts`, when provided, enables V6: the cause.refdes must appear
+    literally in the fetched body of the draft's source_url. Skipped when
+    the dict is None (offline / no-fetch mode).
     """
     survivors: list[ProposedScenarioDraft] = []
     rejected: list[Rejection] = []
@@ -456,6 +518,11 @@ def run_all(
         if rej is not None:
             rejected.append(rej)
             continue
+        if url_texts is not None:
+            rej = check_refdes_in_url_content(draft, url_texts.get(draft.source_url))  # V6
+            if rej is not None:
+                rejected.append(rej)
+                continue
         survivors.append(draft)
     deduped, dup_rejects = check_duplicates(survivors)  # V5
     rejected.extend(dup_rejects)

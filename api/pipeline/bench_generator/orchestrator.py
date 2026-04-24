@@ -127,11 +127,17 @@ async def generate_from_pack(
     run_date: str,
     escalate_rejects: bool = False,
     opus_model: str = "claude-opus-4-7",
+    skip_url_check: bool = False,
 ) -> dict:
     """Run the end-to-end bench generation. Returns a summary dict.
 
     Never raises on an empty-scenarios outcome (valid result for sparse
-    packs); does raise BenchGeneratorPreconditionError on missing inputs."""
+    packs); does raise BenchGeneratorPreconditionError on missing inputs.
+
+    `skip_url_check`, when True, disables V6 — the post-validation HTTP
+    fetch of every accepted scenario's source_url. Useful for offline
+    runs or unit tests; production runs should leave it False so cross-
+    source contamination gets caught."""
     pack_dir = memory_root / device_slug
     raw_dump, rules_json, registry_json, graph, attributions = _load_pack(pack_dir)
 
@@ -160,7 +166,30 @@ async def generate_from_pack(
     drafts = payload.scenarios
     n_proposed = len(drafts)
 
-    accepted_drafts, rejects = run_all(drafts, graph, registry, attributions)
+    # V6 — pre-fetch every URL cited by a draft before running the
+    # validator chain so the synchronous run_all can do a literal
+    # refdes-in-content check without async plumbing. Each URL is
+    # fetched at most once per run.
+    url_texts: dict[str, str | None] | None = None
+    if not skip_url_check and drafts:
+        from api.pipeline.bench_generator.source_fetch import (
+            clear_cache as _clear_fetch_cache,
+        )
+        from api.pipeline.bench_generator.source_fetch import fetch_many
+
+        _clear_fetch_cache()
+        urls = {d.source_url for d in drafts}
+        logger.info("[bench_generator] V6 pre-fetch · n_urls=%d", len(urls))
+        url_texts = await fetch_many(urls)
+        n_unreachable = sum(1 for v in url_texts.values() if v is None)
+        if n_unreachable:
+            logger.warning(
+                "[bench_generator] V6 unreachable URLs=%d / %d (will be soft-rejected)",
+                n_unreachable,
+                len(urls),
+            )
+
+    accepted_drafts, rejects = run_all(drafts, graph, registry, attributions, url_texts)
 
     if escalate_rejects and rejects:
         rescued, rejects = await rescue_with_opus(
@@ -170,7 +199,9 @@ async def generate_from_pack(
             graph=graph,
         )
         if rescued:
-            accepted_again, more_rejects = run_all(rescued, graph, registry)
+            accepted_again, more_rejects = run_all(
+                rescued, graph, registry, attributions, url_texts
+            )
             accepted_drafts.extend(accepted_again)
             rejects.extend(more_rejects)
 

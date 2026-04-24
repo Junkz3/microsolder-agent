@@ -89,6 +89,7 @@ async def test_end_to_end_writes_six_files(pack_dir, toy_graph, sample_draft, tm
         output_dir=out_dir,
         latest_path=out_dir / "_latest.json",
         run_date="2026-04-24",
+        skip_url_check=True,
     )
     # Files on disk
     assert (out_dir / "toy-board-2026-04-24.jsonl").exists()
@@ -131,6 +132,7 @@ async def test_end_to_end_mixed_batch(pack_dir, toy_graph, sample_draft, tmp_pat
         output_dir=out_dir,
         latest_path=out_dir / "_latest.json",
         run_date="2026-04-24",
+        skip_url_check=True,
     )
     assert result["n_accepted"] == 1
     assert result["n_rejected"] == 2
