@@ -642,6 +642,45 @@ def test_failure_open_on_series_resistor_kills_consumer(graph_with_series_r):
     assert final.components.get("U12") == "dead"
 
 
+def test_cascade_populates_for_shorted_failure(graph_with_phase):
+    """Failure(mode='shorted') on the source IC must register downstream
+    consumers + the rail itself in cascade aggregates, not only the
+    self.killed-driven set. Downstream callers (bridge, tool, endpoint,
+    evaluator) read these aggregate fields to decide what's affected.
+    """
+    # Give U7 pins so the shorted branch can identify the touched rail.
+    graph_with_phase.components["U7"].pins = [
+        PagePin(number="1", role="power_in", net_label="VIN"),
+        PagePin(number="2", role="power_out", net_label="+5V"),
+    ]
+    engine = SimulationEngine(
+        graph_with_phase,
+        failures=[Failure(refdes="U7", mode="shorted")],
+    )
+    timeline = engine.run()
+    assert "+5V" in timeline.cascade_dead_rails
+    assert "U12" in timeline.cascade_dead_components
+
+
+def test_cascade_populates_for_regulating_low_uvlo(graph_with_phase):
+    """Failure(mode='regulating_low', voltage_pct=0.3) below TOLERANCE_UVLO
+    drives consumers dead and must register them in cascade aggregates.
+    The rail is technically 'degraded' but at 0.3 < 0.5 UVLO it can't
+    power anything, so its consumers cascade as dead.
+    """
+    engine = SimulationEngine(
+        graph_with_phase,
+        failures=[Failure(refdes="U7", mode="regulating_low", voltage_pct=0.3)],
+    )
+    timeline = engine.run()
+    # U12 starves at 30 % of nominal — its activation pass marked it dead.
+    # The cascade aggregates must reflect that.
+    assert "U12" in timeline.cascade_dead_components
+    # The rail itself is below UVLO — for cascade purposes it's effectively
+    # dead even though its `state` is 'degraded'.
+    assert "+5V" in timeline.cascade_dead_rails
+
+
 def test_failure_open_on_series_resistor_spares_upstream_consumer(
     graph_upstream_and_downstream_of_r5,
 ):

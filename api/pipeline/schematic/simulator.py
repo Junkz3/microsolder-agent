@@ -223,7 +223,7 @@ class SimulationEngine:
                 blocked_reason=None,
             ))
 
-        cascade_components, cascade_rails = self._cascade(rails, components)
+        cascade_components, cascade_rails = self._cascade(rails, components, rail_voltage)
         verdict: FinalVerdict
         if blocked_at is not None:
             verdict = "blocked"
@@ -511,23 +511,39 @@ class SimulationEngine:
         self,
         rails: dict[str, RailState],
         components: dict[str, ComponentState],
+        rail_voltage: dict[str, float],
     ) -> tuple[list[str], list[str]]:
         """Compute dead components + dead rails with one transitive rail pass.
 
         Semantics:
-          1. `dead_components` = `self.killed` plus every component whose
+          1. `effective_dead` = `self.killed` ∪ every component whose
+             post-failure-application state is already 'dead' (shorted ICs
+             marking their own rails, open-mode passive kills, regulating_low
+             UVLO consequences propagated by `_activate_components`). This
+             unions the by-construction kills with the cause-driven kills so
+             cascade aggregates reflect the full failure surface.
+          2. `dead_components` = `effective_dead` plus every component whose
              `power_in` pin sits on a rail whose original source is in
-             `self.killed`.
-          2. `dead_rails` = every rail whose source is dead after step 1
-             (the transitive pass — picks up rails sourced by an IC that
-             was itself killed by losing its power input).
+             `effective_dead`.
+          3. `dead_rails` = every rail whose source is dead after step 2,
+             plus every final-state rail that is `shorted` or that is
+             `degraded` with a voltage below TOLERANCE_UVLO (its consumers
+             cannot power on, so for cascade purposes the rail itself is dead).
+          4. `dead_components` is then extended to include consumers of the
+             dead rails — closes the "if a rail is dead its consumers are too"
+             invariant in a single linear pass.
 
-        The old `_cascade` stopped at step 1. The Phase 1 hypothesize
-        `_simulate_failure("shorted", ...)` path added step 2 as a local
-        patch; lifting it here makes every caller benefit without changing
-        hot-path performance — both steps are a single linear pass.
+        Downstream callers (bridge, tool, endpoint, evaluator) read
+        `cascade_dead_*` to decide what's affected; relying only on
+        `self.killed` previously hid every cause-driven failure.
         """
-        dead_components: set[str] = set(self.killed)
+        # Step 1 — fold post-failure dead state into the kill set.
+        effective_dead: set[str] = set(self.killed) | {
+            refdes for refdes, state in components.items() if state == "dead"
+        }
+
+        # Step 2 — propagate to consumers of rails sourced by an effective-dead IC.
+        dead_components: set[str] = set(effective_dead)
         for refdes, comp in self.electrical.components.items():
             if refdes in dead_components:
                 continue
@@ -539,21 +555,32 @@ class SimulationEngine:
             if any(
                 rails.get(n) != "stable"
                 and self.electrical.power_rails.get(n) is not None
-                and self.electrical.power_rails[n].source_refdes in self.killed
+                and self.electrical.power_rails[n].source_refdes in effective_dead
                 for n in ins
             ):
                 dead_components.add(refdes)
 
+        # Step 3 — dead rails: source dead, OR rail itself is shorted, OR
+        # degraded with explicit voltage under the UVLO threshold (consumers
+        # can't run on it). A degraded rail without a voltage entry is
+        # treated as "near nominal" and not UVLO-cascaded.
         dead_rails: set[str] = set()
         for label, rail in self.electrical.power_rails.items():
-            if rails.get(label) == "stable":
+            final_state = rails.get(label)
+            if final_state == "stable":
                 continue
             if rail.source_refdes and rail.source_refdes in dead_components:
                 dead_rails.add(label)
+                continue
+            if final_state == "shorted":
+                dead_rails.add(label)
+                continue
+            if final_state == "degraded":
+                voltage = rail_voltage.get(label)
+                if voltage is not None and voltage < TOLERANCE_UVLO:
+                    dead_rails.add(label)
 
-        # Extend dead_components to consumers of the transitively-dead rails.
-        # Keeps the caller-visible invariant "if a rail is dead, its consumers
-        # can't power on" without looping to fixpoint — still a linear pass.
+        # Step 4 — extend dead_components to consumers of any dead rail.
         for refdes, comp in self.electrical.components.items():
             if refdes in dead_components:
                 continue
