@@ -308,8 +308,8 @@ def _upgrade_rails_from_classification(
 
 async def _run_boot_analyzer(electrical, client, output_dir: Path) -> bool:
     """Run the Opus boot analyzer and persist. Returns True on success."""
-    from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence  # lazy: module is optional WIP on evolve
     try:
+        from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence  # lazy: module is optional WIP on evolve
         analyzed = await analyze_boot_sequence(electrical, client=client)
         (output_dir / "boot_sequence_analyzed.json").write_text(
             analyzed.model_dump_json(indent=2)

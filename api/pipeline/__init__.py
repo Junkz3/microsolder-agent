@@ -1010,7 +1010,6 @@ async def get_pack_schematic(device_slug: str) -> dict:
 
 async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> None:
     """Background task — load the electrical graph, run Opus, persist analyzer output."""
-    from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence  # lazy: module is optional WIP on evolve
     t0 = time.monotonic()
     graph_path = pack_dir / "electrical_graph.json"
     try:
@@ -1021,6 +1020,7 @@ async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> 
     _s = get_settings()
     client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
+        from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence  # lazy: module is optional WIP on evolve
         analyzed = await analyze_boot_sequence(graph, client=client)
         (pack_dir / "boot_sequence_analyzed.json").write_text(analyzed.model_dump_json(indent=2))
         logger.info(
