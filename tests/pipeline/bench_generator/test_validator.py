@@ -202,3 +202,47 @@ def test_v4_accepts_open_on_series_r(sample_draft, toy_graph):
     d.cause = Cause(refdes="R200", mode="open")  # role = series
     rej = check_pertinence(d, toy_graph)
     assert rej is None
+
+
+from api.pipeline.bench_generator.validator import run_all
+
+
+def test_run_all_accepts_clean_draft(sample_draft, toy_graph):
+    accepted, rejected = run_all([sample_draft], toy_graph)
+    assert [d.local_id for d in accepted] == ["c19-short"]
+    assert rejected == []
+
+
+def test_run_all_partitions_mixed_batch(sample_draft, toy_graph):
+    good = sample_draft
+    bad_topology = sample_draft.model_copy(deep=True)
+    bad_topology.local_id = "bad-topo"
+    bad_topology.cause = Cause(refdes="XZ999", mode="shorted")
+    bad_topology.evidence = [
+        EvidenceSpan(field="cause.refdes", source_quote_substring="C19",
+                     reasoning="stale but literal"),
+        EvidenceSpan(field="cause.mode", source_quote_substring="short",
+                     reasoning="literal"),
+    ]
+    bad_topology.expected_dead_rails = []
+
+    accepted, rejected = run_all([good, bad_topology], toy_graph)
+    assert [d.local_id for d in accepted] == ["c19-short"]
+    assert [r.motive for r in rejected] == ["refdes_not_in_graph"]
+
+
+def test_run_all_short_circuits_per_draft(sample_draft, toy_graph):
+    """A draft that fails V2 should not also generate a V3 rejection — only
+    the first motive is reported."""
+    bad = sample_draft.model_copy(deep=True)
+    bad.local_id = "bad-both"
+    bad.evidence[0] = EvidenceSpan(
+        field="cause.refdes",
+        source_quote_substring="NOT IN QUOTE",
+        reasoning="wrong",
+    )
+    bad.cause = Cause(refdes="XZ999", mode="shorted")
+    accepted, rejected = run_all([bad], toy_graph)
+    assert accepted == []
+    assert len(rejected) == 1
+    assert rejected[0].motive == "evidence_span_not_literal"

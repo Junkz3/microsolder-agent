@@ -234,3 +234,32 @@ def check_pertinence(
                 f"resistor {refdes} role={role!r} — open produces no cascade"
             )
     return None
+
+
+def run_all(
+    drafts: list[ProposedScenarioDraft],
+    graph: ElectricalGraph,
+) -> tuple[list[ProposedScenarioDraft], list[Rejection]]:
+    """V1 → V2 → V3 → V4 (per draft, short-circuit on first failure) then
+    V5 dedup over the survivors."""
+    survivors: list[ProposedScenarioDraft] = []
+    rejected: list[Rejection] = []
+    for draft in drafts:
+        for check in (check_sanity, check_grounding):
+            rej = check(draft)
+            if rej is not None:
+                rejected.append(rej)
+                break
+        else:
+            rej = check_topology(draft, graph)
+            if rej is not None:
+                rejected.append(rej)
+                continue
+            rej = check_pertinence(draft, graph)
+            if rej is not None:
+                rejected.append(rej)
+                continue
+            survivors.append(draft)
+    deduped, dup_rejects = check_duplicates(survivors)
+    rejected.extend(dup_rejects)
+    return deduped, rejected
