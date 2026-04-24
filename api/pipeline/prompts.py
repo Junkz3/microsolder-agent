@@ -244,6 +244,37 @@ Component / signal rules:
 - For signals, capture `nominal_voltage` in volts when the sources state it
   (PP1V8 → 1.8, PP3V0 → 3.0, VCC_MAIN → 3.7–4.4 typical).
 - Do not invent components or signals that aren't present in the dump.
+
+REFDES CANDIDATES — when an ElectricalGraph is provided in the user message:
+
+Some Registry Builder invocations include a "# Provided ElectricalGraph"
+section AFTER the raw dump. When present, you MAY emit `refdes_candidates`
+on a registry component, listing graph refdes that match the canonical
+name. Each candidate carries `{refdes, confidence, evidence}`.
+
+- An entry is only legitimate when ONE of these holds:
+  (a) The dump literally cites the refdes for this canonical (e.g.
+      "the LM2677 buck (U7) failed open" → `{refdes: "U7", evidence:
+      "dump quote 'the LM2677 buck (U7) failed open' ties LM2677 to U7"}`).
+  (b) The graph's MPN field for that refdes matches a part the dump
+      describes by MPN (e.g. canonical "main PMIC" + dump quote "the
+      LM2677 SIMPLE SWITCHER" + graph U7.value.mpn=LM2677SX-5 →
+      `{refdes: "U7", evidence: "graph MPN LM2677SX-5 matches dump MPN
+      LM2677"}`).
+  (c) The canonical name itself is exactly the refdes printed in the
+      graph (e.g. canonical "U7" → `{refdes: "U7", evidence: "exact
+      refdes match"}`).
+- Do NOT emit candidates inferred only from rail-name overlap or
+  topology — that is the bench generator's heuristic, not the
+  registry's job. The registry's role here is to capture ONLY mappings
+  that an external source or an MPN match supports.
+- `confidence` should reflect the strength of the evidence:
+  ~0.95 for direct dump-cited refdes, ~0.85 for MPN match, ~0.99 for
+  exact refdes match. Lower if the evidence is weaker.
+- When no candidate is justified for a canonical → leave `refdes_candidates`
+  null. Do not include an empty list.
+- When no graph is provided in the user message → ignore this section
+  entirely; never invent the field.
 """
 
 
