@@ -199,6 +199,49 @@ def test_compare_measurements_insufficient_returns_none(tmp_path: Path):
     assert diff is None  # only one measurement — no before/after
 
 
+def test_rail_nominal_voltage_with_standby_note_classifies_stuck_on():
+    """+3V3 at 3.28V with note='en veille' → stuck_on (rail alimenté quand
+    il devrait être off)."""
+    assert auto_classify(
+        target="rail:+3V3", value=3.28, unit="V", nominal=3.3,
+        note="tech en veille, board éteint",
+    ) == "stuck_on"
+
+
+def test_rail_nominal_voltage_with_standby_keywords():
+    """Test various standby-like keywords trigger stuck_on classification."""
+    # English variants
+    assert auto_classify(
+        target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="standby"
+    ) == "stuck_on"
+    assert auto_classify(
+        target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="off"
+    ) == "stuck_on"
+    assert auto_classify(
+        target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="sleep"
+    ) == "stuck_on"
+    # French variants
+    assert auto_classify(
+        target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="veille"
+    ) == "stuck_on"
+    assert auto_classify(
+        target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="éteint"
+    ) == "stuck_on"
+    assert auto_classify(
+        target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="eteint"
+    ) == "stuck_on"
+
+
+def test_rail_nominal_voltage_without_standby_note_classifies_alive():
+    """Sanity — no standby hint, nominal voltage stays alive."""
+    assert auto_classify(
+        target="rail:+3V3", value=3.28, unit="V", nominal=3.3, note=None
+    ) == "alive"
+    assert auto_classify(
+        target="rail:+3V3", value=3.28, unit="V", nominal=3.3, note="after reflow"
+    ) == "alive"
+
+
 def test_end_to_end_journal_drives_hypothesize(tmp_path: Path):
     """
     Tech records +3V3 dead (0.02V) + +5V alive (5.0V).

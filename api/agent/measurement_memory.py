@@ -113,6 +113,14 @@ def auto_classify(
         if ratio > CLASSIFY_RAIL_ALIVE_HIGH:
             return "shorted"   # overvoltage folded into shorted for Phase 1
         if ratio >= CLASSIFY_RAIL_ALIVE_LOW:
+            # Phase 4.5: if voltage is nominal but the tech's note implies the rail
+            # SHOULD be off (standby/veille/sleep), promote to stuck_on.
+            if note:
+                note_lower = note.lower()
+                STANDBY_TOKENS = ("veille", "standby", "off", "power_off", "sleep",
+                                   "éteint", "eteint", "capot fermé", "lid closed")
+                if any(tok in note_lower for tok in STANDBY_TOKENS):
+                    return "stuck_on"
             return "alive"
         if ratio >= CLASSIFY_RAIL_ANOMALOUS_LOW:
             return "anomalous"
