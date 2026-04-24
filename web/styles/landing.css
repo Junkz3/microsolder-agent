@@ -1,0 +1,148 @@
+/* Landing hero — visible when body has class .show-landing.
+ * Pure presentation: visibility is driven by JS toggling the body class.
+ * Reuses tokens.css; introduces no new colors. */
+
+.landing[hidden] { display: none !important; }
+
+.landing {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--bg-deep);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.landing-bg {
+  position: absolute;
+  inset: -10%;
+  background:
+    radial-gradient(ellipse at 30% 30%, rgba(125, 211, 252, 0.10), transparent 55%),
+    radial-gradient(ellipse at 70% 60%, rgba(167, 139, 250, 0.06), transparent 55%),
+    var(--bg-deep);
+  filter: blur(40px);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.landing-hero {
+  position: relative;
+  width: min(640px, 92vw);
+  padding: 32px;
+  text-align: center;
+  animation: landing-rise .35s cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes landing-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.landing-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  margin-bottom: 32px;
+}
+
+.landing-mark svg { color: var(--cyan); }
+
+.landing-title {
+  font-family: 'Inter', sans-serif;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+  margin: 0 0 12px 0;
+  letter-spacing: -0.5px;
+}
+
+.landing-sub {
+  font-size: 15px;
+  color: var(--text-2);
+  margin: 0 0 32px 0;
+}
+
+.landing-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.landing-input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 15px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  font-family: inherit;
+  transition: border-color .15s, background .15s;
+}
+
+.landing-input:focus {
+  outline: none;
+  border-color: var(--border-hover);
+  background: var(--panel-2);
+}
+
+.landing-input::placeholder { color: var(--text-3); }
+
+.landing-submit {
+  background: var(--cyan);
+  color: var(--bg-deep);
+  border: none;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 0 20px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: filter .15s, transform .05s;
+  font-family: inherit;
+}
+
+.landing-submit:hover { filter: brightness(1.1); }
+.landing-submit:active { transform: translateY(1px); }
+.landing-submit:disabled { opacity: 0.5; cursor: progress; }
+
+.landing-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.landing-chip {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s, background .15s, color .15s;
+}
+
+.landing-chip:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  background: var(--panel);
+}
+
+.landing-status {
+  font-size: 12px;
+  color: var(--text-3);
+  min-height: 18px;
+}
+
+.landing-status.error { color: #f87171; }
