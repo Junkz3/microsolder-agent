@@ -60,9 +60,10 @@ while true; do
     --dangerously-skip-permissions \
     --max-turns 100 \
     --system-prompt-file "$SKILL_FILE" \
-    >> "$LOGFILE" 2>&1 || true
+    >> "$LOGFILE" 2>&1
+  CLAUDE_EXIT=$?
 
-  echo "=== EVOLVE EXIT $(date) (exit=$?) ===" >> "$LOGFILE"
+  echo "=== EVOLVE EXIT $(date) (exit=$CLAUDE_EXIT) ===" >> "$LOGFILE"
   rm -f "$LOCKFILE"
 
   sleep "$INTERVAL"
