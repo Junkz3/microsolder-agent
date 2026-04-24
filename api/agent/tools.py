@@ -144,7 +144,7 @@ def mb_get_component(
     if session is not None:
         session.component_cache[cache_key] = result
         session.component_cache.move_to_end(cache_key)
-        while len(session.component_cache) > SessionState.COMPONENT_CACHE_MAX:
+        if len(session.component_cache) > SessionState.COMPONENT_CACHE_MAX:
             session.component_cache.popitem(last=False)
 
     return result

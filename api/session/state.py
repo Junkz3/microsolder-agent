@@ -55,8 +55,17 @@ class SessionState:
     COMPONENT_CACHE_MAX: ClassVar[int] = 64
 
     def invalidate_pack_cache(self, device_slug: str) -> None:
-        """Drop the cached pack for `device_slug`. Called after mb_expand_knowledge."""
+        """Drop the cached pack AND all derived component results for `device_slug`.
+
+        Called after `mb_expand_knowledge` mutates the on-disk pack: both the
+        pack JSON cache (pack_cache) and the per-refdes summary cache
+        (component_cache, whose values embed registry/dictionary fields pulled
+        from the pack) must be purged to avoid serving stale lookups.
+        """
         self.pack_cache.pop(device_slug, None)
+        stale_keys = [k for k in self.component_cache if k[0] == device_slug]
+        for k in stale_keys:
+            del self.component_cache[k]
 
     def set_board(self, board: Board) -> None:
         """Load a new board and reset all view state."""

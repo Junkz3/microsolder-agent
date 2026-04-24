@@ -151,3 +151,100 @@ def test_mb_get_component_lru_skips_pack_reload(tmp_path: Path, monkeypatch):
 
     # R1 means the second call hits cached pack; R2 means it never invokes _load_pack at all.
     assert len(calls) == 1, f"expected 1 _load_pack call, got {len(calls)}"
+
+
+def test_mb_get_component_lru_evicts_oldest_when_full(tmp_path: Path):
+    """Exceeding COMPONENT_CACHE_MAX entries must evict the oldest (LRU) entry."""
+    from api.session.state import SessionState
+    from api.agent.tools import mb_get_component
+
+    slug = "demo"
+    pack_dir = tmp_path / slug
+    pack_dir.mkdir()
+    # Build a registry with enough refdes to force eviction.
+    cap = SessionState.COMPONENT_CACHE_MAX
+    components = [
+        {"canonical_name": f"U{i}", "kind": "ic"} for i in range(cap + 2)
+    ]
+    (pack_dir / "registry.json").write_text(
+        '{"components": ' + str(components).replace("'", '"') + ', "signals": []}'
+    )
+    (pack_dir / "dictionary.json").write_text('{"entries": []}')
+    (pack_dir / "rules.json").write_text('{"rules": []}')
+
+    session = SessionState()
+    # Fill the cache exactly to cap — oldest entry is U0.
+    for i in range(cap):
+        mb_get_component(
+            device_slug=slug, refdes=f"U{i}", memory_root=tmp_path, session=session,
+        )
+    assert len(session.component_cache) == cap
+    assert (slug, "U0") in session.component_cache
+
+    # One more query past the cap — U0 (oldest) must be evicted.
+    mb_get_component(
+        device_slug=slug, refdes=f"U{cap}", memory_root=tmp_path, session=session,
+    )
+    assert len(session.component_cache) == cap
+    assert (slug, "U0") not in session.component_cache
+    assert (slug, f"U{cap}") in session.component_cache
+
+
+def test_mb_get_component_caches_not_found(tmp_path: Path, monkeypatch):
+    """Not-found results must also be cached — second query for unknown refdes skips _load_pack."""
+    from api.session.state import SessionState
+    from api.agent.tools import mb_get_component
+    from api.agent import tools as tools_mod
+
+    slug = "demo"
+    pack_dir = tmp_path / slug
+    pack_dir.mkdir()
+    (pack_dir / "registry.json").write_text('{"components": [], "signals": []}')
+    (pack_dir / "dictionary.json").write_text('{"entries": []}')
+    (pack_dir / "rules.json").write_text('{"rules": []}')
+
+    calls: list[str] = []
+    orig_load_pack = tools_mod._load_pack
+    def spy(slug_arg, root, session=None):
+        calls.append(slug_arg)
+        return orig_load_pack(slug_arg, root, session=session)
+    monkeypatch.setattr(tools_mod, "_load_pack", spy)
+
+    session = SessionState()
+    first = mb_get_component(
+        device_slug=slug, refdes="U999", memory_root=tmp_path, session=session,
+    )
+    assert first["found"] is False
+
+    second = mb_get_component(
+        device_slug=slug, refdes="U999", memory_root=tmp_path, session=session,
+    )
+    assert second["found"] is False
+    assert len(calls) == 1, f"expected 1 _load_pack call (first lookup), got {len(calls)}"
+
+
+def test_invalidate_pack_cache_drops_component_entries(tmp_path: Path):
+    """After invalidate_pack_cache, no component_cache entry for that slug survives."""
+    from api.session.state import SessionState
+    from api.agent.tools import mb_get_component
+
+    slug = "demo"
+    pack_dir = tmp_path / slug
+    pack_dir.mkdir()
+    (pack_dir / "registry.json").write_text(
+        '{"components": [{"canonical_name": "U1", "kind": "ic"}], "signals": []}'
+    )
+    (pack_dir / "dictionary.json").write_text('{"entries": []}')
+    (pack_dir / "rules.json").write_text('{"rules": []}')
+
+    session = SessionState()
+    mb_get_component(device_slug=slug, refdes="U1", memory_root=tmp_path, session=session)
+    mb_get_component(device_slug=slug, refdes="U2", memory_root=tmp_path, session=session)
+    assert (slug, "U1") in session.component_cache
+    assert (slug, "U2") in session.component_cache
+
+    session.invalidate_pack_cache(slug)
+
+    assert slug not in session.pack_cache
+    assert (slug, "U1") not in session.component_cache
+    assert (slug, "U2") not in session.component_cache
