@@ -31,6 +31,7 @@ from api.agent.chat_history import (
     build_session_intro,
     ensure_conversation,
     list_conversations,
+    load_events,
     load_ma_session_id,
     save_ma_session_id,
     touch_conversation,
@@ -101,32 +102,44 @@ _SUMMARY_SYSTEM = (
 )
 
 
-async def _summarize_prior_history_for_resume(
-    *,
-    client: AsyncAnthropic,
-    old_session_id: str,
-    cap: int = 150,
-) -> dict[str, Any] | None:
-    """Summarize a dying MA session's transcript via Haiku for graceful recovery.
+_INTRO_MARKERS = (
+    "[Nouvelle session de diagnostic]",
+    "[CONTEXTE TECHNICIEN]",
+    "[REPRISE DE CONVERSATION",
+)
 
-    Reads events from `old_session_id` (which is still retrievable even after
-    the agent that ran it has been archived), collects user / agent / tool
-    lines, caps to the last `cap` turns, and hands the transcript to Haiku.
-    Returns `{summary, usage}` or `None` on any failure (missing SDK surface,
-    empty history, Haiku error, etc.).
 
-    Local chat_history.jsonl is NOT read here — in MANAGED mode the history
-    lives server-side on Anthropic, not on disk, so we pull it straight from
-    the source.
+def _strip_intro_wrapper(text: str) -> str | None:
+    """Drop the hidden bootstrap prefix prepended to the first real user turn.
+
+    Returns the trailing real-user portion, or None if the whole message was
+    intro (so the summary caller skips it entirely).
     """
-    if not old_session_id:
+    if not text.startswith(_INTRO_MARKERS):
+        return text
+    marker = "\n\n---\n\n"
+    idx = text.rfind(marker)
+    if idx < 0:
         return None
+    tail = text[idx + len(marker):].strip()
+    return tail or None
 
+
+async def _collect_ma_transcript_lines(
+    client: AsyncAnthropic, old_session_id: str
+) -> list[str] | None:
+    """Pull the MA session transcript and render it as Haiku-friendly lines.
+
+    Returns `None` when the SDK lacks `events.list`, when the API call blows
+    up, or when the session has no events yet. Returns an empty list only if
+    every collected event was filtered out (e.g. only intro messages) — the
+    caller treats that like None for the fallback decision.
+    """
     try:
         events_iter = client.beta.sessions.events.list(old_session_id)
     except AttributeError:
         logger.warning(
-            "[Diag-MA] _summarize: SDK has no beta.sessions.events.list — skipping"
+            "[Diag-MA] _summarize: SDK has no beta.sessions.events.list — skipping MA path"
         )
         return None
     except Exception as exc:  # noqa: BLE001
@@ -158,16 +171,8 @@ async def _summarize_prior_history_for_resume(
             for block in getattr(event, "content", None) or []:
                 if getattr(block, "type", None) != "text":
                     continue
-                text = getattr(block, "text", "") or ""
-                if text.startswith(
-                    ("[Nouvelle session de diagnostic]", "[CONTEXTE TECHNICIEN]", "[REPRISE DE CONVERSATION")
-                ):
-                    marker = "\n\n---\n\n"
-                    idx = text.rfind(marker)
-                    if idx >= 0:
-                        text = text[idx + len(marker):].strip()
-                    else:
-                        continue
+                raw = getattr(block, "text", "") or ""
+                text = _strip_intro_wrapper(raw)
                 if text:
                     lines.append(f"[user] {text[:300]}")
         elif etype == "agent.message":
@@ -190,11 +195,82 @@ async def _summarize_prior_history_for_resume(
             if snippet:
                 lines.append(f"[tool_result] → {snippet}")
 
-    if len(lines) > cap:
-        lines = lines[-cap:]
-    if not lines:
+    return lines
+
+
+def _collect_jsonl_transcript_lines(
+    *,
+    device_slug: str,
+    repair_id: str,
+    conv_id: str,
+    memory_root: Path | None = None,
+) -> list[str] | None:
+    """Render lines from the local Anthropic-shaped JSONL chat history.
+
+    This is the on-disk backup used when the MA session is gone and the
+    server-side event list can no longer rebuild the transcript (e.g. past
+    the 30-day checkpoint window, or during an Anthropic outage). Returns
+    `None` when there is no JSONL on disk, an empty list when every record
+    was filtered out.
+    """
+    events = load_events(
+        device_slug=device_slug,
+        repair_id=repair_id,
+        conv_id=conv_id,
+        memory_root=memory_root,
+    )
+    if not events:
         return None
 
+    lines: list[str] = []
+    for event in events:
+        role = event.get("role")
+        content = event.get("content")
+        if role == "user":
+            if isinstance(content, str):
+                text = _strip_intro_wrapper(content)
+                if text:
+                    lines.append(f"[user] {text[:300]}")
+                continue
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type")
+                    if btype == "text":
+                        text = _strip_intro_wrapper(block.get("text", "") or "")
+                        if text:
+                            lines.append(f"[user] {text[:300]}")
+                    elif btype == "tool_result":
+                        raw = block.get("content")
+                        snippet = str(raw)[:300] if raw is not None else ""
+                        if snippet:
+                            lines.append(f"[tool_result] → {snippet}")
+        elif role == "assistant" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    text = block.get("text", "") or ""
+                    if text:
+                        lines.append(f"[agent] {text[:300]}")
+                elif btype == "tool_use":
+                    name = block.get("name") or "?"
+                    inp = block.get("input") or {}
+                    try:
+                        inp_str = json.dumps(inp)
+                    except (TypeError, ValueError):
+                        inp_str = str(inp)
+                    lines.append(f"[tool] {name}({inp_str[:200]})")
+
+    return lines
+
+
+async def _haiku_summarize_lines(
+    client: AsyncAnthropic, lines: list[str]
+) -> dict[str, Any] | None:
+    """Run the Haiku note-taker on a rendered transcript, return `{summary, usage}`."""
     transcript = "\n".join(lines)
     try:
         response = await client.messages.create(
@@ -203,23 +279,73 @@ async def _summarize_prior_history_for_resume(
             system=_SUMMARY_SYSTEM,
             messages=[{"role": "user", "content": transcript}],
         )
-        summary_text = ""
-        for block in response.content:
-            if getattr(block, "type", None) == "text":
-                summary_text = getattr(block, "text", "") or ""
-                break
-        if not summary_text:
-            return None
-        return {
-            "summary": summary_text,
-            "usage": {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            },
-        }
     except Exception as exc:  # noqa: BLE001
         logger.warning("[Diag-MA] _summarize: Haiku call failed: %s", exc)
         return None
+    summary_text = ""
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            summary_text = getattr(block, "text", "") or ""
+            break
+    if not summary_text:
+        return None
+    return {
+        "summary": summary_text,
+        "usage": {
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        },
+    }
+
+
+async def _summarize_prior_history_for_resume(
+    *,
+    client: AsyncAnthropic,
+    old_session_id: str | None,
+    device_slug: str | None = None,
+    repair_id: str | None = None,
+    conv_id: str | None = None,
+    memory_root: Path | None = None,
+    cap: int = 150,
+) -> dict[str, Any] | None:
+    """Build a Haiku recap of a dying conversation for graceful resume.
+
+    Primary source is the MA session's server-side event stream (still
+    retrievable even after its owning agent has been archived). When that
+    returns nothing — SDK missing the surface, API error, empty history,
+    or the 30-day checkpoint has expired — we fall back to the local
+    JSONL (`messages.jsonl`) which is appended live during every managed
+    session. That fallback is the reason the JSONL keeps being written
+    even though the happy path never reads it.
+
+    Returns `{summary, usage}` or `None` if neither source yielded any
+    content (or Haiku itself failed).
+    """
+    lines: list[str] | None = None
+    if old_session_id:
+        lines = await _collect_ma_transcript_lines(client, old_session_id)
+
+    # `not lines` deliberately conflates None with [] — an empty list means MA
+    # had events but they were all filtered (intro-only), which is semantically
+    # "no usable content" and should trigger the on-disk fallback too.
+    if not lines and repair_id and conv_id and device_slug:
+        lines = _collect_jsonl_transcript_lines(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            memory_root=memory_root,
+        )
+        logger.info(
+            "[Diag-MA] MA events empty for session=%s — fell back to JSONL "
+            "(repair=%s conv=%s, lines=%d)",
+            old_session_id, repair_id, conv_id, len(lines or []),
+        )
+
+    if not lines:
+        return None
+    if len(lines) > cap:
+        lines = lines[-cap:]
+    return await _haiku_summarize_lines(client, lines)
 
 
 async def _dispatch_tool(
@@ -473,10 +599,15 @@ async def run_diagnostic_session_managed(
     on that tier's agent. No in-session swap: by design, tier choice is explicit
     and the user starts a new conversation when changing it.
 
-    `repair_id` is accepted for signature parity with runtime_direct but MA
-    sessions already persist conversation state natively server-side; when the
-    chat_history_backend flag flips to 'managed_agents', we'll map repair_id
-    to an MA session_id here and skip the JSONL layer entirely.
+    MA persists the full event stream server-side, so the happy-path replay
+    on resume pulls from `client.beta.sessions.events.list(sid)` rather than
+    from the local JSONL. The JSONL under `memory/{slug}/repairs/{repair_id}/
+    conversations/{conv}/messages.jsonl` is still written live as an on-disk
+    mirror, and `_summarize_prior_history_for_resume` falls back to it when
+    the MA event stream returns nothing (checkpoint expired after 30 d idle,
+    Anthropic outage, etc.). That fallback is the reason JSONL keeps being
+    written — the technician's repair history survives even if the managed
+    session is gone.
     """
     settings = get_settings()
     if not settings.anthropic_api_key:
@@ -607,6 +738,10 @@ async def run_diagnostic_session_managed(
             recovery_summary = await _summarize_prior_history_for_resume(
                 client=client,
                 old_session_id=reused_session_id,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+                memory_root=memory_root,
             )
         try:
             session = await client.beta.sessions.create(**session_kwargs)
