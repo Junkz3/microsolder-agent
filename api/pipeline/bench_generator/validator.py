@@ -155,14 +155,23 @@ def check_refdes_mentioned_in_quote(
     Accepts EITHER:
       (a) cause.refdes appears literally (case-insensitive) in source_quote.
       (b) A registry canonical_name or alias appears literally in
-          source_quote, AND cause.refdes is a plausible candidate for
-          that registry entry per `score_refdes_for_canonical` heuristic.
+          source_quote, AND cause.refdes is a legitimate candidate for
+          that registry entry. "Legitimate" means:
+          - When the registry entry carries `refdes_candidates` (Scout-
+            with-graph path), `cause.refdes` MUST appear in that list —
+            no fallback to the heuristic.
+          - Otherwise (legacy path), `cause.refdes` must satisfy the
+            deterministic `score_refdes_for_canonical` heuristic
+            (rail-overlap / refdes-token mention / kind compat).
 
     Path (b) requires both `registry` and `graph`. When either is None,
     only path (a) applies — preserving strict behaviour for test
     fixtures that don't wire a registry.
     """
-    from api.pipeline.bench_generator.prompts import score_refdes_for_canonical
+    from api.pipeline.bench_generator.prompts import (
+        _candidates_from_registry,
+        score_refdes_for_canonical,
+    )
 
     refdes = draft.cause.refdes
     quote_lc = draft.source_quote.lower()
@@ -182,6 +191,20 @@ def check_refdes_mentioned_in_quote(
             all_names = [canonical] + aliases
             if not any(n and n.lower() in quote_lc for n in all_names):
                 continue
+
+            # When the registry phase emitted refdes_candidates for this
+            # canonical, the bridge is strict — only those refdes count.
+            registry_cands = _candidates_from_registry(entry)
+            if registry_cands is not None:
+                if any(refdes == cand_refdes for _, cand_refdes, _ in registry_cands):
+                    return None
+                # Canonical cited in quote, but refdes is NOT among the
+                # registry's candidates → fall through to other entries
+                # or to the rejection. Don't fall back to the heuristic
+                # for this canonical: the registry already weighed in.
+                continue
+
+            # Legacy path — heuristic.
             scored = score_refdes_for_canonical(
                 refdes=refdes,
                 refdes_kind=refdes_kind,

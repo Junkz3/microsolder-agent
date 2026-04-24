@@ -461,3 +461,94 @@ def test_v2b_rails_strict_when_no_registry(sample_draft):
     rej = check_rails_mentioned_in_quote(d)
     assert rej is not None
     assert rej.motive == "rail_not_mentioned_in_quote"
+
+
+# Registry-supplied refdes_candidates — strict bridge (no heuristic fallback)
+
+
+def _registry_with_candidates(refdes_for_canonical: dict[str, list[str]]) -> dict:
+    """Helper: build a toy registry whose canonicals carry refdes_candidates.
+
+    `refdes_for_canonical` maps canonical_name → list of refdes the
+    Registry Builder allegedly justified as candidates."""
+    components = []
+    for canonical, refdes_list in refdes_for_canonical.items():
+        components.append(
+            {
+                "canonical_name": canonical,
+                "aliases": [],
+                "kind": "ic",
+                "description": f"sources for {canonical}",
+                "refdes_candidates": [
+                    {
+                        "refdes": r,
+                        "confidence": 0.95,
+                        "evidence": "dump quote ties canonical to refdes",
+                    }
+                    for r in refdes_list
+                ],
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "device_label": "toy-board",
+        "taxonomy": {},
+        "components": components,
+        "signals": [],
+    }
+
+
+def test_v2b_refdes_accepts_when_in_registry_candidates(sample_draft, toy_graph):
+    """Quote cites canonical 'main buck'; cause.refdes=U7 IS in
+    refdes_candidates → V2b.1 accepts via the strict registry path."""
+    registry = _registry_with_candidates({"main buck": ["U7"]})
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="U7", mode="dead")
+    d.source_quote = (
+        "The main buck failed and the regulator stopped converting input "
+        "to its programmed output voltage on this board."
+    )
+    d.expected_dead_rails = []
+    d.evidence = [
+        EvidenceSpan(
+            field="cause.refdes",
+            source_quote_substring="main buck",
+            reasoning="canonical cited",
+        ),
+        EvidenceSpan(
+            field="cause.mode",
+            source_quote_substring="failed",
+            reasoning="dead mode",
+        ),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, registry, toy_graph)
+    assert rej is None
+
+
+def test_v2b_refdes_rejects_when_not_in_registry_candidates(sample_draft, toy_graph):
+    """Same quote but cause.refdes=U13 (a different IC the heuristic WOULD
+    accept) is NOT in refdes_candidates → registry takes precedence and
+    rejects. No heuristic fallback for that canonical."""
+    registry = _registry_with_candidates({"main buck": ["U7"]})
+    d = sample_draft.model_copy(deep=True)
+    d.cause = Cause(refdes="U13", mode="dead")
+    d.source_quote = (
+        "The main buck failed and the regulator stopped converting input "
+        "to its programmed output voltage on this board."
+    )
+    d.expected_dead_rails = []
+    d.evidence = [
+        EvidenceSpan(
+            field="cause.refdes",
+            source_quote_substring="main buck",
+            reasoning="canonical cited",
+        ),
+        EvidenceSpan(
+            field="cause.mode",
+            source_quote_substring="failed",
+            reasoning="dead mode",
+        ),
+    ]
+    rej = check_refdes_mentioned_in_quote(d, registry, toy_graph)
+    assert rej is not None
+    assert rej.motive == "refdes_not_mentioned_in_quote"

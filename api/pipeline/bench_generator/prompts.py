@@ -173,10 +173,42 @@ def score_refdes_for_canonical(
     return None
 
 
+def _candidates_from_registry(entry: dict) -> list[tuple[float, str, str]] | None:
+    """Read `refdes_candidates` off a registry component, when present.
+
+    Returns a list of (confidence, refdes, evidence) tuples sorted by
+    descending confidence, or None when the entry has no candidates
+    field, an empty list, or malformed shape. None means "fall back to
+    the heuristic" — the registry didn't speak about this canonical."""
+    raw = entry.get("refdes_candidates")
+    if not raw:
+        return None
+    out: list[tuple[float, str, str]] = []
+    for cand in raw:
+        try:
+            refdes = str(cand["refdes"])
+            confidence = float(cand["confidence"])
+            evidence = str(cand["evidence"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append((confidence, refdes, evidence))
+    if not out:
+        return None
+    out.sort(key=lambda x: (-x[0], x[1]))
+    return out
+
+
 def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> str:
     """Pre-compute deterministic refdes candidates for each registry
     canonical_name. Produces a structured block for the user prompt so the
     LLM has a legitimate basis for attribution.
+
+    Source order per canonical:
+      1. `registry.components[i].refdes_candidates` when populated by the
+         Registry Builder (Scout-with-graph path) — these carry their
+         own provenance evidence and are preferred.
+      2. Else, the deterministic `score_refdes_for_canonical` heuristic
+         (legacy path: rail-overlap, refdes-token mention, kind match).
 
     Output shape (Markdown-like, human+LLM readable):
 
@@ -185,10 +217,9 @@ def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> st
           aliases: system controller, reform2_lpc, LPC, LPC MCU
           kind: ic
           description: Embedded MCU that manages power sequencing...
+          source: registry  (or 'heuristic')
           candidates:
-            - U14 (score=0.8): sources rail LPC_VCC sharing token ['lpc']
-          rail aliases for rails in expected_dead_rails evidence:
-            ...
+            - U14 (score=0.95): forum quote ties LPC to U14 in the rev 2.0 schematic
 
     Canonical entries with zero candidates are emitted as
     `candidates: (none — do not attribute scenarios to this entity)`
@@ -212,7 +243,17 @@ def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> st
             lines.append(f"  kind: {reg_kind}")
         if desc:
             lines.append(f"  description: {desc[:240]}")
-        # Score all graph refdes
+
+        # 1. Registry-provided candidates take precedence.
+        registry_cands = _candidates_from_registry(entry)
+        if registry_cands is not None:
+            lines.append("  source: registry (refdes_candidates from phase 2)")
+            lines.append("  candidates:")
+            for score, refdes, evidence in registry_cands[:5]:
+                lines.append(f"    - {refdes} (score={score:.2f}): {evidence}")
+            continue
+
+        # 2. Fallback — deterministic heuristic over the graph.
         scored: list[tuple[float, str, str]] = []
         for refdes, comp in graph.components.items():
             res = score_refdes_for_canonical(refdes, comp.kind, canonical, aliases, reg_kind, graph)
@@ -220,8 +261,10 @@ def build_functional_candidate_map(registry: dict, graph: ElectricalGraph) -> st
                 scored.append((res[0], refdes, res[1]))
         scored.sort(key=lambda x: (-x[0], x[1]))
         if not scored:
+            lines.append("  source: heuristic (rail-overlap)")
             lines.append("  candidates: (none — do not attribute scenarios to this entity)")
         else:
+            lines.append("  source: heuristic (rail-overlap)")
             lines.append("  candidates:")
             for score, refdes, reason in scored[:5]:
                 lines.append(f"    - {refdes} (score={score:.2f}): {reason}")
