@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from pathlib import Path
+
 
 @pytest.mark.asyncio
 async def test_memory_store_attached_read_only(monkeypatch, tmp_path):
@@ -15,6 +16,7 @@ async def test_memory_store_attached_read_only(monkeypatch, tmp_path):
 
     class FakeSettings:
         anthropic_api_key = "sk-test"
+        anthropic_max_retries = 5
         memory_root = str(tmp_path)
         ma_memory_store_enabled = True
     monkeypatch.setattr(rm, "get_settings", lambda: FakeSettings())
@@ -36,7 +38,7 @@ async def test_memory_store_attached_read_only(monkeypatch, tmp_path):
         sessions = FakeSessions()
     class FakeClient:
         beta = FakeBeta()
-    monkeypatch.setattr(rm, "AsyncAnthropic", lambda api_key: FakeClient())
+    monkeypatch.setattr(rm, "AsyncAnthropic", lambda **_kw: FakeClient())
 
     # Run until session create raises; we only care about the payload.
     try:
