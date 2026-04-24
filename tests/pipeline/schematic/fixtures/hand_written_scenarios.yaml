@@ -57,21 +57,16 @@ scenarios:
       expected_mode: open
     accept_in_top_n: 10
 
-  - id: mnt-reform-q-load-switch-stuck-on
-    description: |
-      The board consumes 500mA in standby even with the lid closed.
-      A USB-side filtered rail measures nominal voltage when its
-      EN is low. A load-switch MOSFET downstream has D-S shorted
-      permanently — rail stuck-on. Ground truth: any passive_q with
-      role=load_switch connected to a USB/peripheral rail.
-    device_slug: mnt-reform-motherboard
-    observations:
-      state_rails: { "USBH_3V3": "stuck_on" }
-    ground_truth_match:
-      kind: passive_q
-      role: load_switch
-      expected_mode: short
-    accept_in_top_n: 5
+  # NOTE — no load_switch stuck_on scenario for MNT Reform.
+  # MNT's single load_switch Q (Q3) gates VIN → PVIN. PVIN is labelled
+  # `domain=power_rail` in nets_classified.json with 0.95 confidence,
+  # but net_classifier output is not wired back into SchematicGraph
+  # `is_power` before compile — so electrical_graph.power_rails omits
+  # PVIN, and `_cascade_q_load_stuck_on` returns empty for Q3. A
+  # USB-gated load_switch topology (needed to use USBH_3V3 as the
+  # observation) does not exist on this board either. Revisit once a
+  # device with a USB load_switch Q lands, or after wiring nets_classified
+  # back into is_power. Synthetic corpus already covers this mode end-to-end.
 
   - id: mnt-reform-q-inrush-limiter-open
     description: |
