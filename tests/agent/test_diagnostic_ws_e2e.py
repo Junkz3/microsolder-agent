@@ -16,12 +16,15 @@ doesn't need to be set.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from api.agent.chat_history import append_event, ensure_conversation
 from api.board.model import Board, Layer, Part, Pin, Point
 from api.main import app
 from api.session.state import SessionState
@@ -301,3 +304,265 @@ def test_ws_diagnostic_bv_tool_dispatch_emits_board_event(
         tool_use = frames[tu_idx]
         assert tool_use["name"] == "bv_highlight"
         assert tool_use["input"] == {"refdes": "U7"}
+
+
+# ----------------------------------------------------------------------------
+# Managed Agents runtime — isolate the session_ready + memory-store attach
+# behavior. Mocks stop at _forward_*_to_session so we don't have to fake the
+# full MA event stream; those two tasks are proven out elsewhere.
+# ----------------------------------------------------------------------------
+
+
+def _patch_managed_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    memory_root: str,
+    api_key: str = "sk-fake",
+    memory_store_id: str | None = None,
+    board: Board | None = None,
+    created_session_id: str = "sess_test",
+) -> MagicMock:
+    """Wire api.agent.runtime_managed's dependencies to in-memory fakes.
+
+    Patches just enough that run_diagnostic_session_managed can reach its
+    session_ready emission and the intro / replay path. The two forward tasks
+    (ws↔session) are stubbed to async no-ops so the runtime unblocks and the
+    WS close handshake runs immediately.
+    """
+    import api.agent.runtime_managed as rm
+
+    monkeypatch.setenv("DIAGNOSTIC_MODE", "managed")
+    monkeypatch.setattr(rm, "get_settings", lambda: MagicMock(
+        anthropic_api_key=api_key,
+        memory_root=memory_root,
+        anthropic_max_retries=5,
+        ma_memory_store_enabled=False,
+        chat_history_backend="jsonl",
+    ))
+    monkeypatch.setattr(rm, "load_managed_ids", lambda: {
+        "environment_id": "env_test", "agents": {},
+    })
+    monkeypatch.setattr(rm, "get_agent", lambda ids, tier: {
+        "id": "ag_fast", "version": 1, "model": "claude-haiku-4-5",
+    })
+
+    async def _fake_ensure(_client, _slug):
+        return memory_store_id
+    monkeypatch.setattr(rm, "ensure_memory_store", _fake_ensure)
+
+    async def _fake_auto_seed(**_kw):
+        return None
+    monkeypatch.setattr(rm, "maybe_auto_seed", _fake_auto_seed)
+
+    def _from_device(_slug: str) -> SessionState:
+        s = SessionState()
+        if board is not None:
+            s.set_board(board)
+        return s
+    monkeypatch.setattr(
+        "api.agent.runtime_managed.SessionState.from_device",
+        staticmethod(_from_device),
+    )
+
+    # Capture the kwargs passed to sessions.create so tests can assert the
+    # memory_store resource attachment without needing deep stream mocking.
+    created_kwargs: dict = {}
+
+    class _FakeSessions:
+        async def create(self, **kwargs):
+            created_kwargs.update(kwargs)
+            sess = MagicMock()
+            sess.id = created_session_id
+            agent = MagicMock()
+            agent.id = "ag_fast"
+            sess.agent = agent
+            return sess
+
+        async def retrieve(self, _sid):
+            raise RuntimeError("fresh session path")
+
+    class _FakeBeta:
+        sessions = _FakeSessions()
+
+    class _FakeClient:
+        beta = _FakeBeta()
+
+    monkeypatch.setattr(rm, "AsyncAnthropic", lambda **_kw: _FakeClient())
+
+    async def _noop(*args, **kwargs):
+        return None
+    monkeypatch.setattr(rm, "_forward_ws_to_session", _noop)
+    monkeypatch.setattr(rm, "_forward_session_to_ws", _noop)
+
+    captured = MagicMock()
+    captured.session_create_kwargs = created_kwargs
+    return captured
+
+
+def test_ws_diagnostic_managed_session_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Managed mode: WS open yields a session_ready frame tagged with the
+    agent's model, the fresh session id, and a None memory_store_id when
+    the store flag is off."""
+    _patch_managed_runtime(monkeypatch, memory_root=str(tmp_path))
+
+    with TestClient(app) as client, client.websocket_connect(
+        "/ws/diagnostic/demo?tier=fast"
+    ) as ws:
+        ready = ws.receive_json()
+        assert ready["type"] == "session_ready"
+        assert ready["mode"] == "managed"
+        assert ready["session_id"] == "sess_test"
+        assert ready["memory_store_id"] is None
+        assert ready["device_slug"] == "demo"
+        assert ready["tier"] == "fast"
+        assert ready["model"] == "claude-haiku-4-5"
+        assert ready["board_loaded"] is False
+        assert ready["repair_id"] is None
+
+
+def test_ws_diagnostic_managed_attaches_memory_store_readonly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """When ensure_memory_store resolves a store id, the session create
+    payload must include that store as a read_only resource — the device
+    history is a read mount for the agent, never a write path."""
+    captured = _patch_managed_runtime(
+        monkeypatch, memory_root=str(tmp_path),
+        memory_store_id="memstore_abc",
+    )
+
+    with TestClient(app) as client, client.websocket_connect(
+        "/ws/diagnostic/demo?tier=fast"
+    ) as ws:
+        ready = ws.receive_json()
+        assert ready["memory_store_id"] == "memstore_abc"
+
+    kwargs = captured.session_create_kwargs
+    resources = kwargs.get("resources") or []
+    assert resources, "managed session must attach memory_store as a resource"
+    resource = resources[0]
+    assert resource["type"] == "memory_store"
+    assert resource["memory_store_id"] == "memstore_abc"
+    assert resource["access"] == "read_only"
+
+
+# ----------------------------------------------------------------------------
+# Repair resumption — direct mode scoped to an existing repair_id. Covers
+# both the fresh-repair path (context_loaded frame emitted once) and the
+# resume path (history_replay_start / per-event frames / history_replay_end).
+# ----------------------------------------------------------------------------
+
+
+def _write_repair_meta(memory_root: Path, slug: str, repair_id: str, *, symptom: str) -> None:
+    repairs = memory_root / slug / "repairs"
+    repairs.mkdir(parents=True, exist_ok=True)
+    (repairs / f"{repair_id}.json").write_text(json.dumps({
+        "device_label": "Demo Device",
+        "symptom": symptom,
+    }))
+
+
+def test_ws_diagnostic_direct_fresh_repair_emits_context_loaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Opening ?repair=R1 on a repair with no prior conversation should:
+      - create a fresh conversation (session_ready.conv_id is populated),
+      - NOT replay any history,
+      - emit a single context_loaded frame so the client can stamp the
+        device context in its chat panel before the tech types anything.
+    """
+    slug, repair_id = "demo-pi", "R1"
+    _write_repair_meta(tmp_path, slug, repair_id, symptom="no boot 3V3 missing")
+    _patch_runtime(
+        monkeypatch, memory_root=str(tmp_path),
+        scripted=[_stream_text("unused — tech never sends")],
+    )
+
+    with TestClient(app) as client, client.websocket_connect(
+        f"/ws/diagnostic/{slug}?tier=fast&repair={repair_id}"
+    ) as ws:
+        ready = ws.receive_json()
+        assert ready["type"] == "session_ready"
+        assert ready["repair_id"] == repair_id
+        assert ready["conv_id"], "a fresh conversation must be minted"
+
+        # The fresh-repair branch in run_diagnostic_session_direct emits
+        # exactly one follow-up frame before blocking on user input.
+        second = ws.receive_json()
+        assert second["type"] == "context_loaded"
+        assert second["device_slug"] == slug
+        assert second["repair_id"] == repair_id
+
+
+def test_ws_diagnostic_direct_replays_prior_conversation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """When a repair already has a persisted conversation, the WS open must
+    emit history_replay_start → past events (user + assistant) → history
+    replay_end before the live receive loop begins. Each replayed frame is
+    stamped replay:true so the UI can render it differently from live text."""
+    slug, repair_id = "demo-pi", "R1"
+    memory_root = tmp_path
+    _write_repair_meta(memory_root, slug, repair_id, symptom="capture")
+
+    # Seed a conversation via the real helpers so the on-disk layout matches
+    # exactly what the runtime reads back.
+    conv_id, _created = ensure_conversation(
+        device_slug=slug, repair_id=repair_id, conv_id="new",
+        tier="fast", memory_root=memory_root,
+    )
+    append_event(
+        device_slug=slug, repair_id=repair_id, conv_id=conv_id,
+        memory_root=memory_root,
+        event={"role": "user", "content": "what's wrong?"},
+    )
+    append_event(
+        device_slug=slug, repair_id=repair_id, conv_id=conv_id,
+        memory_root=memory_root,
+        event={
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Probably U7."}],
+        },
+    )
+
+    _patch_runtime(
+        monkeypatch, memory_root=str(memory_root),
+        scripted=[_stream_text("unused")],
+    )
+
+    with TestClient(app) as client, client.websocket_connect(
+        f"/ws/diagnostic/{slug}?tier=fast&repair={repair_id}&conv={conv_id}"
+    ) as ws:
+        ready = ws.receive_json()
+        assert ready["type"] == "session_ready"
+        assert ready["repair_id"] == repair_id
+        assert ready["conv_id"] == conv_id
+
+        # Expected replay sequence:
+        #   history_replay_start, message(user, replay), message(assistant,
+        #   replay), history_replay_end — pull them explicitly so a missing
+        #   frame fails the test fast.
+        frames = [ws.receive_json() for _ in range(4)]
+        types = [f.get("type") for f in frames]
+        assert types[0] == "history_replay_start"
+        assert types[-1] == "history_replay_end"
+        assert frames[0]["count"] == 2
+
+        user_replay = next(
+            f for f in frames
+            if f.get("type") == "message" and f.get("role") == "user"
+        )
+        assert user_replay["text"] == "what's wrong?"
+        # User messages aren't flagged `replay`: the UI differentiates them
+        # from live input by being inside the replay window (between start
+        # and end frames), not by a per-message flag. Only assistant text
+        # carries replay:true so the streaming renderer doesn't re-animate.
+
+        asst_replay = next(
+            f for f in frames
+            if f.get("type") == "message" and f.get("role") == "assistant"
+        )
+        assert asst_replay["text"] == "Probably U7."
+        assert asst_replay["replay"] is True
