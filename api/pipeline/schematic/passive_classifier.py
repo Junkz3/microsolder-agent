@@ -317,8 +317,13 @@ class PassiveClassification(BaseModel):
     )
     ambiguities: list[str] = Field(
         default_factory=list,
-        description="Short sentences for passives where the role genuinely couldn't "
-                    "be decided (model emits role=null and lists them here).",
+        description=(
+            "LIST of short sentences (JSON array of strings, e.g. "
+            '["R77: 0Ω link between two signal nets, intent unclear", '
+            '"C88: both pins unlabelled"]), one per passive you emitted '
+            "with role=null. Even when empty, MUST be a JSON array []. "
+            "NEVER a single string — always a list."
+        ),
     )
     model_used: str = Field(description="Anthropic model id that produced this output.")
 
@@ -378,6 +383,9 @@ Rules:
     Never skip.
   - Quote evidence in `rationale` when relevant — reference a specific net label,
     designer note, or neighbour refdes.
+  - `ambiguities` is a JSON ARRAY of strings, one entry per passive you
+    emitted with role=null. Emit `[]` (empty array) when you classified
+    every passive confidently. NEVER emit a single string — always a list.
 """
 
 
