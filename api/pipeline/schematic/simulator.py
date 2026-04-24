@@ -24,6 +24,13 @@ ComponentState = Literal["off", "on", "degraded", "dead"]
 SignalState = Literal["low", "high", "floating"]
 FinalVerdict = Literal["completed", "blocked", "cascade", "degraded"]
 
+# Voltage tolerance thresholds, fraction of nominal.
+# Above 0.9 → consumer treated as fully on.
+# Between 0.5 and 0.9 → consumer enters degraded state.
+# Below 0.5 → under-voltage lockout, consumer marked dead.
+TOLERANCE_OK = 0.9
+TOLERANCE_UVLO = 0.5
+
 
 class BoardState(BaseModel):
     """Snapshot of the board at the end of one phase."""
@@ -120,6 +127,11 @@ class SimulationEngine:
         self.killed: frozenset[str] = frozenset(
             f.refdes for f in self.failures if f.mode == "dead"
         )
+        # Rails locked by an explicit observation — _stabilise_rails leaves
+        # these alone so the override holds across phase iteration.
+        self._overridden_rails: frozenset[str] = frozenset(
+            o.label for o in self.rail_overrides
+        )
 
     # ------------------------------------------------------------------
     # Phase source — prefer analyzer (phases + triggers carry `from_refdes`),
@@ -156,13 +168,20 @@ class SimulationEngine:
         for refdes in self.electrical.components:
             components[refdes] = "dead" if refdes in self.killed else "off"
 
+        # Apply rail_overrides BEFORE the phase walk so they take effect from Φ0.
+        rail_voltage: dict[str, float] = {}
+        for ovr in self.rail_overrides:
+            rails[ovr.label] = ovr.state
+            if ovr.voltage_pct is not None:
+                rail_voltage[ovr.label] = ovr.voltage_pct
+
         states: list[BoardState] = []
         phases = self._phases()
         blocked_at: int | None = None
 
         for (idx, name, rails_stable, comps_entering, triggers) in phases:
             self._stabilise_rails(rails, components, rails_stable, signals)
-            self._activate_components(rails, components, comps_entering)
+            self._activate_components(rails, rail_voltage, components, comps_entering)
             self._assert_triggers(components, signals, triggers)
             blocked, reason = self._phase_blocked(rails_stable, rails, comps_entering, components)
             if blocked and blocked_at is None:
@@ -171,6 +190,7 @@ class SimulationEngine:
                 phase_index=idx,
                 phase_name=name,
                 rails=dict(rails),
+                rail_voltage_pct=dict(rail_voltage),
                 components=dict(components),
                 signals=dict(signals),
                 blocked=blocked,
@@ -179,12 +199,31 @@ class SimulationEngine:
             if blocked:
                 break  # halt at first blockage — cascade below is computed post-loop
 
+        # Emit a Φ0 baseline snapshot when no phases ran — keeps `states[-1]`
+        # meaningful for callers driving the engine purely via overrides on a
+        # graph without a compiled boot_sequence.
+        if not states:
+            states.append(BoardState(
+                phase_index=0,
+                phase_name="Φ0 — initial state",
+                rails=dict(rails),
+                rail_voltage_pct=dict(rail_voltage),
+                components=dict(components),
+                signals=dict(signals),
+                blocked=False,
+                blocked_reason=None,
+            ))
+
         cascade_components, cascade_rails = self._cascade(rails, components)
         verdict: FinalVerdict
         if blocked_at is not None:
             verdict = "blocked"
         elif cascade_components or cascade_rails:
             verdict = "cascade"
+        elif any(s == "degraded" for s in rails.values()) or any(
+            s == "degraded" for s in components.values()
+        ):
+            verdict = "degraded"
         else:
             verdict = "completed"
 
@@ -234,6 +273,10 @@ class SimulationEngine:
 
         # Second pass — actually decide rail state.
         for label in rails_stable:
+            # Honour caller-supplied observations — locked rails are not
+            # rewritten by the phase walk.
+            if label in self._overridden_rails:
+                continue
             rail = self.electrical.power_rails.get(label)
             if rail is None:
                 rails[label] = "stable"  # unknown rail — trust the phase
@@ -253,6 +296,7 @@ class SimulationEngine:
     def _activate_components(
         self,
         rails: dict[str, RailState],
+        rail_voltage: dict[str, float],
         components: dict[str, ComponentState],
         comps_entering: list[str],
     ) -> None:
@@ -268,10 +312,27 @@ class SimulationEngine:
                 pin.net_label for pin in comp.pins
                 if pin.role == "power_in" and pin.net_label
             ]
-            if ins and not all(rails.get(n) == "stable" for n in ins):
-                components[refdes] = "off"
+            if not ins:
+                components[refdes] = "on"
                 continue
-            components[refdes] = "on"
+            # Compute the worst-case state across all power_in rails.
+            worst: ComponentState = "on"
+            for net in ins:
+                state = rails.get(net)
+                if state == "stable":
+                    continue
+                if state == "degraded":
+                    pct = rail_voltage.get(net, 1.0)
+                    if pct < TOLERANCE_UVLO:
+                        worst = "dead"
+                        break
+                    if pct < TOLERANCE_OK and worst != "dead":
+                        worst = "degraded"
+                    continue
+                # off, rising, shorted → component cannot turn on.
+                worst = "off"
+                break
+            components[refdes] = worst
 
     def _assert_triggers(
         self,
@@ -302,10 +363,20 @@ class SimulationEngine:
         # Only flag the phase as blocked when NOTHING advanced — all expected
         # rails stayed off AND no expected component came on. Partial progress
         # is not a blockage (a phase can have a dead consumer alongside live ones).
+        # A degraded rail / degraded component counts as progress: the boot kept
+        # moving, just out of spec.
         if not rails_stable and not comps_entering:
             return False, None
-        no_rails = all(rails.get(r) != "stable" for r in rails_stable) if rails_stable else True
-        no_comps = all(components.get(c) != "on" for c in comps_entering) if comps_entering else True
+        live_rail_states = {"stable", "degraded"}
+        live_comp_states = {"on", "degraded"}
+        no_rails = (
+            all(rails.get(r) not in live_rail_states for r in rails_stable)
+            if rails_stable else True
+        )
+        no_comps = (
+            all(components.get(c) not in live_comp_states for c in comps_entering)
+            if comps_entering else True
+        )
         if rails_stable and no_rails and (not comps_entering or no_comps):
             missing = next((r for r in rails_stable if rails.get(r) != "stable"), rails_stable[0])
             rail = self.electrical.power_rails.get(missing)

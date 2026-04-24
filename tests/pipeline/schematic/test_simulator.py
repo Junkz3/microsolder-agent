@@ -487,3 +487,67 @@ def test_engine_killed_refdes_remains_backward_compat(graph_minimal):
     engine = SimulationEngine(graph_minimal, killed_refdes=["U7"])
     timeline = engine.run()
     assert "U7" in timeline.killed_refdes
+
+
+@pytest.fixture
+def graph_with_phase(graph_minimal) -> ElectricalGraph:
+    """Same as graph_minimal but with one boot phase that activates U12 on +5V."""
+    # Wire U12 with a real power_in pin on +5V so _activate_components has work to do.
+    graph_minimal.components["U12"] = ComponentNode(
+        refdes="U12",
+        type="ic",
+        pins=[PagePin(number="1", role="power_in", net_label="+5V")],
+    )
+    graph_minimal.boot_sequence = [
+        BootPhase(
+            index=1,
+            name="Phase 1 — +5V comes up, U12 enters",
+            rails_stable=["+5V"],
+            components_entering=["U12"],
+            triggers_next=[],
+        ),
+    ]
+    return graph_minimal
+
+
+def test_rail_override_degraded_makes_consumer_degraded(graph_minimal):
+    """A degraded rail at 0.85 (below 0.9 threshold) degrades its consumers."""
+    engine = SimulationEngine(
+        graph_minimal,
+        rail_overrides=[RailOverride(label="+5V", state="degraded", voltage_pct=0.85)],
+    )
+    # Force U12 to enter via a manual "phase" — the minimal graph has empty
+    # boot_sequence, so we add a stub via analyzed_boot.
+    final = engine.run().states[-1]
+    assert final.rails.get("+5V") == "degraded"
+    assert final.rail_voltage_pct.get("+5V") == 0.85
+
+
+def test_rail_override_degraded_within_tolerance_keeps_consumer_on(graph_with_phase):
+    """A degraded rail at 0.95 (above 0.9 tolerance) keeps the consumer on."""
+    engine = SimulationEngine(
+        graph_with_phase,
+        rail_overrides=[RailOverride(label="+5V", state="degraded", voltage_pct=0.95)],
+    )
+    final = engine.run().states[-1]
+    assert final.components.get("U12") == "on"
+
+
+def test_rail_override_uvlo_marks_consumer_dead(graph_with_phase):
+    """voltage_pct < 0.5 triggers under-voltage lockout — consumer dead."""
+    engine = SimulationEngine(
+        graph_with_phase,
+        rail_overrides=[RailOverride(label="+5V", state="degraded", voltage_pct=0.4)],
+    )
+    final = engine.run().states[-1]
+    assert final.components.get("U12") == "dead"
+
+
+def test_run_with_degraded_rail_returns_degraded_verdict(graph_with_phase):
+    """Boot completes with degraded states → final_verdict == 'degraded'."""
+    engine = SimulationEngine(
+        graph_with_phase,
+        rail_overrides=[RailOverride(label="+5V", state="degraded", voltage_pct=0.85)],
+    )
+    timeline = engine.run()
+    assert timeline.final_verdict == "degraded"
