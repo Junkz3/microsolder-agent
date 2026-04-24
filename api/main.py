@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """FastAPI application entrypoint for microsolder-agent."""
 
 from __future__ import annotations
@@ -46,10 +47,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS: drop "*" + credentials (browsers reject that combo anyway) in favor
+# of an explicit allowlist from settings. Default list covers local dev; set
+# CORS_ALLOW_ORIGINS in .env to widen.
+_cors_raw = get_settings().cors_allow_origins
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+_cors_wildcard = _cors_origins == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )

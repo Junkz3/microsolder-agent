@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Application settings — loaded from environment / .env."""
 
 from __future__ import annotations
@@ -43,6 +44,19 @@ class Settings(BaseSettings):
 
     port: int = Field(default=8000, description="HTTP server port.")
     log_level: str = Field(default="INFO", description="Log level name.")
+
+    # --- CORS -----------------------------------------------------------------
+    # Default covers local workbench use (:8000 same-origin + common dev
+    # ports). Override via CORS_ALLOW_ORIGINS="url1,url2,..." for remote
+    # demos. "*" is still accepted but discouraged — it degrades to permissive
+    # mode without credentials since the wildcard + credentials combo is
+    # rejected by browsers regardless of server config.
+    cors_allow_origins: str = Field(
+        default="http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173",
+        description=(
+            "Comma-separated CORS origins. Use * only for throwaway demos."
+        ),
+    )
 
     # --- Upload hardening -----------------------------------------------------
     # .kicad_pcb files for full boards can exceed 100 MB (MNT Reform is ~25 MB,
