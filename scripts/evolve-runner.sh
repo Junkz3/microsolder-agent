@@ -59,10 +59,15 @@ while true; do
   # Invoke a fresh Claude session with the skill as system prompt.
   # --max-turns 100: hard cap so a stuck session can't burn unlimited tokens.
   # --dangerously-skip-permissions: required for autonomous git/file ops.
+  # Stream-json so the monitoring layer can see every thinking block,
+  # tool call, and Opus message in real time. Text mode would only show
+  # the final summary at session end.
   echo "Execute one evolve session." | claude -p \
     --dangerously-skip-permissions \
     --max-turns 100 \
     --system-prompt-file "$SKILL_FILE" \
+    --output-format stream-json \
+    --verbose \
     >> "$LOGFILE" 2>&1
   CLAUDE_EXIT=$?
 
