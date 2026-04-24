@@ -566,7 +566,8 @@ const MODE_SETS = {
   passive_c:  ["unknown", "alive", "open", "short"],
   passive_d:  ["unknown", "alive", "open", "short"],
   passive_fb: ["unknown", "alive", "open", "short"],
-  rail:       ["unknown", "alive", "dead", "shorted"],
+  passive_q:  ["unknown", "alive", "open", "short", "stuck_on", "stuck_off"],
+  rail:       ["unknown", "alive", "dead", "shorted", "stuck_on"],
 };
 
 const MODE_GLYPH = {
@@ -578,6 +579,8 @@ const MODE_GLYPH = {
   shorted:   "⚡",
   open:      "⚪",
   short:     "⚡",
+  stuck_on:  "🔒",
+  stuck_off: "🚫",
 };
 
 // Human-readable labels per mode (French UI).
@@ -590,6 +593,8 @@ const MODE_LABEL = {
   shorted:   "shorté",
   open:      "ouvert",
   short:     "court-circuit",
+  stuck_on:  "toujours on",
+  stuck_off: "toujours off",
 };
 
 // A component "touches a power rail" if any of its pins has a known

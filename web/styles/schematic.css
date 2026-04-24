@@ -1193,3 +1193,23 @@ body.sch-mode-railfocus .sch-toolbar-below{left:calc(50% + 130px)}
 .sch-root.surface-pdf .sch-grid,
 .sch-root.surface-pdf .sch-inspector,
 .sch-root.surface-pdf .sch-empty{display:none !important}
+
+/* Phase 4.5 — Q stuck_on / stuck_off picker tints */
+.sim-mode-picker[data-kind="passive_q"] button[data-mode="stuck_on"],
+.sim-mode-picker[data-kind="rail"] button[data-mode="stuck_on"] {
+  color: var(--violet);
+  border-color: color-mix(in oklch, var(--violet) 40%, transparent);
+}
+.sim-mode-picker[data-kind="passive_q"] button[data-mode="stuck_off"] {
+  color: var(--text-3);
+  border-color: color-mix(in oklch, var(--text-3) 40%, transparent);
+}
+.sim-mode-picker[data-kind="passive_q"] button[data-mode="stuck_on"].active {
+  background: color-mix(in oklch, var(--violet) 30%, var(--panel-2));
+}
+.sim-mode-picker[data-kind="rail"] button[data-mode="stuck_on"].active {
+  background: color-mix(in oklch, var(--violet) 30%, var(--panel-2));
+}
+.sim-mode-picker[data-kind="passive_q"] button[data-mode="stuck_off"].active {
+  background: color-mix(in oklch, var(--text-3) 20%, var(--panel-2));
+}
