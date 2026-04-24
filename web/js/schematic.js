@@ -76,8 +76,11 @@ function inferRailNominalV(label) {
 function clientAutoClassify(kind, value, unit, nominal) {
   if (kind === "rail" && (unit === "V" || unit === "mV")) {
     if (nominal == null || nominal === "") return null;
+    // Normalise the reading to V. `nominal` is the rail's SI target
+    // (stored in V everywhere in the stack), so we never divide it by
+    // 1000 — see api/agent/measurement_memory.py for the matching fix.
     const v = unit === "mV" ? value / 1000 : value;
-    const nom = unit === "mV" ? nominal / 1000 : nominal;
+    const nom = nominal;
     if (v < 0.05) return "dead";
     const ratio = nom !== 0 ? v / nom : 0;
     if (ratio > 1.10) return "shorted";
@@ -360,7 +363,7 @@ const SimulationController = {
       for (const ev of events) latest.set(ev.target, ev);
       this.measurementHistory = events;  // full journal, used by T19 timeline
       const COMP_MODES = new Set(["dead", "alive", "anomalous", "hot"]);
-      const RAIL_MODES = new Set(["dead", "alive", "shorted"]);
+      const RAIL_MODES = new Set(["dead", "alive", "shorted", "stuck_on"]);
       for (const [target, ev] of latest) {
         const idx = target.indexOf(":");
         if (idx <= 0) continue;
@@ -430,11 +433,12 @@ const SimulationController = {
     const totalObs = obs.state_comps.size + obs.state_rails.size
                    + obs.metrics_comps.size + obs.metrics_rails.size;
     if (totalObs === 0) return;
-    // Backend RailMode accepts only dead/alive/shorted. Phase 1 scoring
-    // doesn't model anomalous rails — we coerce sagging readings to "dead"
-    // so the buck upstream still scores as top candidate. The raw metric
-    // rides along in metrics_rails so the narrative cites the exact value.
-    const RAIL_MODES = new Set(["dead", "alive", "shorted"]);
+    // Backend RailMode accepts dead/alive/shorted/stuck_on (Phase 4.5).
+    // Phase 1 scoring doesn't model anomalous rails — we coerce sagging
+    // readings to "dead" so the buck upstream still scores as top
+    // candidate. The raw metric rides along in metrics_rails so the
+    // narrative cites the exact value.
+    const RAIL_MODES = new Set(["dead", "alive", "shorted", "stuck_on"]);
     const stateRailsOut = {};
     for (const [k, v] of obs.state_rails) {
       if (RAIL_MODES.has(v)) stateRailsOut[k] = v;
