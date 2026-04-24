@@ -78,3 +78,67 @@ def check_duplicates(
         seen.add(key)
         accepted.append(d)
     return accepted, rejected
+
+
+def check_grounding(draft: ProposedScenarioDraft) -> Rejection | None:
+    """V2: evidence spans must be literal substrings of source_quote, and
+    every non-empty field must have at least one evidence entry."""
+    quote = draft.source_quote
+
+    # 2a. Every span is literal.
+    for span in draft.evidence:
+        if span.source_quote_substring not in quote:
+            return Rejection(
+                local_id=draft.local_id,
+                motive="evidence_span_not_literal",
+                detail=(
+                    f"field={span.field!r} substring="
+                    f"{span.source_quote_substring!r} not in quote"
+                ),
+                original_draft=draft,
+            )
+
+    evidence_fields = {e.field for e in draft.evidence}
+
+    # 2b. Non-empty filled fields must have evidence.
+    # cause.refdes is always present — require evidence.
+    # cause.mode is always present — require evidence.
+    required_evidence: set[str] = {"cause.refdes", "cause.mode"}
+    if draft.cause.value_ohms is not None:
+        required_evidence.add("cause.value_ohms")
+    if draft.cause.voltage_pct is not None:
+        required_evidence.add("cause.voltage_pct")
+    if draft.expected_dead_rails:
+        required_evidence.add("expected_dead_rails")
+    if draft.expected_dead_components:
+        required_evidence.add("expected_dead_components")
+
+    missing = required_evidence - evidence_fields
+    if missing:
+        return Rejection(
+            local_id=draft.local_id,
+            motive="evidence_missing",
+            detail=f"missing evidence for fields: {sorted(missing)}",
+            original_draft=draft,
+        )
+
+    # 2c. Evidence on empty lists is invalid.
+    if "expected_dead_rails" in evidence_fields and not draft.expected_dead_rails:
+        return Rejection(
+            local_id=draft.local_id,
+            motive="evidence_field_empty",
+            detail="evidence points at expected_dead_rails but list is empty",
+            original_draft=draft,
+        )
+    if (
+        "expected_dead_components" in evidence_fields
+        and not draft.expected_dead_components
+    ):
+        return Rejection(
+            local_id=draft.local_id,
+            motive="evidence_field_empty",
+            detail="evidence points at expected_dead_components but list is empty",
+            original_draft=draft,
+        )
+
+    return None

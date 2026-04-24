@@ -9,6 +9,7 @@ from api.pipeline.bench_generator.schemas import (
 from api.pipeline.bench_generator.validator import (
     check_sanity,
     check_duplicates,
+    check_grounding,
 )
 
 
@@ -65,3 +66,47 @@ def test_v5_no_dup_no_rejection(sample_draft):
     accepted, rejected = check_duplicates([d1, d2])
     assert len(accepted) == 2
     assert rejected == []
+
+
+def test_v2_accepts_clean_grounding(sample_draft):
+    rej = check_grounding(sample_draft)
+    assert rej is None
+
+
+def test_v2_rejects_nonliteral_span(sample_draft):
+    bad = sample_draft.model_copy(deep=True)
+    bad.evidence[0] = EvidenceSpan(
+        field="cause.refdes",
+        source_quote_substring="C 19",  # extra space — not literally in quote
+        reasoning="wrong",
+    )
+    rej = check_grounding(bad)
+    assert rej is not None
+    assert rej.motive == "evidence_span_not_literal"
+
+
+def test_v2_rejects_missing_evidence_for_nonempty_rails(sample_draft):
+    """If expected_dead_rails is non-empty, at least one evidence must target it."""
+    bad = sample_draft.model_copy(deep=True)
+    bad.evidence = [
+        e for e in bad.evidence if e.field != "expected_dead_rails"
+    ]
+    rej = check_grounding(bad)
+    assert rej is not None
+    assert rej.motive == "evidence_missing"
+    assert "expected_dead_rails" in rej.detail
+
+
+def test_v2_rejects_evidence_on_empty_field(sample_draft):
+    """If expected_dead_components is empty, no evidence may point at it."""
+    bad = sample_draft.model_copy(deep=True)
+    bad.evidence.append(
+        EvidenceSpan(
+            field="expected_dead_components",
+            source_quote_substring="C19",
+            reasoning="stale",
+        )
+    )
+    rej = check_grounding(bad)
+    assert rej is not None
+    assert rej.motive == "evidence_field_empty"
