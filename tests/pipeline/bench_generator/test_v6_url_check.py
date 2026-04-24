@@ -25,6 +25,7 @@ from api.pipeline.bench_generator.schemas import (
     ProposedScenarioDraft,
 )
 from api.pipeline.bench_generator.validator import (
+    check_attribution_grounded_in_url,
     check_refdes_in_url_content,
     run_all,
 )
@@ -101,6 +102,126 @@ def test_v6_unreachable_url_yields_soft_reject() -> None:
     rej = check_refdes_in_url_content(draft, None)
     assert rej is not None
     assert rej.motive == "source_url_unreachable"
+
+
+# --- Path B: function-level grounding (canonical/alias in quote AND in URL) ---
+
+
+def _draft_with_quote(refdes: str, quote: str) -> ProposedScenarioDraft:
+    """Helper: build a draft with a custom source_quote (≥50 chars enforced)."""
+    return ProposedScenarioDraft(
+        local_id=f"{refdes.lower()}-q",
+        cause=Cause(refdes=refdes, mode="dead"),
+        expected_dead_rails=[],
+        expected_dead_components=[],
+        source_url="https://forum.example/page",
+        source_quote=quote,
+        confidence=0.9,
+        evidence=[
+            EvidenceSpan(
+                field="cause.refdes", source_quote_substring=quote[:30], reasoning="x"
+            ),
+            EvidenceSpan(
+                field="cause.mode", source_quote_substring=quote[:30], reasoning="y"
+            ),
+        ],
+        reasoning_summary="stub",
+    )
+
+
+def test_v6_path_b_accepts_when_canonical_in_quote_and_url() -> None:
+    """Forum doesn't name the refdes (U24) but discusses 'USB load switch'.
+    Quote cites 'USB load switch'. Registry has canonical 'USB load switch'.
+    URL body discusses 'USB load switch'. → V6 accepts via path B."""
+    draft = _draft_with_quote(
+        refdes="U24",
+        quote=(
+            "Symptom: USB ports dead. Likely cause: the USB load switch "
+            "fails to assert USB_PWR after the LPC enables it on power-up."
+        ),
+    )
+    fetched = (
+        "User report: my USB-A port no longer enumerates. After much probing "
+        "the USB load switch on the motherboard turned out to be the culprit."
+    )
+    registry = {
+        "components": [
+            {"canonical_name": "USB load switch", "aliases": ["USB switch"], "kind": "ic"},
+        ],
+    }
+    assert check_attribution_grounded_in_url(draft, fetched, registry) is None
+
+
+def test_v6_path_b_accepts_when_alias_in_quote_and_url() -> None:
+    """Same idea but via an alias rather than the canonical_name."""
+    draft = _draft_with_quote(
+        refdes="U10",
+        quote=(
+            "Symptom: internal display dark. Likely cause: SN65DSI86 "
+            "DSI-to-eDP bridge has lost its 1.2V supply rail."
+        ),
+    )
+    fetched = (
+        "Forum thread: my eDP display does not turn on. Someone mentioned "
+        "the SN65DSI86 chip might be the issue. I'll probe the rails."
+    )
+    registry = {
+        "components": [
+            {
+                "canonical_name": "DSI-to-eDP bridge",
+                "aliases": ["SN65DSI86", "SN65DSI86IPAPQ1"],
+                "kind": "ic",
+            },
+        ],
+    }
+    assert check_attribution_grounded_in_url(draft, fetched, registry) is None
+
+
+def test_v6_path_b_rejects_when_canonical_in_quote_but_not_url() -> None:
+    """Cross-source contamination: Scout names 'USB load switch' in the
+    quote, but the URL discusses something completely different."""
+    draft = _draft_with_quote(
+        refdes="U24",
+        quote=(
+            "Symptom: USB ports dead. Likely cause: the USB load switch "
+            "fails to assert USB_PWR on power-up after the LPC enables it."
+        ),
+    )
+    fetched = (
+        "User report on a totally unrelated firmware version mismatch on "
+        "the LPC controller; nothing about USB or load switches at all."
+    )
+    registry = {
+        "components": [
+            {"canonical_name": "USB load switch", "aliases": [], "kind": "ic"},
+        ],
+    }
+    rej = check_attribution_grounded_in_url(draft, fetched, registry)
+    assert rej is not None
+    assert rej.motive == "refdes_not_in_url_content"
+
+
+def test_v6_path_b_skipped_without_registry() -> None:
+    """No registry → only path A applies. Strict refdes-in-url required."""
+    draft = _draft_with_quote(
+        refdes="U24",
+        quote="Symptom: USB ports dead. Likely cause: USB load switch failure of some sort.",
+    )
+    fetched = "USB load switch is the culprit."  # Names the function but no U24
+    rej = check_attribution_grounded_in_url(draft, fetched, registry=None)
+    assert rej is not None
+    assert rej.motive == "refdes_not_in_url_content"
+
+
+def test_v6_path_a_takes_precedence() -> None:
+    """When refdes is literally in URL, accept regardless of registry."""
+    draft = _draft_with_quote(
+        refdes="U14",
+        quote="Long enough source_quote that mentions U14 directly here in this prose.",
+    )
+    fetched = "Random text that mentions U14 explicitly in passing somewhere."
+    rej = check_attribution_grounded_in_url(draft, fetched, registry=None)
+    assert rej is None
 
 
 # --- run_all V6 wiring ----------------------------------------------------

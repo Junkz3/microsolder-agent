@@ -326,25 +326,33 @@ def check_cause_rail_connection(
     return None
 
 
-def check_refdes_in_url_content(
+def check_attribution_grounded_in_url(
     draft: ProposedScenarioDraft,
     fetched_text: str | None,
+    registry: dict | None = None,
 ) -> Rejection | None:
-    """V6: cause.refdes must appear literally in the fetched body of source_url.
+    """V6: the canonical→refdes attribution must be traceable to the URL.
 
-    Catches "cross-source contamination" — Scout writing a quote attributed
-    to URL A but with refdes that only appear in URL B (e.g. handbook refdes
-    glued onto a forum-thread symptom). The Mapper's V2b.1 strict-attributions
-    path checks the refdes against the dump-level vocabulary; V6 is the
-    URL-level mirror that closes the gap.
+    Earlier-revision contract was overly strict: it required `cause.refdes`
+    itself to appear literally in the URL body. That broke the Mapper's
+    purpose — forums almost never name refdes; the graph is what supplies
+    them. Strictly checking the refdes rejected legitimate scenarios where
+    the forum described the function (`USB port dead`) and the graph
+    bridged the function to a refdes (U24 = AP22815 USB load switch).
 
-    `fetched_text` is None when the source URL was unreachable (network
-    failure, 404, etc.) — that's a soft reject under a separate motive so
-    callers can quantify the impact of network conditions.
+    The corrected V6 accepts when EITHER:
 
-    The check is case-insensitive and uses word-boundary matching to avoid
-    false positives like "U7" matching "U70" / "AU7T" embedded in
-    unrelated identifiers.
+    (A) `cause.refdes` itself appears in the fetched body (legitimate on
+        professional repair forums that do cite refdes — iPhone, Samsung).
+    (B) A canonical_name OR alias from the registry that ALSO appears in
+        `source_quote` is present in the fetched body. This is the
+        function-level grounding: the forum names the function (e.g.
+        "USB load switch", "DSI bridge", "WM8960"), Scout cited that name
+        in the quote, and the graph supplied the refdes.
+
+    Failure mode is rejection with `refdes_not_in_url_content` motive —
+    name kept for back-compat with archived rejection logs but the
+    detail message documents that the function check also failed.
     """
     if fetched_text is None:
         return Rejection(
@@ -353,19 +361,53 @@ def check_refdes_in_url_content(
             detail=f"could not fetch {draft.source_url!r} for V6 verification",
             original_draft=draft,
         )
+
     refdes = draft.cause.refdes
-    if not _refdes_in_text(refdes, fetched_text):
-        return Rejection(
-            local_id=draft.local_id,
-            motive="refdes_not_in_url_content",
-            detail=(
-                f"cause.refdes={refdes!r} does not appear in the fetched "
-                f"content of {draft.source_url!r} — likely cross-source "
-                "contamination (refdes literal in dump but not in cited URL)"
-            ),
-            original_draft=draft,
-        )
-    return None
+
+    # Path A — refdes literal in URL body (word-boundary, case-insensitive).
+    if _refdes_in_text(refdes, fetched_text):
+        return None
+
+    # Path B — function-level grounding via registry canonical_names + aliases.
+    if registry is not None:
+        text_lc = fetched_text.lower()
+        quote_lc = draft.source_quote.lower()
+        for entry in registry.get("components", []) or []:
+            canonical = entry.get("canonical_name") or ""
+            aliases = entry.get("aliases") or []
+            for name in [canonical, *aliases]:
+                if not name or len(name) < 2:
+                    continue
+                name_lc = name.lower()
+                # The name must be cited in the quote (so Scout did anchor
+                # the function-name to this attribution), AND the same name
+                # must appear in the URL body (so the cited source is
+                # actually about that function).
+                if name_lc in quote_lc and name_lc in text_lc:
+                    return None
+
+    return Rejection(
+        local_id=draft.local_id,
+        motive="refdes_not_in_url_content",
+        detail=(
+            f"cause.refdes={refdes!r} not in fetched content of "
+            f"{draft.source_url!r}, and no registry canonical/alias from "
+            "source_quote appears in the URL either — neither refdes nor "
+            "function grounded in the cited source (likely cross-source "
+            "contamination)"
+        ),
+        original_draft=draft,
+    )
+
+
+# Backwards-compatible alias: tests written against the original strict V6
+# can keep using the old name. New code should call check_attribution_grounded_in_url.
+def check_refdes_in_url_content(
+    draft: ProposedScenarioDraft,
+    fetched_text: str | None,
+    registry: dict | None = None,
+) -> Rejection | None:
+    return check_attribution_grounded_in_url(draft, fetched_text, registry)
 
 
 _REFDES_BOUNDARY_RE_CACHE: dict[str, re.Pattern[str]] = {}
@@ -519,7 +561,13 @@ def run_all(
             rejected.append(rej)
             continue
         if url_texts is not None:
-            rej = check_refdes_in_url_content(draft, url_texts.get(draft.source_url))  # V6
+            # V6 — the attribution must be grounded in the fetched URL,
+            # either by literal refdes mention (path A) or by a registry
+            # canonical_name/alias appearing in both source_quote and URL
+            # body (path B, function-level grounding).
+            rej = check_attribution_grounded_in_url(
+                draft, url_texts.get(draft.source_url), registry
+            )
             if rej is not None:
                 rejected.append(rej)
                 continue
