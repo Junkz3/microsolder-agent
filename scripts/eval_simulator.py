@@ -27,7 +27,11 @@ def _load_bench(path: Path) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", required=True, help="device_slug (memory/{slug}/)")
+    parser.add_argument(
+        "--device",
+        default="mnt-reform-motherboard",
+        help="device_slug (memory/{slug}/). Default: mnt-reform-motherboard.",
+    )
     parser.add_argument(
         "--bench",
         default="benchmark/scenarios.jsonl",
