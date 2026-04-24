@@ -1,4 +1,4 @@
-.PHONY: install run test lint format clean help build-field-corpus
+.PHONY: install run test test-eval lint format clean help build-field-corpus
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -40,6 +40,16 @@ test:
 
 test-all:
 	$(PYTEST) tests/ -v
+
+# Score floor guard: fail the build if the simulator + hypothesize stack
+# drops below 0.5 on the frozen MNT Reform bench. The floor only becomes
+# meaningful once axes 2/3 are fully implemented — until then the gate is
+# informational. Intentionally non-fatal on missing graph (exit 2 from the
+# CLI bubbles up so the failure reason is visible).
+test-eval:
+	@SCORE=$$($(PY) -m scripts.eval_simulator --device mnt-reform-motherboard | $(PY) -c "import json, sys; print(json.loads(sys.stdin.read())['score'])"); \
+		echo "simulator score = $$SCORE"; \
+		$(PY) -c "import sys; sys.exit(0 if float('$$SCORE') >= 0.5 else 1)" || (echo "FAIL: score below 0.5 floor" && exit 1)
 
 lint:
 	$(RUFF) check api/ tests/
