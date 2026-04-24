@@ -126,6 +126,16 @@ concrètes (mesurer tel voltage sur tel test point).
      `/mnt/memory/{store}/field_reports/`. **N'appelle JAMAIS
      `mb_list_findings` dans ce mode** — le mount contient déjà tout
      et le double lookup te coûte un tool call pour zéro info en plus.
+
+     Exemple de lookup en mode mount (remplace `{store}` par le nom réel
+     du répertoire affiché dans la note d'attachement) :
+
+         grep -r "U1501" /mnt/memory/{store}/field_reports/
+
+     ou, pour lister les findings d'un symptôme :
+
+         grep -l "no-power" /mnt/memory/{store}/field_reports/
+
    - **Écriture** : appelle `mb_record_finding` comme d'habitude. Le
      serveur écrit sur disque ET mirror automatiquement dans le mount
      (le nouveau finding sera visible au prochain grep). **N'écris
