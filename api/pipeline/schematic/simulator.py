@@ -431,6 +431,16 @@ class SimulationEngine:
                     #       stable — its source IC may still regulate
                     #       from the unaffected upstream, and the
                     #       _cascade pass will pick it up if not.
+                    #   (c) If one rail has `source_refdes is None` AND
+                    #       this passive is its *unique* supply path
+                    #       (no other passive also bridges this rail to
+                    #       a sourced rail), treat it as an internally-
+                    #       derived branch: opening this passive orphans
+                    #       the rail. Kill the rail + its consumers. The
+                    #       uniqueness check guards against parallel
+                    #       supply topologies (multiple filter beads feeding
+                    #       the same rail) where opening one bead still
+                    #       leaves the rail powered.
                     # Otherwise ambiguous → under-kill.
                     sourced_by_me = {
                         n for n in rail_touched
@@ -457,6 +467,23 @@ class SimulationEngine:
                                 upstream = other
                                 downstream_nets = {candidate}
                                 break
+                        # Case (c): unique-supply-path to a source-less rail.
+                        if upstream is None:
+                            no_src_rails = [
+                                n for n in rail_touched
+                                if self.electrical.power_rails[n].source_refdes is None
+                            ]
+                            if len(no_src_rails) == 1:
+                                no_src = no_src_rails[0]
+                                other_rail = next(iter(rail_touched - {no_src}))
+                                if (
+                                    self.electrical.power_rails[other_rail].source_refdes
+                                    is not None
+                                    and self._is_unique_passive_supply(f.refdes, no_src)
+                                ):
+                                    upstream = other_rail
+                                    downstream_nets = {no_src}
+                                    kill_downstream_rail = no_src
 
                 if upstream is not None:
                     for refdes, c in self.electrical.components.items():
@@ -472,6 +499,34 @@ class SimulationEngine:
                 continue
 
         return frozenset(touched_rails)
+
+    def _is_unique_passive_supply(self, passive_refdes: str, no_src_rail: str) -> bool:
+        """True iff `passive_refdes` is the *only* passive whose two touched
+        rails include `no_src_rail` together with a rail that has a
+        `source_refdes`. Used by the `open` handler to safely treat a
+        source-less rail as "orphaned" when this passive opens — the guard
+        prevents false kills in parallel supply topologies (e.g. USBH_3V3
+        fed by FB5+FB8+FB9 in parallel). O(components × pins) per call —
+        acceptable for graph sizes the simulator targets.
+        """
+        for other_refdes, other_comp in self.electrical.components.items():
+            if other_refdes == passive_refdes:
+                continue
+            if other_comp.kind not in (
+                "passive_r",
+                "passive_fb",
+                "passive_d",
+                "passive_q",
+            ):
+                continue
+            onets = {p.net_label for p in other_comp.pins if p.net_label}
+            orails = onets & self.electrical.power_rails.keys()
+            if len(orails) != 2 or no_src_rail not in orails:
+                continue
+            other_rail = next(iter(orails - {no_src_rail}))
+            if self.electrical.power_rails[other_rail].source_refdes is not None:
+                return False
+        return True
 
     def _stabilise_rails(
         self,
