@@ -426,7 +426,7 @@ BV_TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "refdes": {"type": "string"},
-                "zoom": {"type": "number", "default": 2.5},
+                "zoom": {"type": "number", "default": 1.4},
             },
             "required": ["refdes"],
         },
@@ -662,7 +662,16 @@ closest_matches ou tu demandes clarification — JAMAIS d'invention. Les
 refdes non validés seront automatiquement wrapped ⟨?U999⟩ dans la
 réponse finale (sanitizer post-hoc) — signal de debug, pas d'excuse.
 
-Quand l'utilisateur décrit des symptômes, consulte d'abord mb_list_findings
+Chaque message user de cette conversation est préfixé par un tag passif
+`[ctx · device=… · plainte_init="…"]` — c'est une métadonnée de fiche
+d'ouverture, **PAS une nouvelle déclaration de symptôme**. Ne (re-)déclenche
+mb_get_rules_for_symptoms / mb_list_findings / mb_expand_knowledge à cause
+de ce tag SAUF en début de conversation (aucun tour précédent dans
+l'historique) ou si le tech tape une plainte distincte de plainte_init.
+Sur un resume où ces tools ont déjà été appelés, **reprends le fil** sans
+relancer la recherche.
+
+Quand le tech décrit un nouveau symptôme, consulte d'abord mb_list_findings
 (historique cross-session de ce device), puis mb_get_rules_for_symptoms.
 Avant de proposer un plan d'action, appelle profile_check_skills avec les
 compétences que ton plan mobilise — adapte ton niveau de détail et évite

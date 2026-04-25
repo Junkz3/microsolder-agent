@@ -261,7 +261,7 @@ def _write_repair_meta(tmp_path, slug: str, rid: str, payload: dict) -> None:
     target.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_build_ctx_tag_includes_label_and_symptom(tmp_path):
+def test_build_ctx_tag_includes_label_and_plainte_init(tmp_path):
     _write_repair_meta(
         tmp_path,
         "iphone-x",
@@ -274,18 +274,24 @@ def test_build_ctx_tag_includes_label_and_symptom(tmp_path):
     tag = build_ctx_tag(
         device_slug="iphone-x", repair_id="r42", memory_root=tmp_path
     )
-    assert tag == "[ctx · device=iPhone X (iphone-x) · symptôme=pas de boot, écran noir]"
+    # Wording is deliberately passive — `plainte_init` (not `symptôme`) and
+    # quoted so the agent reads it as opening-sheet metadata, not as a fresh
+    # symptom declaration that would re-trigger mb_get_rules_for_symptoms.
+    assert (
+        tag
+        == '[ctx · device=iPhone X (iphone-x) · plainte_init="pas de boot, écran noir"]'
+    )
 
 
 def test_build_ctx_tag_falls_back_to_slug_when_no_meta(tmp_path):
     tag = build_ctx_tag(
         device_slug="iphone-x", repair_id="r-missing", memory_root=tmp_path
     )
-    # No meta file → label defaults to slug, no symptom segment.
+    # No meta file → label defaults to slug, no plainte_init segment.
     assert tag == "[ctx · device=iphone-x (iphone-x)]"
 
 
-def test_build_ctx_tag_omits_symptom_when_empty(tmp_path):
+def test_build_ctx_tag_omits_plainte_init_when_empty(tmp_path):
     _write_repair_meta(
         tmp_path, "macbook-air", "r1", {"device_label": "MacBook Air", "symptom": "  "}
     )
@@ -303,7 +309,10 @@ def test_build_ctx_tag_returns_none_without_repair_id(tmp_path):
 
 
 def test_strip_ctx_tag_peels_leading_tag():
-    text = "[ctx · device=iPhone X (iphone-x) · symptôme=foo]\n\nSalut, j'ai un souci"
+    text = (
+        '[ctx · device=iPhone X (iphone-x) · plainte_init="écran noir"]\n\n'
+        "Salut, j'ai un souci"
+    )
     assert strip_ctx_tag(text) == "Salut, j'ai un souci"
 
 
@@ -321,7 +330,7 @@ def test_strip_ctx_tag_then_intro_strip_chains_correctly():
     from api.agent.runtime_managed import _strip_intro_wrapper
 
     body = (
-        "[ctx · device=iPhone X (iphone-x) · symptôme=écran noir]\n\n"
+        '[ctx · device=iPhone X (iphone-x) · plainte_init="écran noir"]\n\n'
         "[Nouvelle session de diagnostic]\n"
         "Device: iPhone X (slug: iphone-x)\n\n---\n\n"
         "Salut"
