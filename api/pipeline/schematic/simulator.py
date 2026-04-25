@@ -321,6 +321,19 @@ class SimulationEngine:
         """
         touched_rails: set[str] = set()
         for f in self.failures:
+            # Non-physical mode translation: fuses and inductors cannot
+            # "regulate low" — that mode is exclusive to active regulators
+            # (PMICs, bucks, LDOs). Some graphs misclassify fuses/inductors
+            # as `kind=ic` so the evaluator dutifully samples them with
+            # `regulating_low`; here we treat the failure as the only
+            # realistic mode for those parts (open). The downstream `open`
+            # handler then computes the correct cascade from the graph
+            # topology (sourced rail going dead, consumers killed).
+            if f.mode == "regulating_low":
+                comp = self.electrical.components.get(f.refdes)
+                if comp is not None and comp.type in ("fuse", "inductor"):
+                    f = Failure(refdes=f.refdes, mode="open")
+
             if f.mode == "dead":
                 components[f.refdes] = "dead"
                 continue
