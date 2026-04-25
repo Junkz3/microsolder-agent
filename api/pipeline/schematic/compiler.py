@@ -226,6 +226,7 @@ def _derive_power_rails(graph: SchematicGraph) -> dict[str, PowerRail]:
     _propagate_sources_through_passive_bridges(rails, graph)
     _promote_ic_owning_switch_node_over_inductor(rails, graph)
     _propagate_sources_through_rail_aliases(rails, graph)
+    _augment_sources_from_external_connectors(rails, graph)
 
     # Final scrub: a regulator never consumes its own output. The vision pass
     # occasionally emits a `powered_by(regulator, rail)` edge alongside the
@@ -486,6 +487,112 @@ def _propagate_sources_through_rail_aliases(
                 if src_rail.source_type:
                     dst_rail.source_type = src_rail.source_type
                 changed = True
+
+
+# ----------------------------------------------------------------------
+# External-input connector source recovery
+# ----------------------------------------------------------------------
+
+# Top-level external-input rail naming convention shared by phone, laptop,
+# SBC and DIY board schematics. A rail whose label matches one of these
+# patterns is, by convention, the FIRST rail on the board fed by an
+# external connector — barrel jack, USB cable, battery pack, mains brick,
+# discrete power header. Pattern is anchored at start AND end so we never
+# partial-match a longer rail name (e.g. `USB_PWR_TIMER` does NOT match
+# `USB_PWR`, `PP1V8_VBUS_SENSE` does NOT match `VBUS`).
+#
+# Families covered:
+#   - VBUS / USB_VBUS / USB_PWR — USB bus power (USB-A, USB-C, microUSB)
+#   - VBAT / VBATT / BAT / BATT — battery pack input (phones, laptops)
+#   - VAC / AC_IN / MAINS — AC mains input (PSU primary side)
+#   - VDC / DC_IN — generic DC input
+#   - VIN — generic regulator input header / bare wire input
+#   - +24V_IN / 5V_IN / +3V3_IN / 12V_IN — explicit voltage-bearing input
+#     names (barrel jacks with hardwired voltage labels, screw terminals)
+#   - +5V_SUPPLY / 12V_SUPPLY — explicit "supply" suffix variant
+#
+# Names like `PP1V8_CAM_WIDE_VDDIO_CONN` (internal supply going OUT through
+# a connector to a peripheral module) deliberately do NOT match — the
+# connector there is downstream, not source.
+_EXTERNAL_INPUT_RAIL = re.compile(
+    r"^(?:"
+    r"VBUS"
+    r"|VBAT|VBATT|BAT|BATT"
+    r"|VAC|AC_IN|MAINS"
+    r"|VDC|DC_IN"
+    r"|VIN"
+    r"|USB_PWR|USB_VBUS"
+    r"|\+?\d+V\d*_IN"
+    r"|\+?\d+V_SUPPLY"
+    r")$"
+)
+
+
+def _augment_sources_from_external_connectors(
+    rails: dict[str, PowerRail], graph: SchematicGraph
+) -> None:
+    """Promote a connector as the source of an external-input rail.
+
+    Boards always have one or more rails fed externally — a barrel jack, a
+    USB cable, a battery pack, a power header. Topology-wise the connector
+    IS the producer of those rails as far as the on-board graph is
+    concerned: no upstream regulator exists *on the board* to claim the
+    source. The connector pins for these rails are vision-labelled
+    `power_in` (power flowing INTO the pin from the external source),
+    which is why `_augment_sources_from_producer_pins` (looking for
+    `power_out` / `switch_node`) misses them.
+
+    Three guardrails keep this from misfiring on internal supply rails
+    delivered TO peripheral modules through a connector (camera, flash,
+    display — common on phone schematics):
+
+      1. **Label gate.** Only rail labels matching `_EXTERNAL_INPUT_RAIL`
+         qualify (anchored start+end). Internal-supply rails like
+         `PP1V8_CAM_WIDE_VDDIO_CONN` or `PP_STROBE_WARM_WIDE_LED` do not
+         match the pattern and are skipped.
+
+      2. **No-producer gate.** If ANY component on the rail (including
+         passives like ferrites or inductors) has a `power_out` or
+         `switch_node` pin, we skip — that means there's an on-board
+         producer (or a passive bridge delivering an upstream rail) and
+         the connector is downstream, not source.
+
+      3. **Connector-with-power_in gate.** At least one connector must
+         have a `power_in` pin on the rail. Without it there's no
+         candidate.
+
+    Picks the lowest refdes deterministically when multiple connectors
+    qualify (e.g. multiple USB ports sharing VBUS via the system charger,
+    common on multi-port hubs and laptop motherboards).
+
+    Runs LAST in the source-augmentation chain so on-board producers
+    (regulators, passive bridges, rail aliases) always win — this is the
+    fallback for the small set of rails that genuinely have no on-board
+    producer.
+    """
+    for label, rail in rails.items():
+        if rail.source_refdes is not None:
+            continue
+        if not _EXTERNAL_INPUT_RAIL.match(label):
+            continue
+        has_producer = False
+        connector_candidates: set[str] = set()
+        for ref, comp in graph.components.items():
+            for pin in comp.pins:
+                if pin.net_label != label:
+                    continue
+                if pin.role in _PRODUCER_PIN_ROLES:
+                    has_producer = True
+                    break
+                if comp.type == "connector" and pin.role == "power_in":
+                    connector_candidates.add(ref)
+            if has_producer:
+                break
+        if has_producer or not connector_candidates:
+            continue
+        chosen = sorted(connector_candidates)[0]
+        rail.source_refdes = chosen
+        rail.source_type = _infer_source_type(graph, chosen)
 
 
 # ----------------------------------------------------------------------
