@@ -156,7 +156,14 @@ async def extract_page(
         "complete SchematicPageGraph payload. Respect all hard rules from the "
         "system prompt. Null / empty over fabrication. A real schematic page "
         "is expected to populate ALL of: `nodes`, `nets`, `typed_edges`, and "
-        "`designer_notes` — empty arrays are a red flag, not the goal."
+        "`designer_notes` — empty arrays are a red flag, not the goal. On "
+        "pinout / fanout pages where a single component carries 100+ pins, "
+        "expect 30-50+ distinct net labels: enumerate each as its own "
+        "PageNet, including index-suffix replicas (e.g. base names ending "
+        "in _0/_1/_2/_3 are distinct nets, not aliases of the bare base). "
+        "Small-print supply rails in corners or near auxiliary functional "
+        "blocks are the most commonly missed labels — read the whole image "
+        "systematically, not just the visually dominant region."
     )
     if grounding:
         instruction += (
