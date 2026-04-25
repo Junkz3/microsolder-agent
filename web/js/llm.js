@@ -226,152 +226,6 @@ function escapeHTML(s) {
     .replaceAll("'", "&#39;");
 }
 
-// ============ Inline tool-call widgets (guided mode) ============
-//
-// In guided mode the main workbench is hidden behind the fullscreen chat.
-// When the agent calls a side-effecting tool (bv_*, mb_schematic_graph) we
-// drop a small "click-to-reveal" card into the chat that lets the user
-// surface the corresponding workbench section. The actual side effect (e.g.
-// bv_focus on the main #brdRoot) already happened via the existing WS
-// handler — the widget is just an affordance for the user to *see* it.
-
-const BV_TOOL_NAMES = new Set([
-  "bv_highlight_component", "bv_focus_component", "bv_highlight_net",
-  "bv_flip_board", "bv_annotate", "bv_filter_by_type", "bv_draw_arrow",
-  "bv_measure_distance", "bv_show_pin", "bv_dim_unrelated",
-  "bv_layer_visibility", "bv_reset_view",
-]);
-
-function summariseSchematicInput(input) {
-  const query = (input && input.query) || "info";
-  const titleMap = { simulate: "Simulateur", hypothesize: "Hypothèses" };
-  const summaryMap = {
-    simulate: "Simulation lancée — clique pour voir la timeline du boot.",
-    hypothesize: "Hypothèses générées — clique pour voir le classement des candidats.",
-  };
-  return {
-    title: titleMap[query] || "Schéma",
-    summary: summaryMap[query] || "Schéma disponible — clique pour ouvrir.",
-  };
-}
-
-function summariseBvInput(input) {
-  if (!input || typeof input !== "object") return "";
-  const parts = [];
-  if (input.refdes) parts.push(input.refdes);
-  if (input.net) parts.push(`net ${input.net}`);
-  if (input.kind) parts.push(input.kind);
-  return parts.join(" · ");
-}
-
-function appendChatWidget(turn, { title, kind, summary, detailSection }) {
-  // Widget is a sibling of .turn-rail inside the turn — keeps grouping intact.
-  const wrap = document.createElement("div");
-  wrap.className = `chat-widget chat-widget-${kind}`;
-
-  const head = document.createElement("header");
-  head.className = "chat-widget-head";
-  const titleSpan = document.createElement("span");
-  titleSpan.className = "chat-widget-title";
-  titleSpan.textContent = title;
-  head.appendChild(titleSpan);
-
-  const detailBtn = document.createElement("button");
-  detailBtn.type = "button";
-  detailBtn.className = "chat-widget-detail";
-  detailBtn.textContent = "voir en détail →";
-  detailBtn.addEventListener("click", () => enterDetailView(detailSection));
-  head.appendChild(detailBtn);
-  wrap.appendChild(head);
-
-  const body = document.createElement("div");
-  body.className = "chat-widget-body placeholder";
-  body.textContent = summary || "(aucune cible)";
-  wrap.appendChild(body);
-
-  turn.appendChild(wrap);
-  const log = document.getElementById("llmLog");
-  if (log) log.scrollTop = log.scrollHeight;
-  return wrap;
-}
-
-// ============ Detail-view machinery ============
-//
-// Toggles body.detail-view + body.dataset.detailSection. Reveals the matching
-// .stub or .sch-root via CSS rules in guided.css. Adds a "← retour" button.
-
-const SECTION_STUB_MAP = {
-  pcb: '.stub[data-section-stub="pcb"]',
-  schematic: '.sch-root[data-section-stub="schematic"]',
-  graphe: '.stub[data-section-stub="graphe"]',
-  memory: '.stub[data-section-stub="graphe"]',  // memory bank merges into graphe view per existing routing
-};
-
-function enterDetailView(section) {
-  if (!section || !SECTION_STUB_MAP[section]) return;
-  if (!document.body.classList.contains("guided-mode")) return;
-
-  // Clear any previous .detail-target marker
-  document.querySelectorAll(".detail-target").forEach(el => el.classList.remove("detail-target"));
-
-  const target = document.querySelector(SECTION_STUB_MAP[section]);
-  if (!target) {
-    console.warn(`[detail-view] no DOM target for section "${section}"`);
-    return;
-  }
-  target.classList.remove("hidden");
-  target.classList.add("detail-target");
-
-  document.body.classList.add("detail-view");
-  document.body.dataset.detailSection = section;
-
-  // Inject the back button if not present.
-  let back = document.getElementById("detailBack");
-  if (!back) {
-    back = document.createElement("button");
-    back.id = "detailBack";
-    back.type = "button";
-    back.className = "detail-back";
-    back.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg><span>retour conversation</span>`;
-    back.addEventListener("click", exitDetailView);
-    document.body.appendChild(back);
-  }
-
-  // Update active tab in topbar.
-  document.querySelectorAll(".tb-tab").forEach(t => {
-    t.classList.toggle("active", t.dataset.detail === section);
-  });
-}
-
-function exitDetailView() {
-  document.body.classList.remove("detail-view");
-  delete document.body.dataset.detailSection;
-  document.querySelectorAll(".detail-target").forEach(el => {
-    el.classList.remove("detail-target");
-    el.classList.add("hidden");  // restore the section's default-hidden state
-  });
-  document.querySelectorAll(".tb-tab").forEach(t => t.classList.remove("active"));
-}
-
-// Topbar tab clicks → enter detail view on the matched section.
-function wireTopbarTabsOnce() {
-  if (window.__guidedTabsWired) return;
-  window.__guidedTabsWired = true;
-  document.addEventListener("click", (ev) => {
-    const tab = ev.target.closest(".tb-tab");
-    if (!tab) return;
-    const section = tab.dataset.detail;
-    if (!section) return;
-    if (document.body.classList.contains("detail-view") &&
-        document.body.dataset.detailSection === section) {
-      exitDetailView();
-    } else {
-      enterDetailView(section);
-    }
-  });
-}
-wireTopbarTabsOnce();
-
 // Create a fresh turn-block container and append it to the log.
 function createTurn() {
   const log = el("llmLog");
@@ -811,28 +665,6 @@ function connect() {
           ...(payload.result != null ? { result: payload.result } : {}),
         };
         addExpandToStep(step, payloadJSON);
-
-        // Guided mode: pop a click-to-reveal widget for board / schematic tools.
-        if (document.body.classList.contains("guided-mode")) {
-          const input = payload.input || {};
-          if (BV_TOOL_NAMES.has(name)) {
-            appendChatWidget(turn, {
-              title: "Boardview",
-              kind: "board",
-              summary: summariseBvInput(input) || name,
-              detailSection: "pcb",
-            });
-          }
-          if (name === "mb_schematic_graph") {
-            const { title, summary } = summariseSchematicInput(input);
-            appendChatWidget(turn, {
-              title,
-              kind: "schematic",
-              summary,
-              detailSection: "schematic",
-            });
-          }
-        }
         break;
       }
       case "thinking": {
@@ -941,79 +773,41 @@ async function loadConversations() {
 function renderConvItems() {
   const list = el("llmConvList");
   const label = el("llmConvLabel");
-  const guidedList = document.getElementById("gConvList");
-  // No render targets at all → nothing to do.
-  if (!list && !guidedList) return;
-
-  if (list) list.innerHTML = "";
-  if (guidedList) guidedList.innerHTML = "";
-
+  if (!list || !label) return;
+  list.innerHTML = "";
   if (conversationsCache.length === 0) {
-    if (label) label.textContent = "CONV 0/0";
-    if (guidedList) {
-      const empty = document.createElement("div");
-      empty.className = "g-empty";
-      empty.style.cssText = "font-size:11px;color:var(--text-3);padding:6px";
-      empty.textContent = "Aucune conversation pour ce repair.";
-      guidedList.appendChild(empty);
-    }
+    label.textContent = "CONV 0/0";
     return;
   }
-
   const activeIdx = Math.max(0, conversationsCache.findIndex(c => c.id === currentConvId));
-  if (label) label.textContent = `CONV ${activeIdx + 1}/${conversationsCache.length}`;
-
+  label.textContent = `CONV ${activeIdx + 1}/${conversationsCache.length}`;
   conversationsCache.forEach((c, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "conv-item" + (c.id === currentConvId ? " active" : "");
+    btn.dataset.convId = c.id;
     const tier = (c.tier || "fast").toLowerCase();
-    const titleRaw = (c.title || `Conversation ${idx + 1}`).slice(0, 80);
-    const title = escapeHTML(titleRaw);
+    const title = escapeHTML((c.title || `Conversation ${idx + 1}`).slice(0, 80));
     const cost = Number(c.cost_usd || 0);
     const ago = c.last_turn_at ? humanAgo(c.last_turn_at) : "—";
-
-    // Popover variant (expert mode)
-    if (list) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "conv-item" + (c.id === currentConvId ? " active" : "");
-      btn.dataset.convId = c.id;
-      btn.innerHTML =
-        `<span class="conv-item-head">` +
-          `<span class="conv-item-tier t-${tier}">${tier.toUpperCase()}</span>` +
-          `<span class="conv-item-title">${title}</span>` +
-        `</span>` +
-        `<span class="conv-item-meta">` +
-          `<span>${c.turns || 0} turn${(c.turns || 0) === 1 ? "" : "s"}</span>` +
-          `<span class="conv-item-sep">·</span>` +
-          `<span>${fmtUsd(cost)}</span>` +
-          `<span class="conv-item-sep">·</span>` +
-          `<span>${ago}</span>` +
-        `</span>`;
-      btn.addEventListener("click", () => {
-        if (c.id === currentConvId) { closeConvPopover(); return; }
-        switchConv(c.id);
-        closeConvPopover();
-      });
-      list.appendChild(btn);
-    }
-
-    // Guided sidebar variant — minimal, two lines, textContent-safe.
-    if (guidedList) {
-      const gbtn = document.createElement("button");
-      gbtn.type = "button";
-      gbtn.className = "g-conv-item-btn" + (c.id === currentConvId ? " active" : "");
-      const titleSpan = document.createElement("span");
-      titleSpan.textContent = titleRaw;
-      const metaSpan = document.createElement("span");
-      metaSpan.className = "g-conv-item-meta";
-      metaSpan.textContent = `${tier} · ${c.turns || 0} t · ${ago}`;
-      gbtn.appendChild(titleSpan);
-      gbtn.appendChild(metaSpan);
-      gbtn.addEventListener("click", () => {
-        if (c.id === currentConvId) return;
-        switchConv(c.id);
-      });
-      guidedList.appendChild(gbtn);
-    }
+    btn.innerHTML =
+      `<span class="conv-item-head">` +
+        `<span class="conv-item-tier t-${tier}">${tier.toUpperCase()}</span>` +
+        `<span class="conv-item-title">${title}</span>` +
+      `</span>` +
+      `<span class="conv-item-meta">` +
+        `<span>${c.turns || 0} turn${(c.turns || 0) === 1 ? "" : "s"}</span>` +
+        `<span class="conv-item-sep">·</span>` +
+        `<span>${fmtUsd(cost)}</span>` +
+        `<span class="conv-item-sep">·</span>` +
+        `<span>${ago}</span>` +
+      `</span>`;
+    btn.addEventListener("click", () => {
+      if (c.id === currentConvId) { closeConvPopover(); return; }
+      switchConv(c.id);
+      closeConvPopover();
+    });
+    list.appendChild(btn);
   });
 }
 

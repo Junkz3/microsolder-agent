@@ -80,11 +80,7 @@ function updateChrome(section, deviceSlug, pack) {
     if (!deviceSlug) {
       mode = {tag: "ATTENTE", sub: "Aucune réparation en cours", color: "amber"};
     } else if (isPackComplete(pack)) {
-      mode = {
-        tag: "MÉMOIRE",
-        sub: document.body.classList.contains("guided-mode") ? "Ce que je sais" : "Graphe de connaissances",
-        color: "cyan",
-      };
+      mode = {tag: "MÉMOIRE", sub: "Graphe de connaissances", color: "cyan"};
     } else if (pack) {
       mode = {tag: "CONSTRUCTION", sub: "Mémoire en cours", color: "amber"};
     } else {
@@ -325,41 +321,4 @@ export async function leaveSession() {
     loadHomePacks(), loadTaxonomy(), loadRepairs(),
   ]);
   renderHome(packs, taxonomy, repairs);
-}
-
-// ============ Mode (guidé / expert) ============
-//
-// The shell has two modes:
-//   - guided  : landing + Claude.ai-style repair workspace (default)
-//   - expert  : original pro-tool workbench with the rail (current behavior)
-//
-// State is stored on `<body>` as `guided-mode` or `expert-mode` and persisted
-// in localStorage under "microsolder.mode". The rest of the app reads from
-// these classes via plain CSS selectors (no JS event bus needed).
-
-const MODE_KEY = "microsolder.mode";
-export const MODES = Object.freeze({ GUIDED: "guided", EXPERT: "expert" });
-
-export function getMode() {
-  const raw = localStorage.getItem(MODE_KEY);
-  return raw === MODES.EXPERT ? MODES.EXPERT : MODES.GUIDED;
-}
-
-export function setMode(mode) {
-  const next = mode === MODES.EXPERT ? MODES.EXPERT : MODES.GUIDED;
-  localStorage.setItem(MODE_KEY, next);
-  applyModeClass(next);
-}
-
-export function toggleMode() {
-  setMode(getMode() === MODES.GUIDED ? MODES.EXPERT : MODES.GUIDED);
-}
-
-function applyModeClass(mode) {
-  document.body.classList.toggle("guided-mode", mode === MODES.GUIDED);
-  document.body.classList.toggle("expert-mode", mode === MODES.EXPERT);
-}
-
-export function initMode() {
-  applyModeClass(getMode());
 }
