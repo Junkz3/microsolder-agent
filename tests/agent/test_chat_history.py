@@ -9,8 +9,10 @@ import pytest
 from api import config as config_mod
 from api.agent.chat_history import (
     append_event,
+    build_ctx_tag,
     ensure_conversation,
     load_events,
+    strip_ctx_tag,
     touch_status,
 )
 
@@ -251,3 +253,77 @@ def test_save_and_load_ma_session_id_per_tier(tmp_path, monkeypatch):
         device_slug="demo-pi", repair_id="r1", conv_id=conv_id, tier="deep",
         memory_root=tmp_path,
     ) is None
+
+
+def _write_repair_meta(tmp_path, slug: str, rid: str, payload: dict) -> None:
+    target = tmp_path / slug / "repairs" / f"{rid}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_build_ctx_tag_includes_label_and_symptom(tmp_path):
+    _write_repair_meta(
+        tmp_path,
+        "iphone-x",
+        "r42",
+        {
+            "device_label": "iPhone X",
+            "symptom": "pas de boot, écran noir",
+        },
+    )
+    tag = build_ctx_tag(
+        device_slug="iphone-x", repair_id="r42", memory_root=tmp_path
+    )
+    assert tag == "[ctx · device=iPhone X (iphone-x) · symptôme=pas de boot, écran noir]"
+
+
+def test_build_ctx_tag_falls_back_to_slug_when_no_meta(tmp_path):
+    tag = build_ctx_tag(
+        device_slug="iphone-x", repair_id="r-missing", memory_root=tmp_path
+    )
+    # No meta file → label defaults to slug, no symptom segment.
+    assert tag == "[ctx · device=iphone-x (iphone-x)]"
+
+
+def test_build_ctx_tag_omits_symptom_when_empty(tmp_path):
+    _write_repair_meta(
+        tmp_path, "macbook-air", "r1", {"device_label": "MacBook Air", "symptom": "  "}
+    )
+    tag = build_ctx_tag(
+        device_slug="macbook-air", repair_id="r1", memory_root=tmp_path
+    )
+    assert tag == "[ctx · device=MacBook Air (macbook-air)]"
+
+
+def test_build_ctx_tag_returns_none_without_repair_id(tmp_path):
+    assert (
+        build_ctx_tag(device_slug="iphone-x", repair_id=None, memory_root=tmp_path)
+        is None
+    )
+
+
+def test_strip_ctx_tag_peels_leading_tag():
+    text = "[ctx · device=iPhone X (iphone-x) · symptôme=foo]\n\nSalut, j'ai un souci"
+    assert strip_ctx_tag(text) == "Salut, j'ai un souci"
+
+
+def test_strip_ctx_tag_no_op_when_absent():
+    text = "Salut, juste un message normal"
+    assert strip_ctx_tag(text) == text
+
+
+def test_strip_ctx_tag_returns_empty_on_tag_only():
+    assert strip_ctx_tag("[ctx · device=foo]") == ""
+
+
+def test_strip_ctx_tag_then_intro_strip_chains_correctly():
+    """The managed runtime peels ctx_tag first, then bootstrap intro markers."""
+    from api.agent.runtime_managed import _strip_intro_wrapper
+
+    body = (
+        "[ctx · device=iPhone X (iphone-x) · symptôme=écran noir]\n\n"
+        "[Nouvelle session de diagnostic]\n"
+        "Device: iPhone X (slug: iphone-x)\n\n---\n\n"
+        "Salut"
+    )
+    assert _strip_intro_wrapper(body) == "Salut"

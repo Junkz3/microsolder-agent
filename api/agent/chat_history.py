@@ -375,6 +375,55 @@ def build_session_intro(
     return "\n".join(lines)
 
 
+CTX_TAG_PREFIX = "[ctx ·"
+
+
+def build_ctx_tag(
+    *,
+    device_slug: str,
+    repair_id: str | None,
+    memory_root: Path | None = None,
+) -> str | None:
+    """Compose a single-line context tag prepended to every user turn.
+
+    Smaller models (Haiku especially) don't reliably scan the full session
+    history when greeted with a fresh terse message — they treat "salut" as
+    a context-free hello and forget the device + symptom carried by the
+    bootstrap intro on turn 1. Restating both as a stable prefix on every
+    user message keeps that context in the foreground for ~25 tokens/turn,
+    which is also a stable cache hit after the first turn.
+
+    Returns None when no repair_id is given (anonymous sessions don't have
+    a known symptom to restate).
+    """
+    if not repair_id:
+        return None
+    meta = load_repair_metadata(
+        device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
+    )
+    label = (meta or {}).get("device_label") or device_slug
+    symptom = ((meta or {}).get("symptom") or "").strip()
+    if symptom:
+        return f"{CTX_TAG_PREFIX} device={label} ({device_slug}) · symptôme={symptom}]"
+    return f"{CTX_TAG_PREFIX} device={label} ({device_slug})]"
+
+
+def strip_ctx_tag(text: str) -> str:
+    """Peel a leading `[ctx · …]` line from `text`, if present.
+
+    Keeps the chat panel replay clean — without this, the per-turn ctx
+    prefix would show up in front of every replayed user message. Safe
+    no-op when no tag is present.
+    """
+    if not text.startswith(CTX_TAG_PREFIX):
+        return text
+    nl = text.find("\n\n")
+    if nl < 0:
+        # Tag-only message with no content — surface as empty.
+        return ""
+    return text[nl + 2 :]
+
+
 def touch_status(
     *,
     device_slug: str,

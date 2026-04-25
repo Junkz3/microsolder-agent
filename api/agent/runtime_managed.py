@@ -28,12 +28,14 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from api.agent.chat_history import (
     append_event,
+    build_ctx_tag,
     build_session_intro,
     ensure_conversation,
     list_conversations,
     load_events,
     load_ma_session_id,
     save_ma_session_id,
+    strip_ctx_tag,
     touch_conversation,
 )
 from api.agent.dispatch_bv import dispatch_bv
@@ -113,11 +115,15 @@ _INTRO_MARKERS = (
 def _strip_intro_wrapper(text: str) -> str | None:
     """Drop the hidden bootstrap prefix prepended to the first real user turn.
 
-    Returns the trailing real-user portion, or None if the whole message was
-    intro (so the summary caller skips it entirely).
+    Peels the per-turn `[ctx · …]` tag first (added on every user turn so
+    Haiku doesn't lose device + symptom context on resume), then peels the
+    one-shot intro markers if present. Returns the trailing real-user
+    portion, or None if everything was prefix (so the summary caller skips
+    the message entirely).
     """
+    text = strip_ctx_tag(text)
     if not text.startswith(_INTRO_MARKERS):
-        return text
+        return text or None
     marker = "\n\n---\n\n"
     idx = text.rfind(marker)
     if idx < 0:
@@ -859,6 +865,14 @@ async def run_diagnostic_session_managed(
             parts.append(device_intro)
         parts.append(f"[CONTEXTE TECHNICIEN]\n{tech_block}")
         intro = "\n\n---\n\n".join(parts) if parts else None
+
+    # Per-turn context tag — prepended to EVERY user message so smaller models
+    # (Haiku in particular) keep the device + symptom in their foreground even
+    # on terse follow-ups like "salut" / "ok" after a resume. ~25 tokens, stable
+    # prefix so prompt caching covers it after the first turn.
+    ctx_tag = build_ctx_tag(
+        device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
+    )
     if recovery_summary:
         await ws.send_json(
             {
@@ -920,6 +934,7 @@ async def run_diagnostic_session_managed(
                 client,
                 session.id,
                 pending_intro=intro,
+                ctx_tag=ctx_tag,
                 repair_id=repair_id,
                 device_slug=device_slug,
                 conv_id=resolved_conv_id,
@@ -1044,11 +1059,12 @@ async def _replay_ma_history_to_ws(
                 if getattr(block, "type", None) != "text":
                     continue
                 text = getattr(block, "text", "") or ""
-                # Drop the bootstrap intro prefix (we prepend it to the first
-                # real user message in _forward_ws_to_session). The prefix now
-                # contains both the device context and technician profile blocks,
-                # separated by "---" markers. Use rfind to skip all prefix parts
-                # and surface only the tech's actual text.
+                # Drop the per-turn ctx tag (prepended to every user message
+                # so Haiku never loses device + symptom) and the bootstrap
+                # intro prefix (only on the very first real user message,
+                # carries the device context + technician profile blocks
+                # separated by "---" markers).
+                text = strip_ctx_tag(text)
                 if text.startswith(
                     (
                         "[Nouvelle session de diagnostic]",
@@ -1122,6 +1138,7 @@ async def _forward_ws_to_session(
     session_id: str,
     *,
     pending_intro: str | None = None,
+    ctx_tag: str | None = None,
     repair_id: str | None = None,
     device_slug: str | None = None,
     conv_id: str | None = None,
@@ -1133,6 +1150,10 @@ async def _forward_ws_to_session(
     message so the agent sees (device context + reported symptom) and the
     tech's actual question in a single turn — avoids the empty-ack turn
     that happens when context is sent in isolation.
+
+    When `ctx_tag` is set, it is prepended to EVERY user message as a
+    stable, cacheable single-line prefix that restates the device +
+    symptom — keeps Haiku from losing context on later turns.
     """
     intro_pending = pending_intro
     first_user_seen = False
@@ -1208,6 +1229,8 @@ async def _forward_ws_to_session(
                 from api.agent.chat_history import touch_status
 
                 touch_status(device_slug=device_slug, repair_id=repair_id, status="in_progress")
+        if ctx_tag:
+            text = ctx_tag + "\n\n" + text
         await client.beta.sessions.events.send(
             session_id,
             events=[

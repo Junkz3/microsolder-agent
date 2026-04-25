@@ -23,6 +23,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from api.agent.chat_history import (
     append_event,
+    build_ctx_tag,
     build_session_intro,
     ensure_conversation,
     list_conversations,
@@ -234,6 +235,8 @@ async def _replay_history_to_ws(
     replay=true right after the text block so the session running total
     reflects the true lifetime spend.
     """
+    from api.agent.chat_history import strip_ctx_tag
+
     if not records:
         return
     await ws.send_json({"type": "history_replay_start", "count": len(records)})
@@ -241,7 +244,9 @@ async def _replay_history_to_ws(
         role = msg.get("role")
         content = msg.get("content")
         if role == "user" and isinstance(content, str):
-            await ws.send_json({"type": "message", "role": "user", "text": content})
+            await ws.send_json(
+                {"type": "message", "role": "user", "text": strip_ctx_tag(content)}
+            )
         elif role == "assistant" and isinstance(content, list):
             for block in content:
                 btype = block.get("type") if isinstance(block, dict) else None
@@ -590,6 +595,13 @@ async def run_diagnostic_session_direct(
         for m in messages
     )
 
+    # Per-turn context tag — restated on EVERY user message so smaller models
+    # don't lose device + symptom on terse follow-ups. ~25 tokens, stable
+    # cacheable prefix.
+    ctx_tag = build_ctx_tag(
+        device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
+    )
+
     import asyncio as _asyncio
 
     from api.tools.measurements import set_ws_emitter
@@ -661,7 +673,8 @@ async def run_diagnostic_session_direct(
                 )
                 first_user_seen = True
 
-            user_msg = {"role": "user", "content": user_text}
+            tagged_text = f"{ctx_tag}\n\n{user_text}" if ctx_tag else user_text
+            user_msg = {"role": "user", "content": tagged_text}
             messages.append(user_msg)
             if resolved_conv_id and not is_trigger:
                 append_event(
