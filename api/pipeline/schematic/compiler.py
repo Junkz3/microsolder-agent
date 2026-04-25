@@ -206,6 +206,7 @@ def _derive_power_rails(graph: SchematicGraph) -> dict[str, PowerRail]:
     _augment_consumers_from_pins(rails, graph)
     _augment_sources_from_producer_pins(rails, graph)
     _propagate_sources_through_passive_bridges(rails, graph)
+    _propagate_sources_through_rail_aliases(rails, graph)
 
     # Final scrub: a regulator never consumes its own output. The vision pass
     # occasionally emits a `powered_by(regulator, rail)` edge alongside the
@@ -341,6 +342,47 @@ def _propagate_sources_through_passive_bridges(
                 r1.source_refdes = r2.source_refdes
                 if r2.source_type:
                     r1.source_type = r2.source_type
+                changed = True
+
+
+def _propagate_sources_through_rail_aliases(
+    rails: dict[str, PowerRail], graph: SchematicGraph
+) -> None:
+    """Forward-propagate `source_refdes` across rail-to-rail `powers` edges.
+
+    Apple-style SoC schematics emit `powers` edges between two rail labels
+    (e.g. `PP_CPU_PCORE -> VDD_CPU`, `PP1V2_SOC -> VDD12_PLL_CPU`) on the
+    chip pin-list page. Physically these are the SAME net under two names:
+    the package label (PP_*) and the die-side internal label (VDD_*). The
+    `powers` edge between them is a label rename, not a component
+    producer claim — and the existing strict `powers` rule above skips it
+    because neither endpoint is in `graph.components`.
+
+    Treat such an edge as an alias and let the downstream rail inherit its
+    upstream rail's source. Additive: only fills `source_refdes` when None
+    (never overrides an existing producer). Iterates to a fixed point so
+    chains `A -> B -> C` propagate cleanly. Pure no-op on schematics with
+    no rail-to-rail edges (e.g. mnt-reform-motherboard).
+    """
+    aliases: list[tuple[str, str]] = []
+    for edge in graph.typed_edges:
+        if edge.kind != "powers":
+            continue
+        if edge.src in rails and edge.dst in rails:
+            aliases.append((edge.src, edge.dst))
+    if not aliases:
+        return
+
+    changed = True
+    while changed:
+        changed = False
+        for src_label, dst_label in aliases:
+            src_rail = rails[src_label]
+            dst_rail = rails[dst_label]
+            if src_rail.source_refdes and not dst_rail.source_refdes:
+                dst_rail.source_refdes = src_rail.source_refdes
+                if src_rail.source_type:
+                    dst_rail.source_type = src_rail.source_type
                 changed = True
 
 
