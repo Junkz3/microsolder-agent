@@ -66,3 +66,28 @@ def test_rejects_payload_that_doesnt_decode_to_boardview(tmp_path: Path):
     f.write_bytes(_obfuscate("just some prose, no boardview markers at all\n"))
     with pytest.raises(InvalidBoardFile):
         TVWParser().parse_file(f)
+
+
+def test_rejects_production_binary_tvw_with_clear_hint(tmp_path: Path):
+    """A binary-layout production TVW file (Tebo IctView 3.0/4.0 native
+    output — little-endian ints + Pascal strings + layer sections) must
+    get a clear error pointing the user at the format-scope note. The
+    rotation-cipher parser cannot decode the binary container."""
+    from api.board.parser.base import ObfuscatedFileError
+
+    # Synthetic binary-TVW-looking payload: Pascal string "Teboview" then
+    # a pile of little-endian int32s and colour bytes. ~60% non-printable.
+    binary_blob = bytes(
+        [8] + list(b"Teboview")  # Pascal string header
+        + [0x00, 0x00, 0x00, 0x01]  # uint32 unknown
+        + [4] + list(b"Main")
+        + [0x33]  # section marker
+        + list(range(256)) * 2  # 512 bytes of entropy
+    )
+    f = tmp_path / "prod.tvw"
+    f.write_bytes(binary_blob)
+    with pytest.raises(ObfuscatedFileError) as exc:
+        TVWParser().parse_file(f)
+    msg = str(exc.value)
+    assert "binary-layout" in msg or "binary" in msg
+    assert "rotation-cipher" in msg or "ASCII variant" in msg
