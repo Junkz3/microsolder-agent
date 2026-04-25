@@ -27,7 +27,7 @@ Per CLAUDE.md hard rule #4 (**open hardware only**), we commit fixtures under `b
 | `.bv` | ATE Boardview | ATE | `bv.py::BVParser` | **DONE** | Test_Link-shape ASCII; banner line ignored. |
 | `.gr` | BoardView R5.0 | generic | `gr.py::GRParser` | **DONE** | Variant markers `Components:` / `TestPoints:` plus canonical fallback. |
 | `.cst` | Card Analysis ST | IBM/Lenovo | `cst.py::CSTParser` | **DONE** | Bracketed `[Components]` / `[Pins]` / `[Nails]` sections, no var_data prelude. |
-| `.tvw` | Tebo IctView | Tebo | `tvw.py::TVWParser` | **DONE** | Rotation cipher (digits 3, alpha 10). Variant files with extra obfuscation fail gracefully. |
+| `.tvw` | Tebo IctView | Tebo | `tvw.py::TVWParser` | **PARTIAL** | Rotation cipher (digits 3, alpha 10) handles the ASCII variant. Production binary layout (Pascal strings + layer sections per `fileformat-tvw.txt`) is detected and rejected with a clear hint — proper support is out of scope for v1. |
 | `.f2b` | Unisoft ProntoPLACE | Unisoft | `f2b.py::F2BParser` | **DONE** | Test_Link-shape with `Outline:` / `Components:` + `Annotations:` skip. |
 | `.cad` | Generic CAD | BoardViewer 2.1.0.8 | `cad.py::CADParser` | **DONE** | Umbrella: sniffs `BRDOUT:` → BRD2Parser or falls back to Test_Link (both-case markers). |
 
@@ -57,6 +57,18 @@ Until then the stub file exists so that:
 ## Fixtures policy for binary / obfuscated formats
 
 For the three Family-B formats (`.fz`, `.bdv`, `.tvw`) we can't ship a real-world proprietary binary in the repo. Each parser's test suite therefore generates its synthetic fixture at authoring time by running the symmetric encoder on a plaintext Test_Link payload. The committed fixture is the encoded bytes; a "fixture-is-genuinely-encoded" test guards against the encoder silently regressing to a no-op. Real ASUS `.fz` files additionally require the user's 44×32-bit key (via `MICROSOLDER_FZ_KEY` or the constructor) — this stays a runtime concern.
+
+## Testing real-world files
+
+When a technician has a legitimate copy of a real boardview file (iPhone, ThinkPad, whatever lands on the bench — brand-unrestricted at runtime per the Open-hardware-rule-is-repo-only memory note), drop the file into any of these three directories — first populated one wins:
+
+1. Path set via `MICROSOLDER_REAL_BOARDS_DIR` env var
+2. `/tmp/microsolder-real-boards/`
+3. `~/Downloads/microsolder-real-boards/`
+
+Then `pytest tests/board/test_real_files_runner.py -v -s` parametrises one test per file, asserts the parse either succeeds or raises a documented known-limitation error (fz-key-missing, binary-TVW), cross-validates pin→part and net→pin on the real bytes, and prints a PASS summary with counts. Nothing in that dir is committed.
+
+Verified against `whitequark/kicad-boardview/example/example.brd` (245 parts / 1130 pins / 251 nets — a real open-hardware BRD2 file, distinct from the MNT Reform committed fixture) transcoded through the test serializer into every new parser's dialect: all 10 parsers reproduce the source topology exactly.
 
 ## References
 
