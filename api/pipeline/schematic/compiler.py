@@ -138,24 +138,46 @@ _RAIL_LABEL_NOISE = {
 # Token list covers the universal CMOS / ARM / Apple SoC ground conventions:
 #   - GND family: GND, AGND (analog), DGND (digital), PGND (power),
 #     SGND (signal), GNDA / GNDD (suffix-after-prefix variants used by
-#     TI / ON Semi, present on Apple SoC pin-list pages).
+#     TI / ON Semi, present on Apple SoC pin-list pages). Also `GROUND`
+#     spelled out (some block diagrams) and compact `GND<letter>` like
+#     `GNDP` (Apple BBPMU pages — power ground without underscore).
 #   - VSS family: VSS (universal CMOS substrate ground used by Apple,
 #     Arm, Intel), AVSS / DVSS (analog/digital substrate), VSSA / VSSD
 #     (alt spellings — same physical net, different style guide).
-# All accept an optional `_<SUFFIX>` qualifier to catch domain-tagged
-# ground nets (e.g. `AGND_RF`, `VSSA_PLL`). Standalone `_PMU_VSS_RTC`
-# style names with VSS in the MIDDLE are NOT matched here on purpose —
-# that token list is anchored at the start so we only catch labels that
-# *begin* with a ground keyword, never substrings buried in a rail name.
-_GROUND_LABEL = re.compile(
-    r"^(?:GND|AGND|DGND|PGND|SGND|GNDA|GNDD|VSS|AVSS|DVSS|VSSA|VSSD)(?:_[A-Z0-9]+)?$"
+# Two anchor styles:
+#   1. start-anchored — labels that BEGIN with a ground keyword (e.g.
+#      `AGND_RF`, `VSSA_PLL`, `GROUND`, `GNDP`).
+#   2. domain-prefixed (`<DOMAIN>_<ground-token>(_<SUFFIX>)?`) — Apple SoC
+#      pin-list pages and codec subblocks emit `CODEC_AGND`, `BBPMU_AGND_K`,
+#      `PMU_VSS_RTC` etc. where the ground keyword sits AFTER a domain
+#      qualifier. This style only matches when the underscore-separated
+#      tail token IS one of the ground keywords; arbitrary substrings
+#      buried in a rail name (`PP1V8_VSSADC_SENSE` would not match — VSS
+#      is not the head of a `_`-separated trailing segment) stay rails.
+_GROUND_LABEL_START = re.compile(
+    r"^(?:"
+    r"GROUND"                     # spelled-out
+    r"|GND[A-Z0-9]?"              # GND, GNDP, GNDA, GND0 — compact (no separator)
+    r"|[ADPS]?GND"                # GND, AGND, DGND, PGND, SGND
+    r"|VSS[AD]?"                  # VSS, VSSA, VSSD
+    r"|[AD]VSS"                   # AVSS, DVSS
+    r")(?:_[A-Z0-9]+)*$"
+)
+# Domain-prefixed: <DOMAIN>(_<MORE>)*_<ground-token>(_<SUFFIX>)?
+# Examples: CODEC_AGND, BBPMU_AGND_K, PMU_VSS_RTC.
+_GROUND_LABEL_DOMAIN = re.compile(
+    r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*"
+    r"_(?:GND|AGND|DGND|PGND|SGND|GNDA|GNDD|VSS|AVSS|DVSS|VSSA|VSSD)"
+    r"(?:_[A-Z0-9]+)?$"
 )
 
 
 def _is_noise_rail_label(label: str) -> bool:
     if label in _RAIL_LABEL_NOISE:
         return True
-    if _GROUND_LABEL.match(label):
+    if _GROUND_LABEL_START.match(label):
+        return True
+    if _GROUND_LABEL_DOMAIN.match(label):
         return True
     # OCR glitch — text overlapping wires makes pdfplumber double every letter
     # ('GND' -> 'GGNNDD'). Heuristic: run-length compression halves the length
@@ -605,7 +627,7 @@ def _augment_sources_from_external_connectors(
 #
 #   - V family: VDD/VCC/VEE/VREG/VREF/VBAT/VBUS — positive supplies.
 #     Ground variants (VSS / AVSS / DVSS) are deliberately EXCLUDED — they
-#     are filtered out as ground in `_GROUND_LABEL` and must not be promoted
+#     are filtered out as ground in `_is_noise_rail_label` and must not be promoted
 #     to nets.
 #   - A/D-prefixed: AVDD / AVCC / DVDD / DVCC — analog/digital domains.
 #   - Apple PP family: PP / VPP — package-side rail names.
