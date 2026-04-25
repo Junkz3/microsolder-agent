@@ -220,12 +220,18 @@ async def extract_page(
         tools=[_submit_page_tool()],
         forced_tool_name=SUBMIT_PAGE_TOOL_NAME,
         output_schema=SchematicPageGraph,
-        # A top-level fanout page with a 200+-pin SoM plus every cross-page
-        # ref can push beyond 32k output tokens (MNT page 1 hit the cap).
-        # 48k gives Sonnet comfortable headroom at a marginal cost increase
-        # — only the longest pages ever approach this ceiling; short pages
-        # stream less and pay nothing extra.
-        max_tokens=48000,
+        # Bumped 48000 → 60000 after diagnosing token-budget exhaustion as
+        # the see-saw root cause on dense pages. mnt-reform p2 baseline
+        # output was ~38.5k tokens (~80% of the old 48k cap), leaving little
+        # headroom for added prompt instructions. When the agent enriched
+        # the prompt (indexed-sibling sweep, edges completeness, role
+        # taxonomy), output approached/exceeded the cap on dense pages →
+        # tail fields (pin roles, late-page nets) got truncated → metrics
+        # on those fields cratered. The "intrinsic attention competition"
+        # diagnosis logged in session 15 was wrong; bumping max_tokens by
+        # ~25% gives headroom for richer extractions without the truncation
+        # tax. Opus 4.7 supports up to 64k output tokens.
+        max_tokens=60000,
         log_label=f"page_vision:page_{rendered.page_number}",
     )
 
