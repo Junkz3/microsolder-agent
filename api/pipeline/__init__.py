@@ -686,11 +686,28 @@ async def _run_expand_with_events(slug: str, symptom: str) -> None:
 
     Kicked off by `create_repair` when the pack already exists and the
     coverage classifier decided the new symptom is NOT covered by an
-    existing rule. Emits `expand_started` / `expand_finished` /
-    `expand_failed` on the same WS bus the full pipeline uses so the
-    landing UI can render a single progress indicator regardless of
-    which path fired."""
+    existing rule.
+
+    We emit events in two shapes simultaneously on the WS bus:
+
+    1. **Generic `pipeline_*` events** — same types the landing UI
+       listens for on a full pipeline run (`pipeline_started`,
+       `phase_started/finished` on a synthetic "expand" phase,
+       `pipeline_finished/failed`). Each carries `kind: "expand"` so
+       consumers that care can branch; consumers that don't can treat
+       the flow identically to a full run. This keeps the landing
+       timeline + auto-redirect working without frontend changes.
+    2. **Specific `expand_*` events** — in addition, so a future UI
+       that wants to render expand differently has a distinct stream.
+    """
     t0 = time.monotonic()
+    # Compat: landing.js / pipeline_progress.js listen for pipeline_started.
+    await events.publish(
+        slug,
+        {"type": "pipeline_started", "kind": "expand", "device_slug": slug, "symptom": symptom},
+    )
+    await events.publish(slug, {"type": "phase_started", "phase": "expand"})
+    # Specific flavour (optional consumers).
     await events.publish(slug, {"type": "expand_started", "symptom": symptom})
     try:
         summary = await expand_pack(
@@ -698,24 +715,41 @@ async def _run_expand_with_events(slug: str, symptom: str) -> None:
             focus_symptoms=[symptom],
         )
         elapsed = time.monotonic() - t0
+        counts = {
+            "new_rules_count": summary.get("new_rules_count", 0),
+            "new_components_count": summary.get("new_components_count", 0),
+            "total_rules_after": summary.get("total_rules_after", 0),
+        }
+        await events.publish(
+            slug,
+            {"type": "phase_finished", "phase": "expand", "elapsed_s": elapsed, "counts": counts},
+        )
+        await events.publish(slug, {"type": "expand_finished", "elapsed_s": elapsed, **counts})
+        # Compat: triggers landing goToWorkspace redirect.
         await events.publish(
             slug,
             {
-                "type": "expand_finished",
+                "type": "pipeline_finished",
+                "kind": "expand",
+                "device_slug": slug,
+                "status": "APPROVED",
                 "elapsed_s": elapsed,
-                "new_rules_count": summary.get("new_rules_count", 0),
-                "new_components_count": summary.get("new_components_count", 0),
-                "total_rules_after": summary.get("total_rules_after", 0),
+                **counts,
             },
         )
     except Exception as exc:  # noqa: BLE001 — bus delivery must not crash
         logger.exception("[API] expand_pack failed for slug=%r", slug)
+        elapsed = time.monotonic() - t0
+        await events.publish(slug, {"type": "expand_failed", "error": str(exc), "elapsed_s": elapsed})
+        # Compat: landing_failed branch.
         await events.publish(
             slug,
             {
-                "type": "expand_failed",
+                "type": "pipeline_failed",
+                "kind": "expand",
+                "status": "ERROR",
                 "error": str(exc),
-                "elapsed_s": time.monotonic() - t0,
+                "elapsed_s": elapsed,
             },
         )
 
