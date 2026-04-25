@@ -544,6 +544,28 @@ def _promote_ic_owning_switch_node_over_inductor(
 # are not at risk — they don't carry `_BUCK<n>` substrings.
 _BUCK_SELF_SENSE_PIN = re.compile(r"^V?VDD_BUCK\d+")
 
+# Rail-label pattern for charge-pump / boost-cell output rails on multi-cell
+# PMICs that name their cells in the rail label rather than at the pin.
+# Apple's ACORN charge pump (iPhone X U5600) is the canonical example: a
+# single IC carries multiple boost cells, each cell drives an external L+C
+# filter, the filtered output loops back into the chip on a `power_in` pin
+# for closed-loop control — exactly the buck self-sense topology, but the
+# chip designer named the pins generically (`VB`, `VG`) and pushed the cell
+# identifier into the rail label instead (`PP_BOOST1_ACORN`,
+# `PP5V45_BOOST2_ACORN`). The existing `_BUCK_SELF_SENSE_PIN` pin-name gate
+# misses these.
+#
+# Anchored start+end with explicit `_<NICK>` tail so we never partial-match
+# generic names like `PWR_BOOST` or `BOOST_5V` from KiCad / MCU schematics
+# that don't follow Apple's cell-named convention. Requires:
+#   - leading `PP` (Apple package-side rail prefix)
+#   - optional voltage segment (`<n>V<m>` like `5V45`)
+#   - mandatory `_BOOST<n>_` cell identifier
+#   - mandatory `<NICK>` tail (the IC's nickname — ACORN, RACER, …)
+_BOOST_OUTPUT_RAIL_LABEL = re.compile(
+    r"^PP(?:\d+V\d*)?_BOOST\d+_[A-Z][A-Z0-9_]*$"
+)
+
 
 def _recognize_buck_self_sense_outputs(
     rails: dict[str, PowerRail], graph: SchematicGraph
@@ -575,14 +597,18 @@ def _recognize_buck_self_sense_outputs(
          a consumer SoC like Apple A11 (U1000) with `VDD_CPU` /
          `VDD_GPU` `power_in` pins on its rails would be mis-attributed
          as the rails' producer.
-      4. IC X's pin connecting to R has role `power_in` and pin.name
-         matches `_BUCK_SELF_SENSE_PIN` — the universal SoC PMU buck
-         self-sense convention.
+      4. IC X's pin connecting to R has role `power_in` AND
+         (a) pin.name matches `_BUCK_SELF_SENSE_PIN` — the universal SoC
+             PMU buck self-sense convention, OR
+         (b) the rail label matches `_BOOST_OUTPUT_RAIL_LABEL` — Apple
+             ACORN-style charge-pump / boost-cell convention where the
+             cell identifier lives in the rail label (`PP_BOOST1_ACORN`)
+             rather than the pin name.
 
     Pure no-op on schematics that don't use this convention (mnt-reform
     KiCad-style boards, MAX*/LTC* point regulators with `VOUT` / `OUT`
-    pin names instead). Empirically verified: zero `VDD_BUCK*` pins on
-    mnt-reform-motherboard.
+    pin names instead). Empirically verified: zero `VDD_BUCK*` pins and
+    zero `PP*_BOOST<n>_*` rails on mnt-reform-motherboard.
 
     Runs AFTER `_promote_ic_owning_switch_node_over_inductor` so the
     inductor-bridge path is preferred when both paths are available
@@ -638,7 +664,11 @@ def _recognize_buck_self_sense_outputs(
                 continue
             if pin.role != "power_in":
                 continue
-            if not pin.name or not _BUCK_SELF_SENSE_PIN.match(pin.name):
+            pin_name_matches = bool(
+                pin.name and _BUCK_SELF_SENSE_PIN.match(pin.name)
+            )
+            label_matches = bool(_BOOST_OUTPUT_RAIL_LABEL.match(label))
+            if not (pin_name_matches or label_matches):
                 continue
             rail.source_refdes = ic_ref
             rail.source_type = _infer_source_type(graph, ic_ref)
