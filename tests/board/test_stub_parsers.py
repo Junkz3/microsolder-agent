@@ -16,7 +16,6 @@ STUB_EXTENSIONS = [
     (".cst", "IBM Lenovo CAST"),
     (".tvw", "Tebo IctView"),
     (".f2b", "Unisoft ProntoPLACE"),
-    (".cad", "generic .cad"),
 ]
 
 
