@@ -315,12 +315,34 @@ function goToWorkspace(repairId, slug) {
   // the LLM chat panel via openLLMPanelIfRepairParam) rather than the
   // home / repair_dashboard which only surfaces findings + timeline.
   // The dashboard remains reachable via the left rail #home button.
-  const url = new URL(location.href);
-  url.searchParams.set("repair", repairId);
-  url.searchParams.set("device", slug);
-  url.searchParams.delete("landing");
-  url.hash = "#graphe";
-  location.href = url.toString();
+  //
+  // Strip the landing overlay first so a hash-only navigation (when
+  // the query params are already on the URL from a prior session)
+  // doesn't leave the overlay sitting on top of the freshly-loaded
+  // graph view.
+  hideLanding();
+  // Close any active progress WS so it can't fire late events (e.g. a
+  // duplicate pipeline_finished) onto the page after navigation.
+  if (progressWs && progressWs.readyState <= 1) {
+    try { progressWs.close(); } catch (_) {}
+  }
+  progressWs = null;
+
+  const target = new URL(location.origin + location.pathname);
+  target.searchParams.set("repair", repairId);
+  target.searchParams.set("device", slug);
+  target.hash = "#graphe";
+
+  // Force a real navigation. location.href to the same URL is a no-op
+  // and location.href to a hash-only delta does not reload the page —
+  // either case would leave the landing module's state inconsistent
+  // with the post-pipeline view. location.assign + reload on duplicate
+  // guarantees a clean bootstrap of main.js with the new query params.
+  if (target.toString() === location.href) {
+    location.reload();
+  } else {
+    location.assign(target.toString());
+  }
 }
 
 function onChipClick(ev) {
