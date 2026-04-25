@@ -404,6 +404,23 @@ class SimulationEngine:
                 rails[target_rail] = "degraded"
                 rail_voltage[target_rail] = max(0.0, min(1.0, v_drop_pct))
                 touched_rails.add(target_rail)
+                # Mark the failed cap itself as degraded — physically a leaking
+                # cap is in an abnormal state (high ESR, leakage current,
+                # possibly elevated temperature). Closes the asymmetry where
+                # the rail reflects the fault but the failed component does
+                # not (caps aren't in the boot sequence and stay at the
+                # pre-seed "off" state through the phase walk). NOT a
+                # self-dead pattern: the failure HAS an observable effect
+                # downstream (rail goes degraded), this assignment merely
+                # records the cap's own physical state correctly.
+                # No effect on `_cascade` (only "dead" feeds effective_dead);
+                # invisible to the current evaluator's symptom projection
+                # (which doesn't read degraded_components — see the companion
+                # propose-evaluator-fix). The richness IS surfaced in the
+                # timeline output consumed by `mb_schematic_graph` and the UI
+                # Boardview, so the agent can point at the specific leaking
+                # cap rather than just "something on VCC is leaking".
+                components[f.refdes] = "degraded"
                 continue
 
             if f.mode == "open":
