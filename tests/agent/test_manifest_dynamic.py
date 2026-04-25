@@ -49,18 +49,22 @@ def test_every_tool_has_name_description_input_schema() -> None:
         assert "properties" in tool["input_schema"]
 
 
-def test_manifest_without_board_has_only_mb_and_profile_tools() -> None:
-    from api.agent.manifest import PROFILE_TOOLS
+def test_manifest_without_board_has_only_mb_profile_protocol_tools() -> None:
+    from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS
     session = SessionState()  # board=None
     manifest = build_tools_manifest(session)
     names = {t["name"] for t in manifest}
-    expected = {t["name"] for t in MB_TOOLS} | {t["name"] for t in PROFILE_TOOLS}
+    expected = (
+        {t["name"] for t in MB_TOOLS}
+        | {t["name"] for t in PROFILE_TOOLS}
+        | {t["name"] for t in PROTOCOL_TOOLS}
+    )
     assert names == expected
-    assert len(manifest) == len(MB_TOOLS) + len(PROFILE_TOOLS)
+    assert len(manifest) == len(MB_TOOLS) + len(PROFILE_TOOLS) + len(PROTOCOL_TOOLS)
 
 
 def test_manifest_with_board_adds_bv_tools() -> None:
-    from api.agent.manifest import PROFILE_TOOLS
+    from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS
     session = _session_with_board()
     manifest = build_tools_manifest(session)
     names = {t["name"] for t in manifest}
@@ -68,9 +72,10 @@ def test_manifest_with_board_adds_bv_tools() -> None:
         {t["name"] for t in MB_TOOLS}
         | {t["name"] for t in BV_TOOLS}
         | {t["name"] for t in PROFILE_TOOLS}
+        | {t["name"] for t in PROTOCOL_TOOLS}
     )
     assert names == expected
-    assert len(manifest) == len(MB_TOOLS) + len(BV_TOOLS) + len(PROFILE_TOOLS)
+    assert len(manifest) == len(MB_TOOLS) + len(BV_TOOLS) + len(PROFILE_TOOLS) + len(PROTOCOL_TOOLS)
 
 
 def test_manifest_has_no_sch_tools_regardless_of_session() -> None:
@@ -132,3 +137,25 @@ def test_profile_tools_always_present() -> None:
 
     names_with_board = {t["name"] for t in build_tools_manifest(_session_with_board())}
     assert {"profile_get", "profile_check_skills", "profile_track_skill"} <= names_with_board
+
+
+def test_protocol_tools_in_manifest() -> None:
+    from api.agent.manifest import PROTOCOL_TOOLS
+    names = {t["name"] for t in PROTOCOL_TOOLS}
+    assert names == {
+        "bv_propose_protocol",
+        "bv_update_protocol",
+        "bv_record_step_result",
+        "bv_get_protocol",
+    }
+    for t in PROTOCOL_TOOLS:
+        assert len(t["description"]) <= 1024  # MA cap
+        assert "input_schema" in t
+
+
+def test_render_system_prompt_includes_protocol_section() -> None:
+    from api.agent.manifest import render_system_prompt
+    from api.session.state import SessionState
+    out = render_system_prompt(SessionState(), device_slug="demo")
+    assert "PROTOCOLE" in out or "protocol" in out.lower()
+    assert "bv_propose_protocol" in out

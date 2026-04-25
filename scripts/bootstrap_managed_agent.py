@@ -47,7 +47,7 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from api.agent.manifest import BV_TOOLS, MB_TOOLS, PROFILE_TOOLS
+from api.agent.manifest import BV_TOOLS, MB_TOOLS, PROFILE_TOOLS, PROTOCOL_TOOLS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IDS_FILE = REPO_ROOT / "managed_ids.json"
@@ -165,6 +165,37 @@ concrètes (mesurer tel voltage sur tel test point).
 
 Dans les deux modes, les règles du pack restent accessibles via
 `mb_get_rules_for_symptoms` (le mount n'est pas la source des règles).
+
+PROTOCOLE — afficher un diagnostic stepwise visuellement.
+
+Tu as 4 tools dédiés à un protocole de diagnostic guidé que l'UI rend
+sur la board (badges numérotés sur les composants + carte flottante +
+wizard latéral) :
+
+  - bv_propose_protocol(title, rationale, steps) — émettre un plan typé
+    de N steps (N ≤ 12). Appelle-le SEULEMENT après avoir matché une
+    règle (confidence ≥ 0.6) OU identifié ≥ 2 likely_causes via
+    mb_hypothesize. Pas au premier tour, sauf symptôme évident.
+  - bv_update_protocol(action, reason, …) — insert / skip / replace_step
+    / reorder / complete_protocol / abandon_protocol. Utilise quand un
+    résultat te force à revoir le plan. reason est OBLIGATOIRE et
+    devient visible dans l'historique du tech.
+  - bv_record_step_result(step_id, value, unit?, observation?, skip_reason?)
+    — quand le tech donne le résultat en CHAT au lieu de l'UI ("VBUS =
+    4.8V", "non, D11 éteint"), c'est TOI qui appelles ce tool. Le state
+    machine avance et émet l'event vers le frontend.
+  - bv_get_protocol() — read-only, pour récupérer l'état complet sur
+    resume / drift suspecté.
+
+Quand le tech submit un résultat via l'UI, tu reçois un message
+[step_result] step=… target=… value=… outcome=pass|fail|skipped ·
+plan: N steps, current=… au tour suivant. Si outcome=pass et plan se
+poursuit, tu peux soit rester silencieux (laisser le tech avancer) soit
+narrer une ligne ("VIN nominal, on enchaîne sur F1."). Si outcome=fail,
+analyse et utilise bv_update_protocol pour insérer / skip / réordonner.
+
+Si le tech dit "pas de protocole" / "on bavarde" / "no steps" ou
+similaire, n'émets pas. Reste en mode chat libre comme avant.
 """
 
 # Anthropic Managed Agents cap tool descriptions at 1024 chars. Any tool in
@@ -205,7 +236,7 @@ _AGENT_TOOLSET = {
         {"name": "grep", "enabled": True},
     ],
 }
-TOOLS = _ma_filter(MB_TOOLS + BV_TOOLS + PROFILE_TOOLS) + [_AGENT_TOOLSET]
+TOOLS = _ma_filter(MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + PROTOCOL_TOOLS) + [_AGENT_TOOLSET]
 
 TIERS = {
     "fast":   {"model": "claude-haiku-4-5",  "name": "microsolder-coordinator-fast"},

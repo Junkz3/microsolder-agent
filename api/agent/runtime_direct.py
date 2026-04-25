@@ -188,7 +188,19 @@ async def _run_agent_turn(
             if block.type != "tool_use":
                 continue
             await ws.send_json({"type": "tool_use", "name": block.name, "input": block.input})
-            if block.name.startswith("bv_"):
+            if block.name in (
+                "bv_propose_protocol", "bv_update_protocol",
+                "bv_record_step_result", "bv_get_protocol",
+            ):
+                result = await _dispatch_protocol_tool(
+                    block.name,
+                    block.input or {},
+                    device_slug,
+                    memory_root,
+                    session,
+                    repair_id=repair_id,
+                )
+            elif block.name.startswith("bv_"):
                 result = dispatch_bv(session, block.name, block.input or {})
             elif block.name.startswith("profile_"):
                 result = _dispatch_profile_tool(block.name, block.input or {}, session=session)
@@ -204,7 +216,9 @@ async def _run_agent_turn(
                 )
             event = result.get("event")
             if result.get("ok") and event is not None:
-                await ws.send_json(event.model_dump(by_alias=True))
+                await ws.send_json(
+                    event if isinstance(event, dict) else event.model_dump(by_alias=True)
+                )
             result_for_agent = {k: v for k, v in result.items() if k != "event"}
             tool_results.append(
                 {
@@ -274,6 +288,142 @@ async def _replay_history_to_ws(
 
 
 logger = logging.getLogger("microsolder.agent.direct")
+
+
+async def _dispatch_protocol_tool(
+    name: str,
+    payload: dict,
+    device_slug: str,
+    memory_root: Path,
+    session: SessionState,
+    repair_id: str | None = None,
+) -> dict:
+    """Dispatch the 4 stepwise-protocol tools (bv_propose_protocol, bv_update_protocol,
+    bv_record_step_result, bv_get_protocol). Mirrors the branches in runtime_managed._dispatch_tool.
+    """
+    if name == "bv_propose_protocol":
+        from api.tools.protocol import (
+            StepInput as _SI,
+        )
+        from api.tools.protocol import (
+            propose_protocol as _propose,
+        )
+
+        valid_refdes = (
+            set(session.board.part_by_refdes().keys())
+            if session.board is not None
+            else None
+        )
+        try:
+            step_inputs = [_SI.model_validate(s) for s in payload.get("steps", [])]
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "reason": "invalid_step_input", "detail": str(exc)}
+        result = _propose(
+            memory_root=memory_root,
+            device_slug=device_slug,
+            repair_id=repair_id or "",
+            title=payload.get("title", ""),
+            rationale=payload.get("rationale", ""),
+            steps=step_inputs,
+            rule_inspirations=payload.get("rule_inspirations") or None,
+            valid_refdes=valid_refdes,
+        )
+        if result.get("ok"):
+            from api.tools.protocol import load_active_protocol
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            if proto is not None:
+                result["event"] = {
+                    "type": "protocol_proposed",
+                    "protocol_id": proto.protocol_id,
+                    "title": proto.title,
+                    "rationale": proto.rationale,
+                    "steps": [s.model_dump() for s in proto.steps],
+                    "current_step_id": proto.current_step_id,
+                }
+        return result
+
+    if name == "bv_update_protocol":
+        from api.tools.protocol import StepInput as _SI
+        from api.tools.protocol import update_protocol as _update
+
+        new_step_payload = payload.get("new_step")
+        new_step = None
+        if new_step_payload is not None:
+            try:
+                new_step = _SI.model_validate(new_step_payload)
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "reason": "invalid_new_step", "detail": str(exc)}
+        result = _update(
+            memory_root=memory_root,
+            device_slug=device_slug,
+            repair_id=repair_id or "",
+            action=payload.get("action", ""),
+            reason=payload.get("reason", ""),
+            step_id=payload.get("step_id"),
+            after=payload.get("after"),
+            new_step=new_step,
+            new_order=payload.get("new_order"),
+            verdict=payload.get("verdict"),
+        )
+        if result.get("ok"):
+            from api.tools.protocol import load_active_protocol
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            history_tail = proto.history[-3:] if proto is not None else []
+            result["event"] = {
+                "type": "protocol_updated",
+                "protocol_id": result.get("protocol_id"),
+                "action": payload.get("action"),
+                "current_step_id": result.get("current_step_id"),
+                "steps": [s.model_dump() for s in (proto.steps if proto else [])],
+                "history_tail": [h.model_dump() for h in history_tail],
+            }
+        return result
+
+    if name == "bv_record_step_result":
+        from api.tools.protocol import record_step_result as _record
+        result = _record(
+            memory_root=memory_root,
+            device_slug=device_slug,
+            repair_id=repair_id or "",
+            step_id=payload.get("step_id", ""),
+            value=payload.get("value"),
+            unit=payload.get("unit"),
+            observation=payload.get("observation"),
+            skip_reason=payload.get("skip_reason"),
+            submitted_by="agent",
+        )
+        if result.get("ok"):
+            from api.tools.protocol import load_active_protocol
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            history_tail = proto.history[-3:] if proto is not None else []
+            result["event"] = {
+                "type": "protocol_updated",
+                "protocol_id": result.get("protocol_id"),
+                "action": "step_completed",
+                "current_step_id": result.get("current_step_id"),
+                "steps": [s.model_dump() for s in (proto.steps if proto else [])],
+                "history_tail": [h.model_dump() for h in history_tail],
+            }
+        return result
+
+    if name == "bv_get_protocol":
+        from api.tools.protocol import load_active_protocol
+        proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+        if proto is None:
+            return {"ok": True, "active": False}
+        return {
+            "ok": True, "active": True,
+            "protocol_id": proto.protocol_id,
+            "title": proto.title,
+            "rationale": proto.rationale,
+            "current_step_id": proto.current_step_id,
+            "status": proto.status,
+            "steps": [s.model_dump() for s in proto.steps],
+            "history": [h.model_dump() for h in proto.history],
+        }
+
+    logger.warning("unknown protocol tool: %s", name)
+    return {"ok": False, "reason": "unknown-tool", "error": f"unknown protocol tool: {name}"}
 
 
 async def _dispatch_mb_tool(
@@ -534,6 +684,21 @@ async def run_diagnostic_session_direct(
         }
     )
 
+    # Hydrate any active protocol so the UI panel rebuilds on reconnect.
+    if repair_id:
+        from api.tools.protocol import load_active_protocol as _lap
+        active = _lap(memory_root, device_slug, repair_id or "")
+        if active is not None:
+            await ws.send_json({
+                "type": "protocol_proposed",
+                "protocol_id": active.protocol_id,
+                "title": active.title,
+                "rationale": active.rationale,
+                "steps": [s.model_dump(mode="json") for s in active.steps],
+                "current_step_id": active.current_step_id,
+                "replay": True,
+            })
+
     # NOTE: prompt + manifest are a snapshot of the session at open time.
     # If a future task supports loading a board mid-session, both must be
     # recomputed after `session.set_board(...)`.
@@ -620,6 +785,81 @@ async def run_diagnostic_session_direct(
                 incoming = json.loads(raw)
             except json.JSONDecodeError:
                 incoming = {"text": raw}
+
+            # Client submits a step result from the protocol UI panel.
+            # Record it, emit a protocol_updated WS event, then inject a
+            # synthetic user message so the agent can react to the outcome.
+            if isinstance(incoming, dict) and incoming.get("type") == "protocol_step_result":
+                from api.tools.protocol import (
+                    load_active_protocol,
+                )
+                from api.tools.protocol import (
+                    record_step_result as _record,
+                )
+                res = _record(
+                    memory_root=memory_root,
+                    device_slug=device_slug,
+                    repair_id=repair_id or "",
+                    step_id=incoming.get("step_id", ""),
+                    value=incoming.get("value"),
+                    unit=incoming.get("unit"),
+                    observation=incoming.get("observation"),
+                    skip_reason=incoming.get("skip_reason"),
+                    submitted_by="tech",
+                )
+                if res.get("ok"):
+                    proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+                    history_tail = proto.history[-3:] if proto is not None else []
+                    await ws.send_json({
+                        "type": "protocol_updated",
+                        "protocol_id": res.get("protocol_id"),
+                        "action": "step_completed",
+                        "current_step_id": res.get("current_step_id"),
+                        "steps": [s.model_dump(mode="json") for s in (proto.steps if proto else [])],
+                        "history_tail": [h.model_dump(mode="json") for h in history_tail],
+                    })
+                    target = ""
+                    if proto is not None:
+                        src_step = next(
+                            (s for s in proto.steps if s.id == incoming.get("step_id")),
+                            None,
+                        )
+                        if src_step is not None:
+                            target = src_step.target or src_step.test_point or ""
+                    synthetic = (
+                        f"[step_result] step={incoming.get('step_id', '')} target={target} "
+                        f"value={incoming.get('value')}{incoming.get('unit') or ''} "
+                        f"outcome={res.get('outcome')} · "
+                        f"plan: {len(proto.steps) if proto else 0} steps, "
+                        f"current={res.get('current_step_id') or 'completed'}"
+                    )
+                    user_msg = {"role": "user", "content": synthetic}
+                    messages.append(user_msg)
+                    if resolved_conv_id:
+                        append_event(
+                            device_slug=device_slug,
+                            repair_id=repair_id,
+                            conv_id=resolved_conv_id,
+                            event=user_msg,
+                            memory_root=memory_root,
+                        )
+                    await _run_agent_turn(
+                        ws=ws,
+                        client=client,
+                        model=model,
+                        system_prompt=system_prompt,
+                        tools=tools,
+                        messages=messages,
+                        session=session,
+                        device_slug=device_slug,
+                        repair_id=repair_id,
+                        conv_id=resolved_conv_id,
+                        memory_root=memory_root,
+                    )
+                else:
+                    await ws.send_json({"type": "error", "code": "protocol_result_rejected",
+                                         "text": res.get("reason", "unknown")})
+                continue
 
             # Intercept validation trigger events before they reach the agent
             # as ordinary messages. Synthesise a user-role prompt that asks

@@ -608,10 +608,135 @@ PROFILE_TOOLS: list[dict] = [
 ]
 
 
+PROTOCOL_TOOLS: list[dict] = [
+    {
+        "type": "custom",
+        "name": "bv_propose_protocol",
+        "description": (
+            "Émettre un protocole de diagnostic ordonné et typé que l'UI "
+            "rend visuellement (cartes flottantes sur la board + wizard "
+            "latéral, ou cartes inline si pas de board). Chaque step a un "
+            "type (numeric/boolean/observation/ack), un target refdes, une "
+            "instruction et un rationale. Appelle ce tool seulement après "
+            "avoir matché une règle (confidence ≥ 0.6) ou identifié ≥ 2 "
+            "likely_causes. UNE protocol active à la fois — réémettre en "
+            "remplace la précédente. Cap : 12 steps."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "rationale": {"type": "string"},
+                "rule_inspirations": {
+                    "type": "array", "items": {"type": "string"},
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["numeric", "boolean", "observation", "ack"],
+                            },
+                            "target": {"type": ["string", "null"]},
+                            "test_point": {"type": ["string", "null"]},
+                            "instruction": {"type": "string"},
+                            "rationale": {"type": "string"},
+                            "unit": {"type": ["string", "null"]},
+                            "nominal": {"type": ["number", "null"]},
+                            "pass_range": {
+                                "type": ["array", "null"],
+                                "items": {"type": "number"},
+                                "minItems": 2, "maxItems": 2,
+                            },
+                            "expected": {"type": ["boolean", "null"]},
+                        },
+                        "required": ["type", "instruction", "rationale"],
+                    },
+                },
+            },
+            "required": ["title", "rationale", "steps"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "bv_update_protocol",
+        "description": (
+            "Modifier la protocol active : insert (nouveau step après un "
+            "anchor), skip (le tech n'a pas l'outil ou tu décides de "
+            "passer), replace_step (un step pending qui n'a plus de sens), "
+            "reorder (les steps pending — l'active reste en tête), "
+            "complete_protocol (tout est fait, donne un verdict en 1 "
+            "phrase), abandon_protocol (le tech décline). reason est "
+            "obligatoire et sera loggé dans l'historique."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "insert", "skip", "replace_step", "reorder",
+                        "complete_protocol", "abandon_protocol",
+                    ],
+                },
+                "reason": {"type": "string"},
+                "step_id": {"type": ["string", "null"]},
+                "after": {"type": ["string", "null"]},
+                "new_step": {"type": ["object", "null"]},
+                "new_order": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                },
+                "verdict": {"type": ["string", "null"]},
+            },
+            "required": ["action", "reason"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "bv_record_step_result",
+        "description": (
+            "Persister le résultat d'un step toi-même (utile quand le tech "
+            "donne la valeur en chat plutôt que via l'UI : 'VBUS = 4.8V'). "
+            "Pour numeric, value est un nombre + unit. Pour boolean, "
+            "value est true/false. Pour observation, value est du texte. "
+            "Pour ack, value=null. skip_reason renseigné = step marqué "
+            "skipped sans mesure. Le state machine avance ensuite au step "
+            "suivant pending automatiquement."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "step_id": {"type": "string"},
+                "value": {},
+                "unit": {"type": ["string", "null"]},
+                "observation": {"type": ["string", "null"]},
+                "skip_reason": {"type": ["string", "null"]},
+            },
+            "required": ["step_id"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "bv_get_protocol",
+        "description": (
+            "Lire la protocol active complète (steps, statuses, results, "
+            "history). À utiliser quand tu reprends une session ou que tu "
+            "soupçonnes un drift d'état après une déconnexion. Retourne "
+            "{active: false} si aucune protocol active."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
+
 def build_tools_manifest(session: SessionState) -> list[dict]:
-    """Return the tools list for `session`. `profile_*` always present; `bv_*`
-    only when a board is loaded. Future: `sch_*` when a schematic is attached."""
-    manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS)
+    """Return the tools list for `session`. `profile_*` and `protocol_*` always
+    present; `bv_*` only when a board is loaded. Future: `sch_*` when a
+    schematic is attached."""
+    manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS) + list(PROTOCOL_TOOLS)
     if session.board is not None:
         manifest.extend(BV_TOOLS)
     return manifest
@@ -789,6 +914,37 @@ odeur de brûlé ». Propose UN test précis à la fois, pas une liste de
 trois options au tech. Le tech n'a pas forcément de thermal camera —
 demande-lui ce qu'il a avant de supposer. Si le scope par défaut est
 un multimètre + une PSU limitée + une main, reste là.
+
+PROTOCOLE — afficher un diagnostic stepwise visuellement.
+
+Tu as 4 tools dédiés à un protocole de diagnostic guidé que l'UI rend
+sur la board (badges numérotés sur les composants + carte flottante +
+wizard latéral) :
+
+  - bv_propose_protocol(title, rationale, steps) — émettre un plan typé
+    de N steps (N ≤ 12). Appelle-le SEULEMENT après avoir matché une
+    règle (confidence ≥ 0.6) OU identifié ≥ 2 likely_causes via
+    mb_hypothesize. Pas au premier tour, sauf symptôme évident.
+  - bv_update_protocol(action, reason, …) — insert / skip / replace_step
+    / reorder / complete_protocol / abandon_protocol. Utilise quand un
+    résultat te force à revoir le plan. reason est OBLIGATOIRE et
+    devient visible dans l'historique du tech.
+  - bv_record_step_result(step_id, value, unit?, observation?, skip_reason?)
+    — quand le tech donne le résultat en CHAT au lieu de l'UI ("VBUS =
+    4.8V", "non, D11 éteint"), c'est TOI qui appelles ce tool. Le state
+    machine avance et émet l'event vers le frontend.
+  - bv_get_protocol() — read-only, pour récupérer l'état complet sur
+    resume / drift suspecté.
+
+Quand le tech submit un résultat via l'UI, tu reçois un message
+[step_result] step=… target=… value=… outcome=pass|fail|skipped ·
+plan: N steps, current=… au tour suivant. Si outcome=pass et plan se
+poursuit, tu peux soit rester silencieux (laisser le tech avancer) soit
+narrer une ligne ("VIN nominal, on enchaîne sur F1."). Si outcome=fail,
+analyse et utilise bv_update_protocol pour insérer / skip / réordonner.
+
+Si le tech dit "pas de protocole" / "on bavarde" / "no steps" ou
+similaire, n'émets pas. Reste en mode chat libre comme avant.
 
 TIER. Quand tu tournes sur tier=fast (Haiku), tu es sous-dimensionné
 pour le diagnostic complexe (long tail, schéma touffu). Si tu ressens

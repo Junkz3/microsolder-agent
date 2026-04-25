@@ -36,9 +36,9 @@ from api.agent.field_reports import list_field_reports
 from api.config import get_settings
 from api.pipeline import events
 from api.pipeline.expansion import expand_pack
-from api.pipeline.phase_narrator import narrate_phase
 from api.pipeline.graph_transform import pack_to_graph_payload
 from api.pipeline.orchestrator import _slugify, generate_knowledge_pack
+from api.pipeline.phase_narrator import narrate_phase
 from api.pipeline.schemas import PipelineResult
 from api.pipeline.schematic.grounding import extract_grounding
 from api.pipeline.schematic.net_classifier import classify_nets
@@ -633,6 +633,26 @@ def list_repair_conversations(repair_id: str) -> dict:
     }
 
 
+@router.get("/repairs/{repair_id}/protocol")
+async def get_repair_protocol(repair_id: str, device_slug: str) -> dict:
+    """Return the active protocol artifact for this repair (or {active: false})."""
+    from api.tools.protocol import load_active_protocol
+    settings = get_settings()
+    proto = load_active_protocol(Path(settings.memory_root), device_slug, repair_id)
+    if proto is None:
+        return {"active": False}
+    return {
+        "active": True,
+        "protocol_id": proto.protocol_id,
+        "title": proto.title,
+        "rationale": proto.rationale,
+        "current_step_id": proto.current_step_id,
+        "status": proto.status,
+        "steps": [s.model_dump(mode="json") for s in proto.steps],
+        "history": [h.model_dump(mode="json") for h in proto.history],
+    }
+
+
 async def _run_pipeline_with_events(
     device_label: str,
     slug: str,
@@ -780,7 +800,7 @@ async def _maybe_check_coverage(
     slug: str,
     symptom: str,
     memory_root: Path,
-) -> "CoverageCheck":  # noqa: F821 — forward-only type ref
+) -> CoverageCheck:  # noqa: F821 — forward-only type ref
     """Call the Haiku coverage classifier; on any failure, fall back to
     an uncovered verdict so the expand-pack path still fires.
 
@@ -1463,7 +1483,9 @@ async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> 
     _s = get_settings()
     client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
-        from api.pipeline.schematic.boot_analyzer import analyze_boot_sequence  # lazy: module is optional WIP on evolve
+        from api.pipeline.schematic.boot_analyzer import (
+            analyze_boot_sequence,  # lazy: module is optional WIP on evolve
+        )
         analyzed = await analyze_boot_sequence(graph, client=client)
         (pack_dir / "boot_sequence_analyzed.json").write_text(analyzed.model_dump_json(indent=2))
         logger.info(
