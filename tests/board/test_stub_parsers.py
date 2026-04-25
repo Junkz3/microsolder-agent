@@ -13,7 +13,6 @@ STUB_EXTENSIONS = [
     (".fz", "PCB Repair Tool"),
     (".bdv", "HONHAN BoardViewer"),
     (".asc", "ASUS TSICT"),
-    (".bv", "ATE BoardView"),
     (".gr", "BoardView R5.0"),
     (".cst", "IBM Lenovo CAST"),
     (".tvw", "Tebo IctView"),
