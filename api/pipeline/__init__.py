@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from anthropic import APIConnectionError, APIError, APITimeoutError, AsyncAnthropic
+from anthropic import AsyncAnthropic
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -36,7 +36,6 @@ from api.agent.field_reports import list_field_reports
 from api.config import get_settings
 from api.pipeline import events
 from api.pipeline.expansion import expand_pack
-from api.pipeline.intent_classifier import IntentClassification, classify_intent
 from api.pipeline.phase_narrator import narrate_phase
 from api.pipeline.graph_transform import pack_to_graph_payload
 from api.pipeline.orchestrator import _slugify, generate_knowledge_pack
@@ -1743,24 +1742,6 @@ async def get_measurements(
         target=target,
         since=since,
     )
-
-
-class ClassifyIntentRequest(BaseModel):
-    # pattern requires at least one non-whitespace char — rejects blank/whitespace-only input as 422
-    text: str = Field(min_length=1, max_length=400, pattern=r"\S")
-
-
-@router.post("/classify-intent", response_model=IntentClassification)
-async def classify_intent_route(payload: ClassifyIntentRequest) -> IntentClassification:
-    """Run the landing-page intent classifier (Haiku forced tool)."""
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="Anthropic API key not configured")
-    client_anth = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
-    try:
-        return await classify_intent(payload.text.strip(), client=client_anth)
-    except (APIError, APIConnectionError, APITimeoutError, asyncio.TimeoutError) as exc:
-        raise HTTPException(status_code=503, detail=f"intent classifier failed: {exc}") from exc
 
 
 __all__ = ["router"]
