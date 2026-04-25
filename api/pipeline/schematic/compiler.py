@@ -24,6 +24,7 @@ from api.pipeline.schematic.schemas import (
     Ambiguity,
     BootPhase,
     ElectricalGraph,
+    NetNode,
     PowerRail,
     SchematicGraph,
     SchematicQualityReport,
@@ -102,10 +103,12 @@ def compile_electrical_graph(
                     rail.decoupling.append(refdes)
                 break
 
+    enriched_nets = _alias_nets_from_power_pin_names(graph)
+
     return ElectricalGraph(
         device_slug=graph.device_slug,
         components=enriched,
-        nets=graph.nets,
+        nets=enriched_nets,
         power_rails=power_rails,
         typed_edges=graph.typed_edges + depends_on,
         boot_sequence=boot_sequence,
@@ -483,6 +486,89 @@ def _propagate_sources_through_rail_aliases(
                 if src_rail.source_type:
                     dst_rail.source_type = src_rail.source_type
                 changed = True
+
+
+# ----------------------------------------------------------------------
+# Net aliasing — die-side power pin names
+# ----------------------------------------------------------------------
+
+# Power-supply naming convention shared by all major SoCs (Apple, Qualcomm,
+# MediaTek, Samsung, Intel, ARM partners). Anchored at start so we never
+# match substrings buried in a longer pin name.
+#
+#   - V family: VDD/VCC/VEE/VREG/VREF/VBAT/VBUS — positive supplies.
+#     Ground variants (VSS / AVSS / DVSS) are deliberately EXCLUDED — they
+#     are filtered out as ground in `_GROUND_LABEL` and must not be promoted
+#     to nets.
+#   - A/D-prefixed: AVDD / AVCC / DVDD / DVCC — analog/digital domains.
+#   - Apple PP family: PP / VPP — package-side rail names.
+#
+# An optional `[A-Z0-9_]*` tail captures the domain qualifier (e.g.
+# `VDD18_TSADC_CPU0`, `VDD_FIXED_PCIE_REFBUF`). Only matched against pin.name
+# — never against arbitrary text or labels — and only when the pin's role is
+# `power_in` / `power_out`, so signal pin names like `RXD` or coordinates
+# like `K1` are never promoted.
+_POWER_PIN_NAME_ALIAS = re.compile(
+    r"^(?:V(?:DD|CC|EE|REG|REF|BAT|BUS)|AVDD|AVCC|DVDD|DVCC|PP|VPP)[A-Z0-9_]*$"
+)
+_POWER_PIN_ALIAS_ROLES = frozenset({"power_in", "power_out"})
+
+
+def _alias_nets_from_power_pin_names(
+    graph: SchematicGraph,
+) -> dict[str, NetNode]:
+    """Promote die-side power pin names to NetNode aliases.
+
+    SoC schematics double-label power nets: the SAME wire carries the
+    package-side name (e.g. `PP1V1_S2`) on its trace and the die-side name
+    (e.g. `VDD_BYPASS`) at the IC pin. The vision pass captures the
+    package-side label as `pin.net_label` and the die-side label as
+    `pin.name` — but only the former enters `graph.nets`. The die-side name
+    is the canonical reference in datasheets and PMIC traces (« the
+    VDD_BYPASS rail »); a diagnostic agent should be able to resolve it
+    just like the package-side name.
+
+    For each component pin where:
+      - pin.role ∈ {power_in, power_out}, AND
+      - pin.name matches the universal power-net pattern, AND
+      - pin.name is not already a known net,
+    add a NetNode aliasing the connected net (same connects + page set,
+    is_power=True). Pure no-op when no such pins exist (mnt-reform-style
+    boards that don't emit `pin.name` for power pins).
+
+    The added entry is a real NetNode — `connects` is inherited from the
+    underlying physical net so downstream consumers (UI, diagnostic agent)
+    can walk it. We never alias if the pin's `net_label` is missing, so
+    no alias ever points to an empty connects list.
+
+    Ground-family names (VSS / AVSS / DVSS) are excluded by the regex.
+    Power rails are NOT touched — `eg.power_rails` keeps its original keys
+    so sourced/voltage invariants and rails counts are unchanged.
+    """
+    aliases: dict[str, NetNode] = dict(graph.nets)
+    for component in graph.components.values():
+        for pin in component.pins:
+            if pin.role not in _POWER_PIN_ALIAS_ROLES:
+                continue
+            name = pin.name
+            if not name or name in aliases:
+                continue
+            if not _POWER_PIN_NAME_ALIAS.match(name):
+                continue
+            net_label = pin.net_label
+            if not net_label:
+                continue
+            underlying = graph.nets.get(net_label)
+            if underlying is None:
+                continue
+            aliases[name] = NetNode(
+                label=name,
+                is_power=True,
+                is_global=underlying.is_global,
+                pages=list(underlying.pages),
+                connects=list(underlying.connects),
+            )
+    return aliases
 
 
 def _classify_rail_component(
