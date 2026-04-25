@@ -21,23 +21,40 @@ Per CLAUDE.md hard rule #4 (**open hardware only**), we commit fixtures under `b
 | `.brd` | Test_Link | Landrex (80s) | `test_link.py::BRDParser` | **DONE** | Refuses OBV-signature obfuscated files. Content-sniffed via `str_length:` marker. |
 | `.brd` | BRD2 | whitequark/kicad-boardview | `brd2.py::BRD2Parser` | **DONE** | Content-sniffed via `BRDOUT:` marker. 0BSD reference fixture at `web/boards/whitequark-example.brd`. |
 | `.kicad_pcb` | KiCad native | KiCad project | `kicad.py::KicadPcbParser` | **DONE** | Rich source — value, footprint, rotation, pad shape / size. Via `pcbnew` Python API. |
-| `.fz` | PCB Repair Tool | community reverse-eng | `fz.py::FZParser` | **PARTIAL** | XOR stream cipher structure implemented; needs `MICROSOLDER_FZ_KEY` (44×32-bit) and the ASUS keystream-derivation must match. Real-file validation pending. |
+| `.fz` | PCB Repair Tool / Boardview | mixed | `fz.py::FZParser` | **DONE (zlib variant)** / PARTIAL (XOR variant) | **FZ-zlib** is the dominant variant in the field — verified end-to-end on real Quanta BKL (2701 parts / 11438 pins / 1985 nets) and ASRock X470 (2833 / 11378 / 2018). 4-byte LE size + zlib + pipe-delimited columnar (`A!schema` / `S!data`). The OBV-documented XOR-key variant remains a fallback that needs `MICROSOLDER_FZ_KEY`. |
 | `.bdv` | HONHAN BoardViewer | HONHAN (CN) | `bdv.py::BDVParser` | **DONE** | Arithmetic cipher (key 160, incr, wraps 286→159). Algorithm publicly documented (piernov gist). Decodes to Test_Link ASCII. |
 | `.asc` | ASUS TSICT | ASUS | `asc.py::ASCParser` | **DONE** | Plain ASCII (confirmed via OBV issue #45). Accepts combined single-file or the five-file sub-directory layout. |
 | `.bv` | ATE Boardview | ATE | `bv.py::BVParser` | **SPECULATIVE** | Test_Link-shape ASCII variant only. No public spec — production `.bv` likely binary. Binary payloads detected and rejected with hint. |
 | `.gr` | BoardView R5.0 | generic | `gr.py::GRParser` | **SPECULATIVE** | Test_Link-shape ASCII with `Components:` / `TestPoints:` markers. No public spec — production `.gr` likely binary. Binary detection in place. |
 | `.cst` | Card Analysis ST | IBM/Lenovo | `cst.py::CSTParser` | **SPECULATIVE** | Test_Link-shape ASCII with `[Components]` / `[Pins]` / `[Nails]` sections. Castw v3.32 is a 1990s tool with no published spec — production likely binary. Binary detection in place. |
-| `.tvw` | Tebo IctView | Tebo | `tvw.py::TVWParser` | **PARTIAL** | Rotation cipher (digits 3, alpha 10) for the ASCII variant. Production binary layout (`fileformat-tvw.txt`: Pascal strings + layer sections) is **detected and rejected** with a clear hint — proper binary support is out of scope for v1. |
+| `.tvw` | Tebo IctView | Tebo | `tvw.py::TVWParser` | **PARTIAL** | Rotation cipher (digits 3, alpha 10) for the ASCII variant. Production binary layout (`fileformat-tvw.txt`: Pascal strings + layer sections) is **detected and rejected** with a clear hint — verified on a real Gigabyte H610M `.tvw`. Proper binary support is out of scope for v1. |
 | `.f2b` | Unisoft ProntoPLACE | Unisoft | `f2b.py::F2BParser` | **SPECULATIVE** | Test_Link-shape with `Outline:` / `Components:` markers + `Annotations:` skip. Unisoft labels `.f2b` as proprietary "complete board save" — production almost certainly binary. Binary detection in place. |
-| `.cad` | Generic CAD | BoardViewer 2.1.0.8 | `cad.py::CADParser` | **DONE** for BRD2 / **SPECULATIVE** for Test_Link | Umbrella. The `BRDOUT:` sniff path delegates to `BRD2Parser` and is verified against real open-hardware BRD2 (245p/1130pins). Test_Link fallback is best-effort with binary detection. |
+| `.cad` | GenCAD 1.4 / BRD2 / Test_Link | Mentor / various | `cad.py::CADParser` | **DONE** | Umbrella verified on real ASUS Prime A520M (3442p/11049pins) and GRANGER 6050A2977701 (1451p/5711pins) — both ship as **GenCAD 1.4**. Dispatch order: FZ-zlib sniff → GenCAD `$HEADER`/`GENCAD` sniff → BRD2 `BRDOUT:` sniff → Test_Link fallback (with binary-detection guard). |
+
+### Real-board verification status
+
+Concrete topology stats for files validated end-to-end (via `tests/board/test_real_files_runner.py` against `/tmp/microsolder-real-boards/`):
+
+| Source board                                  | Format     | Parts | Pins   | Nets  | Nails |
+|-----------------------------------------------|------------|-------|--------|-------|-------|
+| Quanta BKL DABKLMB28A0 (BoardView)            | FZ-zlib    | 2 701 | 11 438 | 1 985 |     0 |
+| ASRock X470 Master SLI/AC                     | FZ-zlib    | 2 833 | 11 378 | 2 018 |     0 |
+| ASUS Prime A520M-A II                         | GenCAD 1.4 | 3 442 | 11 049 | 1 705 |     0 |
+| GRANGER 6050A2977701 MB A01                   | GenCAD 1.4 | 1 451 |  5 711 | 1 083 |     0 |
+| LPM-2 MB 18809-2 0GU05                        | BRD2       | 3 829 | 14 771 | 2 729 | 1 539 |
+| Gigabyte H610M H DDR4 r1.0                    | TVW binary |   —   |    —   |   —   |   —   |
+| MNT Reform Motherboard (CERN-OHL-S-2.0, repo) | BRD2       |   493 |  2 104 |   647 |     5 |
+| whitequark example (0BSD, repo)               | BRD2       |   245 |  1 130 |   251 |    19 |
+
+Total real bytes parsed across the seven non-rejected boards: ~25 400 parts, ~68 000 pins, ~10 400 nets, ~1 565 nails.
 
 ### Confidence levels
 
-- **DONE** — verified against real open-hardware data (or a publicly documented algorithm that decoded a real file in the wild).
-- **PARTIAL** — structurally implemented, but a real-world signal is missing (`.fz` needs the ASUS key; `.tvw` needs the binary container walker).
-- **SPECULATIVE** — no public format specification; assumes a Test_Link-shape ASCII variant observed in some redistributions but the production native format is almost certainly a different binary container. Each speculative parser detects clearly-binary payloads and raises `ObfuscatedFileError` with a specific hint instead of silently emitting an empty `Board`.
+- **DONE** — verified against real open-hardware data or against a publicly documented algorithm decoding a real file in the wild.
+- **PARTIAL** — structurally implemented, but a real-world signal is missing (`.fz` XOR variant needs the ASUS key; `.tvw` binary needs a container walker).
+- **SPECULATIVE** — no public format specification and no real sample to-date; assumes a Test_Link-shape ASCII variant observed in some redistributions but the production native format is almost certainly a different binary container. Each speculative parser detects clearly-binary payloads and raises `ObfuscatedFileError` with a specific hint instead of silently emitting an empty `Board`.
 
-When real samples become available (technician uploads or publicly-distributed open-hardware boards), promote SPECULATIVE → DONE by either confirming the ASCII assumption holds or by reverse-engineering the actual binary layout.
+When real samples land for `.bv` / `.gr` / `.cst` / `.f2b`, drop them in `/tmp/microsolder-real-boards/` and run the runner — either the ASCII assumption holds (promote SPECULATIVE → DONE), or the runner surfaces a clean binary-rejection hint giving us the next reverse-engineering target.
 
 ## Unified model
 
