@@ -88,17 +88,24 @@ def _assert_invariants(board: Board, expected_src: str):
                 f"{board.pins[ref].part_refdes}"
             )
 
-    # --- 5. pin.index is 1-based and strictly monotonic within each part ---
+    # --- 5. pin.index values are positive integers ---
+    # We deliberately do NOT assert uniqueness. Real connectors and CPU
+    # sockets carry multiple physical pads per logical pin number — a
+    # USB CN_UCB header has front + back contacts both labelled pin 1,
+    # an LGA1331 socket has multiple test pads per BGA ball. Synthetic
+    # fixtures use 1..N contiguous indexing; real boards don't. We also
+    # don't require "starts at 1" or "monotonic" — the FZ-zlib pins
+    # section iterates by net, not by part, so the first pin we see for
+    # a given component is whichever appears first in the source file.
+    # The unique identity of a pin is (part_refdes, index, pos), not just
+    # (part_refdes, index) — `validator.resolve_pin` returns the first
+    # matching pad which is the right behavior for "go to pin 5".
     for part in board.parts:
         indices = [board.pins[r].index for r in part.pin_refs]
-        if indices:
-            assert indices[0] == 1, (
-                f"part {part.refdes}: first pin.index is {indices[0]}, expected 1"
+        for idx in indices:
+            assert idx >= 1, (
+                f"part {part.refdes}: pin.index must be >= 1, got {idx}"
             )
-            for a, b in zip(indices, indices[1:], strict=False):
-                assert b == a + 1, (
-                    f"part {part.refdes}: pin indices not contiguous: {indices}"
-                )
 
     # --- 6. bbox is (min, max) normalized ---
     for part in board.parts:

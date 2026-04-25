@@ -85,20 +85,78 @@ def test_real_file_parses_or_raises_known_limitation(path: Path):
     except BoardParserError as exc:
         pytest.fail(f"{path.name}: unexpected parser error: {exc}")
 
-    # Parse succeeded — sanity-check the topology on the real data.
+    # Parse succeeded — apply the full consistency-invariants suite on the
+    # real data so a regression in any parser surfaces here, not later in
+    # the agent or UI layer.
     assert board.parts, f"{path.name}: 0 parts"
     assert board.pins, f"{path.name}: 0 pins"
-    # pin → part cross-resolution
-    refdes = {p.refdes for p in board.parts}
-    for pin in board.pins:
-        assert pin.part_refdes in refdes, (
-            f"{path.name}: pin refers to unknown part {pin.part_refdes}"
+
+    # --- string invariants ---
+    refdes_set: set[str] = set()
+    for part in board.parts:
+        assert isinstance(part.refdes, str) and part.refdes, (
+            f"{path.name}: part has empty/non-str refdes"
         )
-    # net → pin cross-resolution
+        assert part.refdes not in refdes_set, (
+            f"{path.name}: duplicate refdes {part.refdes!r}"
+        )
+        refdes_set.add(part.refdes)
+
+    # --- pin → part cross-resolution ---
+    for i, pin in enumerate(board.pins):
+        assert pin.part_refdes in refdes_set, (
+            f"{path.name}: pin {i} refers to unknown part {pin.part_refdes!r}"
+        )
+
+    # --- parts[k].pin_refs ↔ pins[ref].part_refdes consistency ---
+    for part in board.parts:
+        for ref in part.pin_refs:
+            assert 0 <= ref < len(board.pins)
+            assert board.pins[ref].part_refdes == part.refdes
+
+    # --- pin.index positive (connectors/sockets legitimately repeat
+    # indices: a USB connector has front + back pads sharing the same
+    # logical pin number, a CPU socket has multiple test pads per BGA
+    # ball — not duplicates, real physical reality) ---
+    for part in board.parts:
+        idxs = [board.pins[r].index for r in part.pin_refs]
+        assert all(i >= 1 for i in idxs), (
+            f"{path.name}: {part.refdes} non-positive pin.index"
+        )
+
+    # --- bbox normalised (min, max) ---
+    for part in board.parts:
+        lo, hi = part.bbox
+        assert lo.x <= hi.x and lo.y <= hi.y, (
+            f"{path.name}: {part.refdes} bbox not normalised"
+        )
+
+    # --- net → pin cross-resolution ---
+    net_names: set[str] = set()
     for net in board.nets:
+        assert isinstance(net.name, str) and net.name, (
+            f"{path.name}: empty net name"
+        )
+        net_names.add(net.name)
         for ref in net.pin_refs:
             assert 0 <= ref < len(board.pins)
-            assert board.pins[ref].net == net.name
+            assert board.pins[ref].net == net.name, (
+                f"{path.name}: net {net.name!r} ref={ref} mismatch with "
+                f"pin.net={board.pins[ref].net!r}"
+            )
+
+    # --- every named pin.net resolves to a Net entry ---
+    for i, pin in enumerate(board.pins):
+        if pin.net is not None:
+            assert pin.net in net_names, (
+                f"{path.name}: pin {i} net={pin.net!r} not in board.nets"
+            )
+
+    # --- pin position must be int (Point.x/y are int mils) ---
+    for pin in board.pins:
+        assert isinstance(pin.pos.x, int) and isinstance(pin.pos.y, int), (
+            f"{path.name}: non-int pin position"
+        )
 
     print(
         f"REAL  {path.name:30} PASS  "
