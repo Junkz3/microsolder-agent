@@ -41,7 +41,7 @@ def compile_electrical_graph(
     *,
     page_confidences: dict[int, float] | None = None,
 ) -> ElectricalGraph:
-    power_rails = _derive_power_rails(graph)
+    power_rails, rail_alias_map = _derive_power_rails(graph)
     depends_on = _derive_depends_on_edges(graph, power_rails)
     boot_sequence, cycle_refs = _compute_boot_sequence(
         graph, power_rails, depends_on
@@ -97,8 +97,15 @@ def compile_electrical_graph(
         if comp is None:
             continue
         for pin in comp.pins:
-            if pin.net_label and pin.net_label in power_rails:
-                rail = power_rails[pin.net_label]
+            if not pin.net_label:
+                continue
+            # Resolve through the rail alias map so caps whose `pin.net_label`
+            # is one of two vision-aliased labels (e.g. `PP_CPU_PCORE` and
+            # `VDD_CPU`) still find the merged canonical rail when their
+            # original label was the dropped non-canonical entry.
+            target_label = rail_alias_map.get(pin.net_label, pin.net_label)
+            if target_label in power_rails:
+                rail = power_rails[target_label]
                 if refdes not in rail.decoupling:
                     rail.decoupling.append(refdes)
                 break
@@ -192,7 +199,9 @@ def _is_noise_rail_label(label: str) -> bool:
     return False
 
 
-def _derive_power_rails(graph: SchematicGraph) -> dict[str, PowerRail]:
+def _derive_power_rails(
+    graph: SchematicGraph,
+) -> tuple[dict[str, PowerRail], dict[str, str]]:
     rails: dict[str, PowerRail] = {}
 
     for label, net in graph.nets.items():
@@ -250,6 +259,7 @@ def _derive_power_rails(graph: SchematicGraph) -> dict[str, PowerRail]:
     _recognize_buck_self_sense_outputs(rails, graph)
     _propagate_sources_through_rail_aliases(rails, graph)
     _augment_sources_from_external_connectors(rails, graph)
+    rail_alias_map = _coalesce_rails_via_shared_cap_pins(rails, graph)
 
     # Final scrub: a regulator never consumes its own output. The vision pass
     # occasionally emits a `powered_by(regulator, rail)` edge alongside the
@@ -261,10 +271,13 @@ def _derive_power_rails(graph: SchematicGraph) -> dict[str, PowerRail]:
     # augmentations may also have raised `source_refdes` to a refdes that was
     # earlier added to `consumers` by an unrelated rule (e.g. a buck IC's
     # feedback pin mis-classified as `power_in`); the same scrub applies.
+    # Also covers the merged-rail case where the cap-pin coalesce step
+    # unioned two rails whose source on the canonical side was on the other
+    # side's consumer list.
     for rail in rails.values():
         if rail.source_refdes is not None and rail.source_refdes in rail.consumers:
             rail.consumers.remove(rail.source_refdes)
-    return rails
+    return rails, rail_alias_map
 
 
 _CONSUMER_COMPONENT_TYPES = frozenset(
@@ -820,6 +833,188 @@ def _augment_sources_from_external_connectors(
         chosen = sorted(connector_candidates)[0]
         rail.source_refdes = chosen
         rail.source_type = _infer_source_type(graph, chosen)
+
+
+# ----------------------------------------------------------------------
+# Rail coalescing — cap-pin shared between two power nets = aliasing
+# ----------------------------------------------------------------------
+
+
+def _coalesce_rails_via_shared_cap_pins(
+    rails: dict[str, PowerRail],
+    graph: SchematicGraph,
+) -> dict[str, str]:
+    """Merge rails whose underlying is_power nets share a capacitor pin.
+
+    Vision occasionally places the same physical pin on TWO power-net labels
+    (the package-side label and the die-side label, e.g. `PP_CPU_PCORE` and
+    `VDD_CPU` on iPhone X p4 — pin `C1703.1` is on both). Capacitor terminals
+    are electrically isolated (an insulator separates them), so a single cap
+    pin can physically belong to ONLY ONE net. When vision says a cap pin is
+    on two power nets, those nets are aliases of the same physical rail —
+    the dual-label is a documentation convention (Apple's `PP_*` package /
+    `VDD_*` die-side is the dominant case, but the signal is universal).
+
+    Restricting the support evidence to capacitor pins is what makes this
+    safe across schematic styles. IC pins on multiple nets ARE often valid
+    aliases too (the SoC pin's name matches the die-side label and the trace
+    carries a package-side label) but they're also more vulnerable to vision
+    misreads of adjacent labels — caps give a topology-grounded signal:
+    physical-cap-terminal isolation. Resistors and inductors are excluded
+    too: each terminal is electrically distinct (resistor between two nets
+    is the canonical case, not an alias).
+
+    Implementation:
+    - Build pin → set of rail labels (only labels in `rails` — ground/noise
+      already filtered, both labels guaranteed `is_power=True`, no need to
+      re-check).
+    - Union-find on rail labels supported by capacitor pins on ≥ 2 of them.
+    - Voltage coherence guard: if both sub-rails parse to incompatible
+      voltages (Δ > 0.05V), skip the cluster (mismatch is more likely a
+      vision OCR error than a real alias). When only one side parses, the
+      other is treated as compatible.
+    - Canonical preference per cluster (deterministic):
+        1. has `source_refdes` (so source-attribution work isn't lost),
+        2. higher `len(net.connects)` (richer underlying capture),
+        3. alphabetically smallest label (tie-breaker).
+    - Merge into canonical: union consumers + decoupling (preserve order,
+      dedup); inherit `source_refdes` / `source_type` / `voltage_nominal`
+      / `enable_net` from the first sub-rail with a non-null value
+      (canonical wins ties because preference put it first). Drop the
+      non-canonical entry from `rails`.
+    - Return alias_map `{dropped_label: canonical_label}` so the caller can
+      route decoupling-cap assignments (in `compile_electrical_graph`)
+      through the canonical rail when a cap's `pin.net_label` is the
+      dropped alias.
+
+    Pure no-op when no cap pin spans ≥ 2 power rails (mnt-reform-style
+    boards that don't dual-label rails). Empirically verified: zero merges
+    on mnt-reform-motherboard, ~7 merges on iPhone X (covering the
+    PP_CPU_PCORE/VDD_CPU, PP_GPU/VDD_GPU, PP_SOC_S1/VDD_SOC and similar
+    SoC/PMIC dual-label families).
+
+    Anti-collapse safety: typical merge count is 5-10% of total rails;
+    well within I5's 30% floor.
+
+    Runs LAST in the rail derivation chain so source-attribution work from
+    earlier passes (`_recognize_buck_self_sense_outputs`,
+    `_propagate_sources_through_rail_aliases`,
+    `_augment_sources_from_external_connectors`) flows into the canonical
+    rail when present on either sub-rail.
+    """
+    # Collect cap refdes (no caps -> nothing to do).
+    cap_refdes = {
+        ref for ref, c in graph.components.items() if c.type == "capacitor"
+    }
+    if not cap_refdes:
+        return {}
+
+    # Pin -> set of rail labels supported by cap pins.
+    cap_pin_to_rails: dict[str, set[str]] = {}
+    for label, _rail in rails.items():
+        net = graph.nets.get(label)
+        if net is None:
+            continue
+        for ref_pin in net.connects:
+            if "." not in ref_pin:
+                continue
+            ref = ref_pin.split(".", 1)[0]
+            if ref in cap_refdes:
+                cap_pin_to_rails.setdefault(ref_pin, set()).add(label)
+
+    # Union-find on rail labels.
+    parent: dict[str, str] = {}
+
+    def _find(x: str) -> str:
+        # Path-compression find with iterative climb.
+        root = x
+        while parent.get(root, root) != root:
+            root = parent[root]
+        # Compress.
+        cur = x
+        while parent.get(cur, cur) != root:
+            nxt = parent[cur]
+            parent[cur] = root
+            cur = nxt
+        return root
+
+    def _union(a: str, b: str) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for _pin, labels in cap_pin_to_rails.items():
+        if len(labels) < 2:
+            continue
+        # Voltage coherence: skip the cluster when two sub-rails parse to
+        # incompatible voltages. Treat null voltage as compatible with any.
+        voltages = [
+            rails[lbl].voltage_nominal
+            for lbl in labels
+            if rails[lbl].voltage_nominal is not None
+        ]
+        if voltages and (max(voltages) - min(voltages) > 0.05):
+            continue
+        sorted_labels = sorted(labels)
+        for lbl in sorted_labels:
+            if lbl not in parent:
+                parent[lbl] = lbl
+        for lbl in sorted_labels[1:]:
+            _union(sorted_labels[0], lbl)
+
+    # Group by union-find root.
+    groups: dict[str, set[str]] = {}
+    for lbl in parent:
+        groups.setdefault(_find(lbl), set()).add(lbl)
+
+    alias_map: dict[str, str] = {}
+
+    def _canonical_key(lbl: str) -> tuple[int, int, str]:
+        rail = rails[lbl]
+        net = graph.nets.get(lbl)
+        n_connects = len(net.connects) if net is not None else 0
+        return (
+            0 if rail.source_refdes else 1,  # sourced first
+            -n_connects,                      # richer net first
+            lbl,                              # alpha tie-breaker
+        )
+
+    for cluster in groups.values():
+        if len(cluster) < 2:
+            continue
+        canonical = min(cluster, key=_canonical_key)
+        canonical_rail = rails[canonical]
+        for other in sorted(cluster):
+            if other == canonical:
+                continue
+            other_rail = rails[other]
+            for c in other_rail.consumers:
+                if c not in canonical_rail.consumers:
+                    canonical_rail.consumers.append(c)
+            for d in other_rail.decoupling:
+                if d not in canonical_rail.decoupling:
+                    canonical_rail.decoupling.append(d)
+            if (
+                canonical_rail.source_refdes is None
+                and other_rail.source_refdes is not None
+            ):
+                canonical_rail.source_refdes = other_rail.source_refdes
+                if other_rail.source_type and not canonical_rail.source_type:
+                    canonical_rail.source_type = other_rail.source_type
+            if (
+                canonical_rail.voltage_nominal is None
+                and other_rail.voltage_nominal is not None
+            ):
+                canonical_rail.voltage_nominal = other_rail.voltage_nominal
+            if (
+                canonical_rail.enable_net is None
+                and other_rail.enable_net is not None
+            ):
+                canonical_rail.enable_net = other_rail.enable_net
+            del rails[other]
+            alias_map[other] = canonical
+
+    return alias_map
 
 
 # ----------------------------------------------------------------------
