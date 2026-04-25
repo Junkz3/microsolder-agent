@@ -50,7 +50,7 @@ def highlight_component(
     return {"ok": True, "summary": summary, "event": event}
 
 
-def focus_component(session: SessionState, *, refdes: str, zoom: float = 2.5) -> dict[str, Any]:
+def focus_component(session: SessionState, *, refdes: str, zoom: float = 1.4) -> dict[str, Any]:
     err = _no_board(session)
     if err:
         return err
