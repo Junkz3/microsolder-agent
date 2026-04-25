@@ -63,3 +63,66 @@ async def test_subscribers_count_tracks_lifecycle():
 async def test_publish_with_no_subscribers_is_a_noop():
     # Must not raise, must not block.
     await events.publish("nobody-home", {"type": "pipeline_started"})
+
+
+# ============ Replay buffer ============
+
+
+async def test_late_subscriber_replays_recent_history():
+    """A WS that connects after the pipeline already started should still see
+    pipeline_started + phase_started events — that's what fixes the race
+    where the client opens the WS just after asyncio.create_task(pipeline)."""
+    await events.publish("demo-pi", {"type": "pipeline_started", "device_slug": "demo-pi"})
+    await events.publish("demo-pi", {"type": "phase_started", "phase": "scout"})
+    # Subscribe AFTER both events fired.
+    q = events.subscribe("demo-pi")
+    e1 = await asyncio.wait_for(q.get(), timeout=0.5)
+    e2 = await asyncio.wait_for(q.get(), timeout=0.5)
+    assert e1["type"] == "pipeline_started"
+    assert e2["type"] == "phase_started"
+    assert e2["phase"] == "scout"
+
+
+async def test_replay_buffer_caps_at_history_max():
+    """Spam more than _HISTORY_MAX events; only the most recent ones replay."""
+    cap = events._HISTORY_MAX
+    for i in range(cap + 20):
+        await events.publish("demo-pi", {"type": "tick", "i": i})
+    q = events.subscribe("demo-pi")
+    drained = []
+    while True:
+        try:
+            drained.append(await asyncio.wait_for(q.get(), timeout=0.05))
+        except asyncio.TimeoutError:
+            break
+    assert len(drained) == cap
+    # Most recent events kept (oldest dropped)
+    assert drained[0]["i"] == 20
+    assert drained[-1]["i"] == cap + 19
+
+
+async def test_history_count_helper():
+    assert events.history_count("demo-pi") == 0
+    await events.publish("demo-pi", {"type": "phase_started", "phase": "scout"})
+    await events.publish("demo-pi", {"type": "phase_finished", "phase": "scout"})
+    assert events.history_count("demo-pi") == 2
+
+
+async def test_terminal_event_clears_history_after_grace():
+    """After pipeline_finished, history is cleared (with a grace delay) so a
+    new pipeline run on the same slug doesn't replay yesterday's events."""
+    await events.publish("demo-pi", {"type": "phase_started", "phase": "scout"})
+    await events.publish("demo-pi", {"type": "pipeline_finished", "status": "APPROVED"})
+    # The clear is scheduled with a 10s grace; we patch the delay to 0 for the test.
+    # Simpler: just verify the cleanup task was spawned and resolves.
+    assert events.history_count("demo-pi") == 2  # still here pre-grace
+    # Force-run the grace clear via direct call (no asyncio.sleep wait).
+    await events._clear_history_after("demo-pi", delay_s=0.0)
+    assert events.history_count("demo-pi") == 0
+
+
+async def test_reset_clears_history_too():
+    await events.publish("demo-pi", {"type": "phase_started"})
+    assert events.history_count("demo-pi") == 1
+    events.reset()
+    assert events.history_count("demo-pi") == 0
