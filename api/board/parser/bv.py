@@ -1,24 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 """ATE BoardView .bv parser — written from scratch.
 
-ATE ships a drag-and-drop viewer whose output follows the Test_Link
-ASCII grammar: an optional single-line `BoardView <version>` banner,
-then the classic `var_data: n1 n2 n3 n4` counts, then `Format:`,
-`Parts:`, `Pins:`, `Nails:` blocks. The banner is informational only
-and is safely ignored by the helper since it does not match any
-block marker.
+**Scope honesty.** ATE BoardView 1.5.0 has no published format
+specification and is documented in the wild only as "drag-and-drop"
+to the viewer. Some redistributions in repair forums carry a
+Test_Link-shape ASCII payload (an optional `BoardView <version>`
+banner followed by `var_data:` / `Format:` / `Parts:` / `Pins:` /
+`Nails:` blocks); native ATE output is more likely a binary
+container. Until we have a real `.bv` sample to reverse-engineer,
+this parser handles the ASCII variant only. Files whose first 2 KB
+look binary trip a clear `ObfuscatedFileError` rather than silently
+producing an empty Board.
 
-Reference for the shape: public format catalog
-https://gist.github.com/vyach-vasiliev/35d610e14c40b4060f5d929ac70746a3
-and OBV-community format notes. No code copied from any external
-codebase.
+No code copied from any external codebase.
 """
 
 from __future__ import annotations
 
 from api.board.model import Board
-from api.board.parser._ascii_boardview import DialectMarkers, parse_test_link_shape
-from api.board.parser.base import BoardParser, register
+from api.board.parser._ascii_boardview import (
+    DialectMarkers,
+    looks_like_binary,
+    parse_test_link_shape,
+)
+from api.board.parser.base import BoardParser, ObfuscatedFileError, register
 
 
 @register
@@ -26,6 +31,13 @@ class BVParser(BoardParser):
     extensions = (".bv",)
 
     def parse(self, raw: bytes, *, file_hash: str, board_id: str) -> Board:
+        if looks_like_binary(raw):
+            raise ObfuscatedFileError(
+                "bv: this file looks like a binary ATE BoardView container "
+                "(non-printable byte ratio > 30%). Current parser supports "
+                "the Test_Link-shape ASCII variant only. See "
+                "docs/superpowers/specs/2026-04-25-boardview-formats-v1.md."
+            )
         text = raw.decode("utf-8", errors="replace")
         return parse_test_link_shape(
             text,

@@ -1,25 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unisoft ProntoPLACE .f2b parser — written from scratch.
 
-ProntoPLACE (Place5 converter) saves a complete board database as a
-`.f2b` file. Redistributed `.f2b` files in the repair community carry
-a Test_Link-shape ASCII layout with the canonical `Parts:` / `Pins:`
-/ `Nails:` markers plus optional `Annotations:` and `Outline:`
-sections. The annotation block carries UI overlays that the Unisoft
-tool renders on top of the board — we skip them since the unified
-`Board` model does not currently expose an annotations field; the
-agent's own `bv_annotate` tool covers that path at runtime instead.
+**Scope honesty.** Unisoft describes `.f2b` as "complete board save"
+— a proprietary database format used by ProntoPLACE and the Place5
+converter. No public format spec exists. Native `.f2b` is almost
+certainly a binary container. Some `.f2b` redistributions in the
+repair community appear to carry a Test_Link-shape ASCII payload
+with `Outline:` / `Components:` markers (plus an `Annotations:`
+block we skip — the unified `Board` model doesn't carry overlay
+annotations; the runtime `bv_annotate` tool covers that path
+instead). Until we have a real `.f2b` to reverse-engineer, this
+parser handles the ASCII variant only and rejects clearly-binary
+payloads with a clear hint.
 
-Reference: public Unisoft ProntoPLACE product page and community
-observations of `.f2b` redistributions. No code copied from any
-external codebase.
+No code copied from any external codebase.
 """
 
 from __future__ import annotations
 
 from api.board.model import Board
-from api.board.parser._ascii_boardview import DialectMarkers, parse_test_link_shape
-from api.board.parser.base import BoardParser, register
+from api.board.parser._ascii_boardview import (
+    DialectMarkers,
+    looks_like_binary,
+    parse_test_link_shape,
+)
+from api.board.parser.base import BoardParser, ObfuscatedFileError, register
 
 _F2B_MARKERS = DialectMarkers(
     header_count_marker="var_data:",
@@ -45,6 +50,12 @@ class F2BParser(BoardParser):
     extensions = (".f2b",)
 
     def parse(self, raw: bytes, *, file_hash: str, board_id: str) -> Board:
+        if looks_like_binary(raw):
+            raise ObfuscatedFileError(
+                "f2b: this file looks like a binary Unisoft ProntoPLACE "
+                "container (non-printable byte ratio > 30%). Current parser "
+                "supports the Test_Link-shape ASCII variant only."
+            )
         text = raw.decode("utf-8", errors="replace")
         return parse_test_link_shape(
             text,

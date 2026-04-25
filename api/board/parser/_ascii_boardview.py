@@ -365,6 +365,26 @@ def normalize_bbox(x1: int, y1: int, x2: int, y2: int) -> tuple[Point, Point]:
     )
 
 
+def looks_like_binary(raw: bytes, *, threshold: float = 0.30) -> bool:
+    """Generic "is this a binary container, not ASCII?" detector.
+
+    Several boardview formats (.bv, .gr, .cst, .f2b, .tvw) ship in the
+    wild as proprietary binary containers — packed integers, string
+    length prefixes, RGBA colour fields. Our parsers handle the
+    Test_Link-shape ASCII variants found in some redistributions, but
+    will produce nonsense if pointed at a binary file. This helper
+    flags files whose first 2 KB carry more than `threshold` (default
+    30 %) bytes outside printable ASCII (counting CR/LF/tab as
+    printable), so the parser can raise a clear "binary-layout, not
+    yet supported" error instead of silently emitting an empty Board.
+    """
+    if not raw:
+        return False
+    sample = raw[: min(len(raw), 2048)]
+    printable = sum(1 for b in sample if 32 <= b <= 126 or b in (9, 10, 13))
+    return (1.0 - printable / len(sample)) > threshold
+
+
 def parse_test_link_shape(
     text: str,
     *,

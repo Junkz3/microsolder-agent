@@ -1,19 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """BoardView R5.0 .gr parser — written from scratch.
 
-BoardView R5 emits a Test_Link-shape ASCII file but spells the blocks
-`Components:` / `Pins:` / `TestPoints:` instead of `Parts:` /
-`Pins:` / `Nails:`. Many redistributed R5 files also carry the
-canonical Test_Link spellings, so the parser accepts both in the same
-dialect — the first marker present in the file wins. No code copied
-from any external codebase.
+**Scope honesty.** BoardView R5.0 has no published file-format spec.
+This parser assumes a Test_Link-shape ASCII variant with
+`Components:` / `Pins:` / `TestPoints:` markers (and accepts the
+canonical `Parts:` / `Nails:` spellings as fallback). If a real `.gr`
+file lands binary instead — likely, given the era — the parser
+trips a clear `ObfuscatedFileError` rather than producing nonsense.
+Until we have a real `.gr` sample to reverse-engineer, this stays
+best-effort. No code copied from any external codebase.
 """
 
 from __future__ import annotations
 
 from api.board.model import Board
-from api.board.parser._ascii_boardview import DialectMarkers, parse_test_link_shape
-from api.board.parser.base import BoardParser, register
+from api.board.parser._ascii_boardview import (
+    DialectMarkers,
+    looks_like_binary,
+    parse_test_link_shape,
+)
+from api.board.parser.base import BoardParser, ObfuscatedFileError, register
 
 _GR_MARKERS = DialectMarkers(
     header_count_marker="var_data:",
@@ -29,6 +35,12 @@ class GRParser(BoardParser):
     extensions = (".gr",)
 
     def parse(self, raw: bytes, *, file_hash: str, board_id: str) -> Board:
+        if looks_like_binary(raw):
+            raise ObfuscatedFileError(
+                "gr: this file looks like a binary BoardView R5.0 container "
+                "(non-printable byte ratio > 30%). Current parser supports "
+                "the Test_Link-shape ASCII variant only."
+            )
         text = raw.decode("utf-8", errors="replace")
         return parse_test_link_shape(
             text,

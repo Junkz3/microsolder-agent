@@ -21,15 +21,23 @@ Per CLAUDE.md hard rule #4 (**open hardware only**), we commit fixtures under `b
 | `.brd` | Test_Link | Landrex (80s) | `test_link.py::BRDParser` | **DONE** | Refuses OBV-signature obfuscated files. Content-sniffed via `str_length:` marker. |
 | `.brd` | BRD2 | whitequark/kicad-boardview | `brd2.py::BRD2Parser` | **DONE** | Content-sniffed via `BRDOUT:` marker. 0BSD reference fixture at `web/boards/whitequark-example.brd`. |
 | `.kicad_pcb` | KiCad native | KiCad project | `kicad.py::KicadPcbParser` | **DONE** | Rich source — value, footprint, rotation, pad shape / size. Via `pcbnew` Python API. |
-| `.fz` | PCB Repair Tool | community reverse-eng | `fz.py::FZParser` | **DONE** | XOR stream cipher; needs `MICROSOLDER_FZ_KEY` (44×32-bit) to decode real files. See v1 spec below. |
-| `.bdv` | HONHAN BoardViewer | HONHAN (CN) | `bdv.py::BDVParser` | **DONE** | Arithmetic cipher (key 160, incr, wraps 286→159). Decodes to Test_Link ASCII. |
-| `.asc` | ASUS TSICT | ASUS | `asc.py::ASCParser` | **DONE** | Accepts both combined single-file and the five-file sub-directory layout (format/parts/pins/nails/nets). |
-| `.bv` | ATE Boardview | ATE | `bv.py::BVParser` | **DONE** | Test_Link-shape ASCII; banner line ignored. |
-| `.gr` | BoardView R5.0 | generic | `gr.py::GRParser` | **DONE** | Variant markers `Components:` / `TestPoints:` plus canonical fallback. |
-| `.cst` | Card Analysis ST | IBM/Lenovo | `cst.py::CSTParser` | **DONE** | Bracketed `[Components]` / `[Pins]` / `[Nails]` sections, no var_data prelude. |
-| `.tvw` | Tebo IctView | Tebo | `tvw.py::TVWParser` | **PARTIAL** | Rotation cipher (digits 3, alpha 10) handles the ASCII variant. Production binary layout (Pascal strings + layer sections per `fileformat-tvw.txt`) is detected and rejected with a clear hint — proper support is out of scope for v1. |
-| `.f2b` | Unisoft ProntoPLACE | Unisoft | `f2b.py::F2BParser` | **DONE** | Test_Link-shape with `Outline:` / `Components:` + `Annotations:` skip. |
-| `.cad` | Generic CAD | BoardViewer 2.1.0.8 | `cad.py::CADParser` | **DONE** | Umbrella: sniffs `BRDOUT:` → BRD2Parser or falls back to Test_Link (both-case markers). |
+| `.fz` | PCB Repair Tool | community reverse-eng | `fz.py::FZParser` | **PARTIAL** | XOR stream cipher structure implemented; needs `MICROSOLDER_FZ_KEY` (44×32-bit) and the ASUS keystream-derivation must match. Real-file validation pending. |
+| `.bdv` | HONHAN BoardViewer | HONHAN (CN) | `bdv.py::BDVParser` | **DONE** | Arithmetic cipher (key 160, incr, wraps 286→159). Algorithm publicly documented (piernov gist). Decodes to Test_Link ASCII. |
+| `.asc` | ASUS TSICT | ASUS | `asc.py::ASCParser` | **DONE** | Plain ASCII (confirmed via OBV issue #45). Accepts combined single-file or the five-file sub-directory layout. |
+| `.bv` | ATE Boardview | ATE | `bv.py::BVParser` | **SPECULATIVE** | Test_Link-shape ASCII variant only. No public spec — production `.bv` likely binary. Binary payloads detected and rejected with hint. |
+| `.gr` | BoardView R5.0 | generic | `gr.py::GRParser` | **SPECULATIVE** | Test_Link-shape ASCII with `Components:` / `TestPoints:` markers. No public spec — production `.gr` likely binary. Binary detection in place. |
+| `.cst` | Card Analysis ST | IBM/Lenovo | `cst.py::CSTParser` | **SPECULATIVE** | Test_Link-shape ASCII with `[Components]` / `[Pins]` / `[Nails]` sections. Castw v3.32 is a 1990s tool with no published spec — production likely binary. Binary detection in place. |
+| `.tvw` | Tebo IctView | Tebo | `tvw.py::TVWParser` | **PARTIAL** | Rotation cipher (digits 3, alpha 10) for the ASCII variant. Production binary layout (`fileformat-tvw.txt`: Pascal strings + layer sections) is **detected and rejected** with a clear hint — proper binary support is out of scope for v1. |
+| `.f2b` | Unisoft ProntoPLACE | Unisoft | `f2b.py::F2BParser` | **SPECULATIVE** | Test_Link-shape with `Outline:` / `Components:` markers + `Annotations:` skip. Unisoft labels `.f2b` as proprietary "complete board save" — production almost certainly binary. Binary detection in place. |
+| `.cad` | Generic CAD | BoardViewer 2.1.0.8 | `cad.py::CADParser` | **DONE** for BRD2 / **SPECULATIVE** for Test_Link | Umbrella. The `BRDOUT:` sniff path delegates to `BRD2Parser` and is verified against real open-hardware BRD2 (245p/1130pins). Test_Link fallback is best-effort with binary detection. |
+
+### Confidence levels
+
+- **DONE** — verified against real open-hardware data (or a publicly documented algorithm that decoded a real file in the wild).
+- **PARTIAL** — structurally implemented, but a real-world signal is missing (`.fz` needs the ASUS key; `.tvw` needs the binary container walker).
+- **SPECULATIVE** — no public format specification; assumes a Test_Link-shape ASCII variant observed in some redistributions but the production native format is almost certainly a different binary container. Each speculative parser detects clearly-binary payloads and raises `ObfuscatedFileError` with a specific hint instead of silently emitting an empty `Board`.
+
+When real samples become available (technician uploads or publicly-distributed open-hardware boards), promote SPECULATIVE → DONE by either confirming the ASCII assumption holds or by reverse-engineering the actual binary layout.
 
 ## Unified model
 
