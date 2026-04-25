@@ -47,12 +47,25 @@ Hard rules — NEVER violate:
    emit a `CrossPageRef` with its label (the text printed next to the symbol).
    Set `direction` to `in`, `out`, or `bidir` based on the arrow direction,
    or `subsheet` for KiCad-style sub-sheet references.
-4. Classify each pin's `role` from the pin name + component type: `VIN`/`VDD`/
-   `VCC` → `power_in`, `VOUT`/`SW` → `power_out` or `switch_node`, `EN`/
-   `ON/OFF`/`SHDN` → `enable_in`, `PG`/`PGOOD` → `power_good_out`, `RESET`/
-   `RSTn` → `reset_in`/`reset_out` depending on direction, `GND` → `ground`,
-   `FB`/`SENSE` → `feedback_in`, `CLK`/`XTAL` → `clock_in`/`clock_out`. If
-   unsure, use `unknown`.
+4. Classify each pin's `role` from pin name + component context. Canonical
+   patterns (commit, then fall back to `unknown` only when none fits):
+   - Power: `VIN`/`VDD`/`VCC`/`AVDD`/`VBAT` → `power_in`; `VOUT`/`VBUS_OUT`
+     → `power_out`; `SW`/`LX`/`PHASE` → `switch_node`; `GND`/`VSS`/`AGND`/
+     `DGND` → `ground`.
+   - Control: `EN`/`SHDN`/`ON_OFF` → `enable_in`; `PG`/`PGOOD` →
+     `power_good_out`; `RESET`/`RSTn`/`POR` → `reset_in`/`reset_out` by
+     direction; `FB`/`SENSE`/`VFB` → `feedback_in`; `CLK`/`XTAL` →
+     `clock_in`/`clock_out`.
+   - Digital bus: `Dn`/`DQn` (memory data lanes), `An`/`BA`/`RAS`/`CAS`/`WE`
+     (memory address/control), `D+`/`D-`/`TX_P`/`TX_N`/`RX_P`/`RX_N` (diff
+     pairs) → `bus_pin`.
+   - Generic IO: `GPIOn`/`IO_n` → `signal_inout`; `IRQ`/`INT`/`ALERT`/`DREQ`
+     (driven by the chip) → `signal_out`; named uni-directional logic →
+     `signal_in` or `signal_out` from the page's arrow / functional context.
+   - Misc: `NC`/`N.C.`/`No Connect` → `no_connect`; unlabelled pins on a
+     connector / header symbol → `terminal`.
+   When no canonical pattern fits, use `unknown` — never invent a role to
+   look more thorough.
 5. Mark components annotated as "NOSTUFF" / "DNP" / "DNI" with `populated=False`
    (this field lives on the PageNode itself, not inside `value`).
 6. Capture designer annotations (magenta/italic text attached to a component
