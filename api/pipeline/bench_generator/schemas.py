@@ -126,9 +126,6 @@ RejectionMotive = Literal[
     "refdes_not_mentioned_in_quote",
     "rail_not_mentioned_in_quote",
     "cause_not_connected_to_rail",
-    # V6 — source URL must literally cite the refdes (anti cross-source contamination)
-    "refdes_not_in_url_content",
-    "source_url_unreachable",
 ]
 
 
