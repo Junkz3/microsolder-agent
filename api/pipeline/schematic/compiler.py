@@ -318,7 +318,26 @@ def _augment_sources_from_producer_pins(
     (additive, never overrides an existing producer) and only when exactly
     one candidate exists, to avoid mis-attributing a multi-output PMIC pin
     that was vision-misclassified.
+
+    Two paths, run sequentially, ambiguity gate (single candidate) enforced
+    on each independently:
+
+    1. **Pin-label keyed.** Direct match: `pin.net_label == rail.label`.
+       Covers the canonical case where the IC pin's net_label IS the rail
+       name (mnt-reform-style boards, KiCad schematics, mid-tier vendor
+       PMICs).
+
+    2. **Net-connects walk.** Apple-style PMICs double-label power outputs:
+       the IC pin's `pin.net_label` is the die-side name (`VLDO10`) but the
+       merger placed the pin under the package-side rail name
+       (`PP1V1_FCAM_DVDD`) via `net.connects`. Path 1 misses these because
+       it looks up `pin.net_label` against `rails`. Path 2 walks each
+       unsourced rail's `net.connects` and resolves the pin object back to
+       its component; if it's a producer-type component with a producer-
+       role pin, it qualifies. Pure no-op on schematics that don't use
+       die-side aliasing (verified empirically on mnt-reform).
     """
+    # Path 1 — pin.net_label keyed.
     candidates: dict[str, set[str]] = {}
     for component in graph.components.values():
         if component.type not in _PRODUCER_COMPONENT_TYPES:
@@ -338,6 +357,40 @@ def _augment_sources_from_producer_pins(
             # an honest null over a wrong producer.
             continue
         rail = rails[label]
+        rail.source_refdes = next(iter(refs))
+        rail.source_type = _infer_source_type(graph, rail.source_refdes)
+
+    # Path 2 — net-connects walk for rails still unsourced after Path 1.
+    # Same single-candidate ambiguity gate. The pin must belong to a
+    # producer-type component AND carry a producer-role tag from vision —
+    # otherwise we'd fall back to topology guessing, which we don't do.
+    connect_candidates: dict[str, set[str]] = {}
+    for label, rail in rails.items():
+        if rail.source_refdes is not None:
+            continue
+        net = graph.nets.get(label)
+        if net is None:
+            continue
+        for ref_pin in net.connects:
+            if "." not in ref_pin:
+                continue
+            ref, pin_num = ref_pin.split(".", 1)
+            comp = graph.components.get(ref)
+            if comp is None or comp.type not in _PRODUCER_COMPONENT_TYPES:
+                continue
+            for pin in comp.pins:
+                if pin.number != pin_num:
+                    continue
+                if pin.role in _PRODUCER_PIN_ROLES:
+                    connect_candidates.setdefault(label, set()).add(ref)
+                break
+
+    for label, refs in connect_candidates.items():
+        if len(refs) != 1:
+            continue
+        rail = rails[label]
+        if rail.source_refdes is not None:
+            continue
         rail.source_refdes = next(iter(refs))
         rail.source_type = _infer_source_type(graph, rail.source_refdes)
 
