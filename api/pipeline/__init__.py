@@ -36,6 +36,7 @@ from api.config import get_settings
 from api.pipeline import events
 from api.pipeline.expansion import expand_pack
 from api.pipeline.intent_classifier import IntentClassification, classify_intent
+from api.pipeline.phase_narrator import narrate_phase
 from api.pipeline.graph_transform import pack_to_graph_payload
 from api.pipeline.orchestrator import _slugify, generate_knowledge_pack
 from api.pipeline.schemas import PipelineResult
@@ -583,12 +584,53 @@ def list_repair_conversations(repair_id: str) -> dict:
 
 
 async def _run_pipeline_with_events(device_label: str, slug: str) -> None:
-    """Background task: run the pipeline, relaying its events on the bus."""
+    """Background task: run the pipeline, relaying its events on the bus.
+
+    On every `phase_finished` event we also spawn a fire-and-forget narration
+    task: a small Haiku call reads the just-written artifact and publishes a
+    `phase_narration` event so the landing UI can render a human-readable
+    sentence next to the progress dot. Narration failures are silent; the
+    pipeline never blocks waiting for them.
+    """
     t0 = time.monotonic()
+
+    # Lazily-built Haiku client for narration (kept in closure so we don't
+    # spawn a new TCP pool per phase).
+    settings = get_settings()
+    narrator_client: AsyncAnthropic | None = None
+    if settings.anthropic_api_key:
+        narrator_client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+
+    async def _narrate_and_publish(phase: str) -> None:
+        if narrator_client is None:
+            return
+        try:
+            text = await narrate_phase(phase, slug, client=narrator_client)
+        except Exception as exc:  # narrate_phase already swallows; defence-in-depth
+            logger.warning(
+                "[API] narrator unexpected raise (phase=%s slug=%s): %s",
+                phase, slug, exc,
+            )
+            return
+        if not text:
+            return
+        await events.publish(
+            slug,
+            {"type": "phase_narration", "phase": phase, "text": text},
+        )
+
+    async def _on_event(ev: dict) -> None:
+        await events.publish(slug, ev)
+        if ev.get("type") == "phase_finished":
+            phase = ev.get("phase")
+            if isinstance(phase, str) and phase:
+                # Fire-and-forget: do not await — the next phase must start now.
+                asyncio.create_task(_narrate_and_publish(phase))
+
     try:
         await generate_knowledge_pack(
             device_label,
-            on_event=lambda ev: events.publish(slug, ev),
+            on_event=_on_event,
         )
     except Exception as exc:
         logger.exception("[API] background pipeline failed for slug=%r", slug)
