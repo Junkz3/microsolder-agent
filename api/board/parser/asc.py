@@ -69,7 +69,7 @@ def _assemble_from_directory(dir_path: Path) -> str:
         bodies.append(lines)
 
     out.append(f"var_data: {counts[0]} {counts[1]} {counts[2]} {counts[3]}")
-    for (_fname, marker), body in zip(_SUBFILES, bodies):
+    for (_fname, marker), body in zip(_SUBFILES, bodies, strict=True):
         if not body:
             continue
         out.append(marker)

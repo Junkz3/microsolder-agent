@@ -17,7 +17,6 @@ import pytest
 from api.board.parser.base import MissingFZKeyError, parser_for
 from api.board.parser.fz import FZParser, _decrypt, _encrypt
 
-
 DUMMY_KEY: tuple[int, ...] = tuple(range(1, 45))  # 44 words
 
 
