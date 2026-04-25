@@ -206,6 +206,7 @@ def _derive_power_rails(graph: SchematicGraph) -> dict[str, PowerRail]:
     _augment_consumers_from_pins(rails, graph)
     _augment_sources_from_producer_pins(rails, graph)
     _propagate_sources_through_passive_bridges(rails, graph)
+    _promote_ic_owning_switch_node_over_inductor(rails, graph)
     _propagate_sources_through_rail_aliases(rails, graph)
 
     # Final scrub: a regulator never consumes its own output. The vision pass
@@ -343,6 +344,89 @@ def _propagate_sources_through_passive_bridges(
                 if r2.source_type:
                     r1.source_type = r2.source_type
                 changed = True
+
+
+_PASSIVE_TYPES = frozenset(
+    {"resistor", "capacitor", "inductor", "ferrite", "diode"}
+)
+
+
+def _promote_ic_owning_switch_node_over_inductor(
+    rails: dict[str, PowerRail], graph: SchematicGraph
+) -> None:
+    """Buck-topology source recovery.
+
+    A 2-pin inductor sitting between a regulator's switch_node pin and a
+    rail label is the buck OUTPUT FILTER, not the regulator itself.
+    Physically the inductor stores energy and smooths the chopped switch
+    waveform — it does not generate power. The actual producer is the IC
+    whose `switch_node` pin shares a net with the inductor's switch_node
+    side pin.
+
+    The vision pass occasionally emits `inductor powers RAIL` edges
+    (mistaking the buck output filter for the regulator), and the strict
+    `powers` rule lets these through because it only checks
+    `edge.src in graph.components`, not the producer-physics constraint
+    that R / L / C / FL / D cannot generate power.
+
+    Strategy: for each rail whose current source is a passive (R/L/C/FL/D),
+    look up the topology — if a 2-pin inductor sits between the rail and a
+    switch_node net OWNED by an IC (i.e. an IC has a `switch_node`-role
+    pin on that same net), promote the IC as the rail's true producer.
+    Additive: only fires when the current source is a passive (never
+    overrides an IC source). When no IC owner exists (e.g. the regulator
+    sits on an un-captured page), the passive stays as the fallback so we
+    don't lose a sourced rail.
+
+    Runs BEFORE rail-alias propagation so downstream alias rails inherit
+    the corrected source.
+    """
+    # Index switch_node nets owned by ICs (first-IC-wins for stability).
+    sw_owner: dict[str, str] = {}
+    for ref, comp in graph.components.items():
+        if comp.type not in _PRODUCER_COMPONENT_TYPES:
+            continue
+        for pin in comp.pins:
+            if pin.role == "switch_node" and pin.net_label:
+                sw_owner.setdefault(pin.net_label, ref)
+    if not sw_owner:
+        return
+
+    # Walk every 2-pin inductor; if it sits between a switch_node net (IC-owned)
+    # and a rail currently sourced by a passive, schedule a promotion.
+    promotions: list[tuple[str, str]] = []
+    for comp in graph.components.values():
+        if comp.type != "inductor" or len(comp.pins) != 2:
+            continue
+        sw_net: str | None = None
+        rail_label: str | None = None
+        for pin in comp.pins:
+            if not pin.net_label:
+                continue
+            if pin.role == "switch_node":
+                sw_net = pin.net_label
+            elif pin.net_label in rails:
+                rail_label = pin.net_label
+        if sw_net is None or rail_label is None:
+            continue
+        ic = sw_owner.get(sw_net)
+        if ic is None:
+            continue
+        rail = rails[rail_label]
+        if rail.source_refdes is None:
+            # No current source — fill with the IC (buck pattern detected).
+            promotions.append((rail_label, ic))
+            continue
+        # Existing source must be a passive to be overridden.
+        current = graph.components.get(rail.source_refdes)
+        if current is None or current.type not in _PASSIVE_TYPES:
+            continue
+        promotions.append((rail_label, ic))
+
+    for label, ic in promotions:
+        rail = rails[label]
+        rail.source_refdes = ic
+        rail.source_type = _infer_source_type(graph, ic)
 
 
 def _propagate_sources_through_rail_aliases(
