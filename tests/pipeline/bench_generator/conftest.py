@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -116,12 +115,6 @@ def sample_draft() -> ProposedScenarioDraft:
         ],
         reasoning_summary="C19 short on +3V3 collapses the rail.",
     )
-
-
-@pytest.fixture
-def now_iso() -> str:
-    # Deterministic enough for tests that assert format, not value.
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 @pytest.fixture
