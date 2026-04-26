@@ -4,7 +4,7 @@
 
 <!-- [Logo / mascot — drop into web/assets/ and link here] -->
 
-<!-- [Demo video — embed link after recording] -->
+**📺 Demo video (3 min):** https://youtu.be/OZ2D_p82z6w
 
 ## What it is
 
