@@ -885,6 +885,45 @@
   </div>
 </div>
 
+<!-- ============ PROTOCOL CONFIRMATION MODAL ============ -->
+<!-- Shown when the agent calls bv_propose_protocol — the technician must
+     accept or reject before the protocol materialises. Wired by
+     web/js/protocol.js (showConfirmation / hideConfirmation). -->
+<div class="modal-backdrop" id="protocolConfirmBackdrop" aria-hidden="true">
+  <div class="modal protocol-confirm-modal" role="dialog" aria-modal="true"
+       aria-labelledby="protocolConfirmTitle">
+    <header class="modal-head">
+      <div class="type-row">
+        <span class="type-badge action">Protocole proposé</span>
+        <span id="protocolConfirmStepCount">— étapes</span>
+      </div>
+      <h2 id="protocolConfirmTitle">—</h2>
+    </header>
+    <div class="modal-body">
+      <div class="modal-field">
+        <span class="modal-label">Justification</span>
+        <p class="protocol-confirm-rationale" id="protocolConfirmRationale">—</p>
+      </div>
+      <div class="modal-field">
+        <span class="modal-label">Étapes</span>
+        <ol class="protocol-confirm-steps" id="protocolConfirmSteps"></ol>
+      </div>
+      <div class="modal-field" id="protocolConfirmRejectField" hidden>
+        <label class="modal-label" for="protocolConfirmReason">Raison du refus (optionnel)</label>
+        <textarea class="modal-textarea" id="protocolConfirmReason" rows="2"
+                  placeholder="Pourquoi refuser ce protocole — l'agent en tiendra compte."></textarea>
+      </div>
+      <p class="modal-hint" id="protocolConfirmHint">
+        L'agent attend votre décision avant de pousser le protocole.
+      </p>
+      <footer class="modal-actions">
+        <button type="button" class="btn" id="protocolConfirmReject">Refuser</button>
+        <button type="button" class="btn primary" id="protocolConfirmAccept">Accepter</button>
+      </footer>
+    </div>
+  </div>
+</div>
+
 <!-- ============ TWEAKS ============ -->
 <div class="tweaks" id="tweaksPanel">
   <h5><span data-i18n="common.tweaks.title">Tweaks</span> <button class="close-x" id="tweaksClose" data-i18n-attr="aria-label:common.tweaks.close" aria-label="Close" style="background:transparent;border:0;color:var(--text-3);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg></button></h5>

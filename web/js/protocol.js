@@ -87,10 +87,159 @@ export function applyEvent(ev) {
       // state.proto and silence ≠ "no protocol here".
       state.proto = null;
       break;
+    case "protocol_pending_confirmation":
+      // Pattern 4 round-trip: the agent called bv_propose_protocol but the
+      // runtime parked the call until the tech accepts or rejects via the
+      // modal. No state.proto change yet — only on accept will the tool
+      // dispatch and a real `protocol_proposed` arrive.
+      showConfirmation(ev);
+      return;
+    case "protocol_confirmation_timeout":
+      // Backend bailed on the wait — drop the modal so the tech doesn't
+      // click into a void.
+      hideConfirmation(ev.tool_use_id);
+      return;
     default:
       return;
   }
   notify();
+}
+
+// --- Pattern 4 confirmation modal --------------------------------------------
+// Backed by the static markup in web/index.html (#protocolConfirmBackdrop).
+// Lazily wired on first show so the page can boot without the modal panel
+// in the DOM (e.g. test harnesses, headless preview).
+
+let _confirmWired = false;
+let _activeConfirmId = null;
+
+function _wireConfirmModal() {
+  if (_confirmWired) return;
+  const backdrop = document.getElementById("protocolConfirmBackdrop");
+  if (!backdrop) return;
+  const acceptBtn = document.getElementById("protocolConfirmAccept");
+  const rejectBtn = document.getElementById("protocolConfirmReject");
+  const rejectField = document.getElementById("protocolConfirmRejectField");
+  const reasonInput = document.getElementById("protocolConfirmReason");
+
+  // First click on Refuser unfolds the reason textarea — second click sends.
+  // Less friction than a separate "details" step, while still letting the
+  // tech send a one-click reject by hitting Refuser twice.
+  let _rejectArmed = false;
+
+  function _resetRejectArm() {
+    _rejectArmed = false;
+    if (rejectField) rejectField.hidden = true;
+    if (rejectBtn) rejectBtn.textContent = "Refuser";
+  }
+
+  acceptBtn?.addEventListener("click", () => {
+    const tid = _activeConfirmId;
+    if (!tid || !state.send) return;
+    state.send({
+      type: "client.protocol_confirmation",
+      tool_use_id: tid,
+      decision: "accept",
+    });
+    hideConfirmation(tid);
+  });
+
+  rejectBtn?.addEventListener("click", () => {
+    const tid = _activeConfirmId;
+    if (!tid || !state.send) return;
+    if (!_rejectArmed) {
+      _rejectArmed = true;
+      if (rejectField) rejectField.hidden = false;
+      if (rejectBtn) rejectBtn.textContent = "Confirmer le refus";
+      reasonInput?.focus();
+      return;
+    }
+    const reason = (reasonInput?.value || "").trim();
+    state.send({
+      type: "client.protocol_confirmation",
+      tool_use_id: tid,
+      decision: "reject",
+      reason,
+    });
+    hideConfirmation(tid);
+  });
+
+  // Re-arm the reject button on every open so a previous reject doesn't
+  // leak its expanded textarea state into the next proposal.
+  backdrop.addEventListener("transitionend", (ev) => {
+    if (ev.target === backdrop && !backdrop.classList.contains("open")) {
+      _resetRejectArm();
+      if (reasonInput) reasonInput.value = "";
+    }
+  });
+
+  _confirmWired = true;
+}
+
+function _renderStep(step, idx) {
+  const li = document.createElement("li");
+  const num = document.createElement("span");
+  num.className = "step-num";
+  num.textContent = `${idx + 1}.`;
+  li.appendChild(num);
+
+  const instr = document.createElement("span");
+  instr.className = "step-instr";
+
+  if (step.type) {
+    const t = document.createElement("span");
+    t.className = "step-type";
+    t.textContent = step.type;
+    instr.appendChild(t);
+  }
+  const target = step.target || step.test_point;
+  if (target) {
+    const tg = document.createElement("span");
+    tg.className = "step-target";
+    tg.textContent = target;
+    instr.appendChild(tg);
+  }
+  const text = document.createTextNode(decodeEscapes(step.instruction || ""));
+  instr.appendChild(text);
+  li.appendChild(instr);
+  return li;
+}
+
+export function showConfirmation(ev) {
+  _wireConfirmModal();
+  const backdrop = document.getElementById("protocolConfirmBackdrop");
+  if (!backdrop) return;
+  _activeConfirmId = ev.tool_use_id;
+
+  const titleEl = document.getElementById("protocolConfirmTitle");
+  const rationaleEl = document.getElementById("protocolConfirmRationale");
+  const stepsEl = document.getElementById("protocolConfirmSteps");
+  const countEl = document.getElementById("protocolConfirmStepCount");
+
+  if (titleEl) titleEl.textContent = decodeEscapes(ev.title || "Protocole proposé");
+  if (rationaleEl) rationaleEl.textContent = decodeEscapes(ev.rationale || "—");
+  if (countEl) {
+    const n = Number(ev.step_count || (ev.steps || []).length || 0);
+    countEl.textContent = `${n} étape${n > 1 ? "s" : ""}`;
+  }
+  if (stepsEl) {
+    stepsEl.innerHTML = "";
+    (ev.steps || []).forEach((s, i) => stepsEl.appendChild(_renderStep(s, i)));
+  }
+
+  backdrop.classList.add("open");
+  backdrop.setAttribute("aria-hidden", "false");
+}
+
+export function hideConfirmation(toolUseId) {
+  const backdrop = document.getElementById("protocolConfirmBackdrop");
+  if (!backdrop) return;
+  // Guard against a stale timeout/close racing past a fresh open — only
+  // dismiss the modal that matches the active id.
+  if (toolUseId && _activeConfirmId && toolUseId !== _activeConfirmId) return;
+  backdrop.classList.remove("open");
+  backdrop.setAttribute("aria-hidden", "true");
+  _activeConfirmId = null;
 }
 
 export function submitStepResult({ stepId, value, unit, observation }) {

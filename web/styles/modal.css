@@ -47,3 +47,16 @@
 .modal-rebuild{display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:4px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11.5px;color:var(--text-2);cursor:pointer}
 .modal-rebuild[hidden]{display:none}
 .modal-rebuild input[type="checkbox"]{margin:0;accent-color:var(--amber)}
+
+/* ---------- Protocol confirmation modal ---------- */
+/* Pattern 4 round-trip on bv_propose_protocol — the tech accepts or
+   refuses the agent's proposal in this modal. Same chrome as the
+   other modals; the steps list is the only bespoke piece. */
+.protocol-confirm-modal #protocolConfirmStepCount{font-family:var(--mono);font-size:10px;color:var(--violet);letter-spacing:.4px;text-transform:uppercase}
+.protocol-confirm-rationale{margin:0;font-size:13px;line-height:1.5;color:var(--text-2)}
+.protocol-confirm-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px}
+.protocol-confirm-steps li{display:flex;gap:10px;align-items:flex-start;font-size:12px;line-height:1.4;color:var(--text-2)}
+.protocol-confirm-steps .step-num{flex:0 0 22px;font-family:var(--mono);font-size:10.5px;color:var(--text-3);padding-top:1px}
+.protocol-confirm-steps .step-target{font-family:var(--mono);font-size:10.5px;color:var(--cyan);background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.25);padding:1px 6px;border-radius:3px;margin-right:6px;display:inline-block}
+.protocol-confirm-steps .step-type{font-family:var(--mono);font-size:9.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.3px;margin-right:6px}
+.protocol-confirm-steps .step-instr{flex:1;min-width:0}

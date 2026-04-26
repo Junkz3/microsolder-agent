@@ -8,6 +8,8 @@
 //         {type: "client.upload_macro", base64, mime, filename}    (Flow A)
 //         {type: "client.capture_response", request_id, base64,    (Flow B)
 //                  mime, device_label}
+//         {type: "client.protocol_confirmation", tool_use_id,      (Pattern 4)
+//                  decision: "accept"|"reject", reason?}
 //   recv: {type: "session_ready", mode, device_slug, session_id?, memory_store_id?}
 //         {type: "message", role: "assistant", text}
 //         {type: "tool_use", name, input}
@@ -16,6 +18,8 @@
 //         {type: "session_terminated"}
 //         {type: "server.capture_request", request_id, tool_use_id, reason}
 //         {type: "server.upload_macro_error", reason}
+//         {type: "protocol_pending_confirmation", tool_use_id, title, …}
+//         {type: "protocol_confirmation_timeout", tool_use_id}
 //
 // Activated by ⌘/Ctrl+J and by clicking the topbar "Agent" button.
 
@@ -965,8 +969,14 @@ function connect() {
     // the wizard column visible.
     if (typeof payload.type === "string" && payload.type.startsWith("protocol_")) {
       window.Protocol?.applyEvent(payload);
+      // Pending confirmation + timeout drive the modal only — do not render
+      // an inline card in the chat stream (the modal is a global blocker).
+      const isModalOnly = (
+        payload.type === "protocol_pending_confirmation" ||
+        payload.type === "protocol_confirmation_timeout"
+      );
       const noBoard = !window.Boardview?.hasBoard?.();
-      if (noBoard && payload.type !== "protocol_completed") {
+      if (!isModalOnly && noBoard && payload.type !== "protocol_completed") {
         renderInlineProtocolCard(payload);
       }
       return;
