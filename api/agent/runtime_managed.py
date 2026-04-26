@@ -899,7 +899,45 @@ async def run_diagnostic_session_managed(
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)  # noqa: E501
     session_mirrors = _SessionMirrors()
     memory_root = Path(settings.memory_root)
+
+    # Layered MA memory — provision up to 4 stores per session:
+    #   1. global-patterns   (RO) — cross-device failure archetypes
+    #   2. global-playbooks  (RO) — protocol templates
+    #   3. device-{slug}     (RW) — knowledge pack + field reports
+    #   4. repair-{repair_id} (RW) — agent's working notes (scribe layer)
+    # Each surfaces as /mnt/memory/<store-name>/ inside the session container.
+    # See docs/superpowers/plans/2026-04-26-ma-memory-layered-architecture.md
+    from api.agent.memory_stores import (
+        ensure_global_store,
+        ensure_repair_store,
+    )
+
+    PATTERNS_DESC_RUNTIME = (
+        "Cross-device failure archetypes for board-level diagnostics: "
+        "short-to-GND on power rails, thermal cascade failures, BGA "
+        "solder ball lift, bench anti-patterns. Markdown documents "
+        "under /patterns/<id>.md. Read this store first when the "
+        "device-specific rules return 0 matches."
+    )
+    PLAYBOOKS_DESC_RUNTIME = (
+        "Diagnostic protocol templates conformant to bv_propose_protocol's "
+        "schema. JSON documents under /playbooks/<id>.json indexed by "
+        "symptom (boot-no-power, usb-no-charge, pmic-rail-collapse). "
+        "Reference these BEFORE synthesizing a protocol from scratch — "
+        "they are field-tested."
+    )
+
+    patterns_store_id = await ensure_global_store(
+        client, kind="patterns", description=PATTERNS_DESC_RUNTIME,
+    ) if settings.ma_memory_store_enabled else None
+    playbooks_store_id = await ensure_global_store(
+        client, kind="playbooks", description=PLAYBOOKS_DESC_RUNTIME,
+    ) if settings.ma_memory_store_enabled else None
     memory_store_id = await ensure_memory_store(client, device_slug)
+    repair_store_id = await ensure_repair_store(
+        client, device_slug=device_slug, repair_id=repair_id,
+    ) if (repair_id and settings.ma_memory_store_enabled) else None
+
     await maybe_auto_seed(
         client=client,
         device_slug=device_slug,
@@ -938,8 +976,9 @@ async def run_diagnostic_session_managed(
         )
 
     # Build session params. `resources` is the current (2026-04-01) surface
-    # for attaching memory stores. If the beta isn't enabled, ensure_memory_store
-    # returned None and we just skip the resources field.
+    # for attaching memory stores. We attach up to 4 layers (global patterns +
+    # global playbooks + device + repair); any that returned None (beta off,
+    # API failure, missing repair_id) is silently skipped.
     session_kwargs: dict[str, Any] = {
         "agent": {
             "type": "agent",
@@ -949,19 +988,61 @@ async def run_diagnostic_session_managed(
         "environment_id": ids["environment_id"],
         "title": f"diag-{device_slug}-{tier}",
     }
+    resources: list[dict] = []
+    if patterns_store_id:
+        resources.append({
+            "type": "memory_store",
+            "memory_store_id": patterns_store_id,
+            "access": "read_only",
+            "prompt": (
+                "Global cross-device failure archetypes (short-to-GND, "
+                "thermal cascades, BGA lift, bench anti-patterns). Grep "
+                "here when the device-specific rules don't match the "
+                "symptom — patterns often generalize across families."
+            ),
+        })
+    if playbooks_store_id:
+        resources.append({
+            "type": "memory_store",
+            "memory_store_id": playbooks_store_id,
+            "access": "read_only",
+            "prompt": (
+                "Diagnostic protocol templates indexed by symptom. Before "
+                "calling bv_propose_protocol, grep here for a matching "
+                "playbook and prefer it over synthesizing one from scratch."
+            ),
+        })
     if memory_store_id:
-        session_kwargs["resources"] = [
-            {
-                "type": "memory_store",
-                "memory_store_id": memory_store_id,
-                "access": "read_only",
-                "prompt": (
-                    "Repair history for this specific device. Read it at "
-                    "the start of diagnosis. New findings are written by "
-                    "the server — you do not write through this mount."
-                ),
-            }
-        ]
+        resources.append({
+            "type": "memory_store",
+            "memory_store_id": memory_store_id,
+            "access": "read_only",
+            "prompt": (
+                "Knowledge pack + confirmed field reports for THIS device. "
+                "/knowledge/* is pipeline-authored (registry, rules, etc.); "
+                "/field_reports/* is mirrored from mb_record_finding — do "
+                "NOT write directly here, use the tool for canonical "
+                "findings (validation + format guarantees)."
+            ),
+        })
+    if repair_store_id:
+        resources.append({
+            "type": "memory_store",
+            "memory_store_id": repair_store_id,
+            "access": "read_write",
+            "prompt": (
+                "Your scratch notebook for THIS repair, persisted across "
+                "all sessions of the same repair_id. Read state.md at "
+                "session start to orient yourself. Write decisions/{ts}.md "
+                "when you validate or refute a hypothesis, append to "
+                "measurements/{rail}.md when the tech reports a probed "
+                "value, and edit open_questions.md for unresolved threads. "
+                "Do NOT use this for chat narration or duplicates of "
+                "field_reports/."
+            ),
+        })
+    if resources:
+        session_kwargs["resources"] = resources
 
     # Reuse the repair's previously-persisted MA session when possible —
     # that's how conversation context survives a WS close/reopen. Sessions
