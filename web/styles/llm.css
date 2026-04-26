@@ -815,6 +815,10 @@ body.llm-open .stub{right:420px}
 }
 .llm-camera-chip .chevron-down { flex-shrink: 0; color: var(--text-3); }
 
+/* Same trap as .llm-dropzone : our display:flex beats the user-agent
+   `[hidden]{display:none}`. Without this override the popover stays
+   permanently visible. */
+.llm-camera-popover[hidden] { display: none !important; }
 .llm-camera-popover {
   position: absolute;
   top: calc(100% + 4px);
