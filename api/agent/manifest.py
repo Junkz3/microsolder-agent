@@ -786,13 +786,41 @@ PROTOCOL_TOOLS: list[dict] = [
 ]
 
 
+CAM_TOOLS: list[dict] = [
+    {
+        "type": "custom",
+        "name": "cam_capture",
+        "description": (
+            "Acquire a still frame from the technician's selected camera "
+            "(microscope, webcam, etc.). Use when you need a fresh visual "
+            "on a specific component or anomaly. The tech has already "
+            "framed and focused — no parameters needed beyond an optional "
+            "reason for traceability. Returns the captured image as a "
+            "tool_result the model can read directly."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for the capture (logged, not shown to the tech).",
+                }
+            },
+            "additionalProperties": False,
+        },
+    },
+]
+
+
 def build_tools_manifest(session: SessionState) -> list[dict]:
     """Return the tools list for `session`. `profile_*` and `protocol_*` always
-    present; `bv_*` only when a board is loaded. Future: `sch_*` when a
-    schematic is attached."""
+    present; `bv_*` only when a board is loaded; `cam_*` only when the
+    frontend reported a camera available."""
     manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS) + list(PROTOCOL_TOOLS)
     if session.board is not None:
         manifest.extend(BV_TOOLS)
+    if session.has_camera:
+        manifest.extend(CAM_TOOLS)
     return manifest
 
 
