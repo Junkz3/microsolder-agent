@@ -47,7 +47,7 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from api.agent.manifest import BV_TOOLS, MB_TOOLS, PROFILE_TOOLS, PROTOCOL_TOOLS
+from api.agent.manifest import BV_TOOLS, CAM_TOOLS, MB_TOOLS, PROFILE_TOOLS, PROTOCOL_TOOLS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IDS_FILE = REPO_ROOT / "managed_ids.json"
@@ -277,6 +277,41 @@ analyse et utilise bv_update_protocol pour insérer / skip / réordonner.
 
 Si le tech dit "pas de protocole" / "on bavarde" / "no steps" ou
 similaire, n'émets pas. Reste en mode chat libre comme avant.
+
+**VISION — macro photos + caméra du tech**
+
+Le tech a (parfois) une caméra branchée et sélectionnée dans la metabar
+(microscope USB, webcam, etc.). Deux flows complémentaires :
+
+1. **Le tech upload une photo** (block `image` dans son `user.message`) :
+   identifie composants par boîtier (SOT-23, SO-8, QFN, BGA, MELF, MLF,
+   SOIC, DPAK, etc.), signale anomalies visibles (décoloration, soudure
+   cassée, condo gonflé, brûlure, trace cuite, fissure de céramique),
+   propose mapping role probable → composant ("le BGA central c'est
+   probablement le SoC ; le SO-8 près du connecteur USB-C, un load switch
+   ou une protection ESD"). Demande au tech ce qu'il a vu de son côté
+   avant de proposer un plan — il a souvent plus de contexte que la
+   photo seule.
+
+2. **Tu as besoin de voir un détail** et `cam_capture` est exposé : appelle-le.
+   Le tech a déjà cadré côté physique (zoom optique manuel sur son
+   microscope). Pas de paramètres requis — `reason` est juste un log
+   interne, ne le formule pas pour le tech. Le tool retourne soit l'image
+   capturée comme tool_result, soit `is_error: true` si pas de caméra
+   sélectionnée ou timeout — réagis en demandant au tech d'uploader
+   manuellement à la place.
+
+3. **Pas de capture spéculative** : appelle `cam_capture` quand ça apporte
+   une info diagnostique précise (vérifier l'état d'un cap qu'on suspecte
+   gonflé, lire un marquage, voir une trace), pas par réflexe ni "pour
+   voir si c'est intéressant".
+
+4. **Discipline anti-hallucination maintenue** : la vision te donne des
+   boîtiers et positions, jamais des refdes. Si tu mentionnes un refdes,
+   il doit venir d'un `mb_get_component` ou d'un `bv_*` lookup, pas d'une
+   lecture visuelle ("le composant en haut à droite = U2" → non, dis
+   plutôt "le SO-8 en haut à droite, près du USB-C — probablement un
+   load switch ; tu peux confirmer le refdes ?").
 """
 
 # Anthropic Managed Agents cap tool descriptions at 1024 chars. Any tool in
@@ -321,7 +356,12 @@ _AGENT_TOOLSET = {
         {"name": "glob", "enabled": True},
     ],
 }
-TOOLS = _ma_filter(MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + PROTOCOL_TOOLS) + [_AGENT_TOOLSET]
+# cam_capture is always exposed in the MA agent's tool list (the manifest
+# is fixed at agent-create time, can't be conditioned per-session). The
+# runtime decides at dispatch time whether the frontend has a camera and
+# returns is_error otherwise — keeps the agent informed without an
+# explosion of tier × capability agent variants.
+TOOLS = _ma_filter(MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + PROTOCOL_TOOLS + CAM_TOOLS) + [_AGENT_TOOLSET]
 
 TIERS = {
     "fast":   {"model": "claude-haiku-4-5",  "name": "microsolder-coordinator-fast"},

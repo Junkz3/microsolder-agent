@@ -806,7 +806,6 @@ CAM_TOOLS: list[dict] = [
                     "description": "Brief reason for the capture (logged, not shown to the tech).",
                 }
             },
-            "additionalProperties": False,
         },
     },
 ]
