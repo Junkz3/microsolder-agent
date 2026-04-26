@@ -254,6 +254,22 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- Managed Agents protocol confirmation -------------------------------
+    # `bv_propose_protocol` is gated by an explicit tech accept/reject before
+    # the protocol is materialised on disk and pushed to the UI panel. The
+    # runtime emits `protocol_pending_confirmation`, parks on a Future, and
+    # bounds the wait so a tech who walks away or closes the tab doesn't
+    # leave the MA session stuck on `requires_action` forever — the timeout
+    # path posts an is_error custom_tool_result so the agent can recover.
+    ma_protocol_confirmation_timeout_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Maximum time to wait on the technician to accept or reject a "
+            "protocol proposed via bv_propose_protocol."
+        ),
+    )
+
     # --- Managed Agents memory_stores HTTP fallback ---------------------------
     # Raw HTTP fallback path (used when the SDK does not expose
     # `client.beta.memory_stores`). The Anthropic memory_stores REST endpoints

@@ -761,7 +761,13 @@ PROTOCOL_TOOLS: list[dict] = [
             "already identified, asks 'how do I find / locate / test / "
             "track it down', emit the hunt protocol (3-6 steps) rather "
             "than explaining in prose. ONE active protocol at a time — "
-            "re-emitting replaces the previous one. Cap: 12 steps."
+            "re-emitting replaces the previous one. Cap: 12 steps. "
+            "REQUIRES TECH CONFIRMATION: the proposal is shown in a "
+            "modal first; the tech accepts or rejects before the "
+            "protocol is materialised. On reject, the tool call returns "
+            "is_error with the tech's reason — do not re-emit the same "
+            "plan; ask a clarifying question or propose a different "
+            "approach."
         ),
         "input_schema": {
             "type": "object",

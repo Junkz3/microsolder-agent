@@ -1951,6 +1951,207 @@ async def _handle_client_capture_response(
         fut.set_result(frame)
 
 
+async def _handle_client_protocol_confirmation(
+    *,
+    session: SessionState,
+    frame: dict,
+) -> None:
+    """Resolve the pending Future for the matching tool_use_id.
+
+    Frame shape::
+
+        {"type": "client.protocol_confirmation",
+         "tool_use_id": "sevt_…",
+         "decision": "accept" | "reject",
+         "reason": "..." (optional, surfaced to the agent on reject)}
+
+    Unknown tool_use_id is logged and dropped — the runtime owns the future
+    lifecycle and a stale frame from a re-rendered modal should not crash.
+    """
+    tool_use_id = frame.get("tool_use_id")
+    if not tool_use_id or tool_use_id not in session.pending_protocol_confirmations:
+        logger.warning(
+            "[Diag-MA] protocol_confirmation with unknown tool_use_id: %r",
+            tool_use_id,
+        )
+        return
+    fut = session.pending_protocol_confirmations[tool_use_id]
+    if not fut.done():
+        fut.set_result(frame)
+
+
+async def _dispatch_protocol_with_confirmation(
+    *,
+    client: AsyncAnthropic,
+    session: SessionState,
+    ws: WebSocket,
+    memory_root: Path,
+    device_slug: str,
+    repair_id: str | None,
+    conv_id: str | None,
+    ma_session_id: str,
+    tool_use_id: str,
+    tool_input: dict,
+    session_mirrors: _SessionMirrors | None,
+    timeout_s: float | None = None,
+) -> None:
+    """Pattern 4 round-trip for ``bv_propose_protocol`` (tech confirmation).
+
+    1. Push ``protocol_pending_confirmation`` over WS so the UI can render
+       a modal summarising the proposed protocol.
+    2. Park on a Future, registered in
+       ``session.pending_protocol_confirmations[tool_use_id]``.
+    3. On ``client.protocol_confirmation`` (resolved by
+       :func:`_handle_client_protocol_confirmation`) :
+
+       * **accept** → run the regular dispatch via :func:`_dispatch_tool`,
+         emit the ``protocol_proposed`` WS event, send the agent a normal
+         ``user.custom_tool_result``.
+       * **reject** → send the agent an ``is_error`` ``user.custom_tool_result``
+         carrying the tech's reason; no protocol is materialised on disk.
+
+    4. On timeout → ``is_error`` tool_result so the MA session never stays
+       stuck on ``requires_action``. The Future is always cleaned up.
+    """
+    if timeout_s is None:
+        timeout_s = get_settings().ma_protocol_confirmation_timeout_seconds
+
+    fut: asyncio.Future = asyncio.get_event_loop().create_future()
+    session.pending_protocol_confirmations[tool_use_id] = fut
+
+    # Lightweight projection of the proposal for the modal — title +
+    # rationale + step count + step previews. The full payload would
+    # bloat the WS frame and the modal only needs the gist.
+    steps = list(tool_input.get("steps") or [])
+    step_previews = [
+        {
+            "type": s.get("type"),
+            "target": s.get("target"),
+            "test_point": s.get("test_point"),
+            "instruction": s.get("instruction"),
+        }
+        for s in steps[:12]
+    ]
+    try:
+        await ws.send_json({
+            "type": "protocol_pending_confirmation",
+            "tool_use_id": tool_use_id,
+            "title": tool_input.get("title") or "",
+            "rationale": tool_input.get("rationale") or "",
+            "step_count": len(steps),
+            "steps": step_previews,
+            "rule_inspirations": list(tool_input.get("rule_inspirations") or []),
+            "timeout_seconds": timeout_s,
+        })
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=timeout_s)
+        except TimeoutError:
+            logger.warning(
+                "[Diag-MA] protocol confirmation timeout after %.0fs eid=%s",
+                timeout_s,
+                tool_use_id,
+            )
+            try:
+                await ws.send_json({
+                    "type": "protocol_confirmation_timeout",
+                    "tool_use_id": tool_use_id,
+                    "timeout_seconds": timeout_s,
+                })
+            except Exception:  # noqa: BLE001 — best-effort UI hint
+                pass
+            await client.beta.sessions.events.send(
+                ma_session_id,
+                events=[{
+                    "type": "user.custom_tool_result",
+                    "custom_tool_use_id": tool_use_id,
+                    "is_error": True,
+                    "content": [{
+                        "type": "text",
+                        "text": (
+                            f"Protocol confirmation timed out after "
+                            f"{timeout_s:.0f}s — the technician did not "
+                            "respond. Try again with a tighter, more "
+                            "obvious protocol or ask in chat first."
+                        ),
+                    }],
+                }],
+            )
+            return
+
+        decision = str(response.get("decision") or "").lower().strip()
+        reason = str(response.get("reason") or "").strip()
+
+        if decision == "accept":
+            result = await _dispatch_tool(
+                "bv_propose_protocol",
+                tool_input,
+                device_slug,
+                memory_root,
+                client,
+                session,
+                ma_session_id,
+                repair_id=repair_id,
+                session_mirrors=session_mirrors,
+                conv_id=conv_id,
+            )
+            single_event = result.get("event")
+            if result.get("ok") and single_event is not None:
+                try:
+                    await ws.send_json(
+                        single_event if isinstance(single_event, dict)
+                        else single_event.model_dump(by_alias=True)
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[Diag-MA] protocol_proposed WS push failed eid=%s",
+                        tool_use_id,
+                    )
+            result_for_agent = {
+                k: v for k, v in result.items() if k not in ("event", "events")
+            }
+            await client.beta.sessions.events.send(
+                ma_session_id,
+                events=[{
+                    "type": "user.custom_tool_result",
+                    "custom_tool_use_id": tool_use_id,
+                    "content": [{
+                        "type": "text",
+                        "text": _safe_tool_result_text(result_for_agent),
+                    }],
+                }],
+            )
+            return
+
+        # decision == "reject" (or any non-accept value treated as reject so
+        # an unexpected payload from a stale UI never silently materialises
+        # the protocol).
+        deny_text = (
+            f"Technician rejected the proposed protocol. "
+            f"Reason: {reason}" if reason
+            else "Technician rejected the proposed protocol with no reason given."
+        )
+        deny_text += (
+            " Do not re-emit the same protocol; either ask a clarifying "
+            "question, propose a different approach, or wait for further "
+            "instruction."
+        )
+        await client.beta.sessions.events.send(
+            ma_session_id,
+            events=[{
+                "type": "user.custom_tool_result",
+                "custom_tool_use_id": tool_use_id,
+                "is_error": True,
+                "content": [{
+                    "type": "text",
+                    "text": deny_text,
+                }],
+            }],
+        )
+    finally:
+        session.pending_protocol_confirmations.pop(tool_use_id, None)
+
+
 async def _dispatch_cam_capture(
     *,
     client: AsyncAnthropic,
@@ -2127,6 +2328,17 @@ async def _forward_ws_to_session(
         if ptype == "client.capture_response":
             if session_state is not None:
                 await _handle_client_capture_response(session=session_state, frame=payload)
+            continue
+
+        # Pattern 4 (tool_confirmation round-trip) for `bv_propose_protocol`.
+        # The runtime parked the tool call on a Future in
+        # `session_state.pending_protocol_confirmations[tool_use_id]`; the UI
+        # modal resolves it by sending us this frame.
+        if ptype == "client.protocol_confirmation":
+            if session_state is not None:
+                await _handle_client_protocol_confirmation(
+                    session=session_state, frame=payload,
+                )
             continue
 
         # Tech pressed Stop — forward as a user.interrupt MA event so the
@@ -2773,6 +2985,59 @@ async def _forward_session_to_ws(
                             tool_input=payload,
                         ))
                         cam_task.add_done_callback(_release_eid_on_failure)
+                        continue
+
+                    # bv_propose_protocol — Pattern 4 round-trip with tech.
+                    # The runtime emits `protocol_pending_confirmation`, the
+                    # UI modal accepts/rejects, and only an accept dispatches
+                    # the actual tool. Same crash-rollback discipline as
+                    # cam_capture: eid goes into the dedup set IMMEDIATELY,
+                    # but the done callback releases it on cancellation /
+                    # crash so MA's next requires_action re-emit gets a real
+                    # retry instead of a permablock.
+                    if name == "bv_propose_protocol":
+                        proto_eid = eid
+
+                        def _release_proto_on_failure(
+                            task: asyncio.Task,
+                            *,
+                            eid: str = proto_eid,
+                        ) -> None:
+                            if task.cancelled():
+                                responded_tool_ids.discard(eid)
+                                logger.warning(
+                                    "[Diag-MA] propose_protocol cancelled "
+                                    "for eid=%s — released for retry",
+                                    eid,
+                                )
+                                return
+                            exc = task.exception()
+                            if exc is not None:
+                                responded_tool_ids.discard(eid)
+                                logger.warning(
+                                    "[Diag-MA] propose_protocol crashed for "
+                                    "eid=%s — released for retry: %s",
+                                    eid,
+                                    exc,
+                                )
+
+                        responded_tool_ids.add(proto_eid)
+                        proto_task = session_mirrors.spawn(
+                            _dispatch_protocol_with_confirmation(
+                                client=client,
+                                session=session_state,
+                                ws=ws,
+                                memory_root=memory_root,
+                                device_slug=device_slug,
+                                repair_id=repair_id,
+                                conv_id=conv_id,
+                                ma_session_id=session_id,
+                                tool_use_id=proto_eid,
+                                tool_input=payload,
+                                session_mirrors=session_mirrors,
+                            )
+                        )
+                        proto_task.add_done_callback(_release_proto_on_failure)
                         continue
 
                     result = await _dispatch_tool(

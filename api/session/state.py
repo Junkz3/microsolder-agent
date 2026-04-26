@@ -159,6 +159,11 @@ class SessionState:
     # Files+Vision Flow B : per-request capture Futures, keyed by request_id.
     # Resolved when the frontend posts back client.capture_response.
     pending_captures: dict[str, asyncio.Future] = field(default_factory=dict)
+    # Protocol confirmation Futures, keyed by the agent.custom_tool_use eid
+    # for `bv_propose_protocol`. The runtime parks the call on this Future
+    # while the tech accepts/rejects the proposed protocol via the UI. The
+    # frontend resolves it by sending a `client.protocol_confirmation` frame.
+    pending_protocol_confirmations: dict[str, asyncio.Future] = field(default_factory=dict)
 
     def invalidate_pack_cache(self, device_slug: str) -> None:
         """Drop the cached pack AND all derived component results for `device_slug`.
