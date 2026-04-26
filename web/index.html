@@ -547,36 +547,126 @@
       </div>
     </header>
 
-    <section class="rd-tiles" id="rdTiles">
-      <a class="rd-tile" data-tool="pcb" id="rdTilePcb">
-        <div class="rd-tile-head">
-          <svg class="rd-tile-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18M15 9v12M3 15h12"/></svg>
-          <span class="rd-tile-title">Boardview</span>
-        </div>
-        <p class="rd-tile-meta" id="rdTilePcbMeta">—</p>
-      </a>
-      <a class="rd-tile" data-tool="graphe" id="rdTileGraphe">
-        <div class="rd-tile-head">
-          <svg class="rd-tile-icon" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.5 7.5L11 16.5M16.5 7.5L13 16.5M8 6h8"/></svg>
-          <span class="rd-tile-title">Graphe</span>
-        </div>
-        <p class="rd-tile-meta" id="rdTileGrapheMeta">—</p>
-      </a>
-      <a class="rd-tile" data-tool="schematic" id="rdTileSchematic">
-        <div class="rd-tile-head">
-          <svg class="rd-tile-icon" viewBox="0 0 24 24"><path d="M4 12h3"/><path d="M7 10v4"/><path d="M9 10v4"/><path d="M9 12h3"/><path d="M15 10l2 2-2 2"/><path d="M17 12h3"/></svg>
-          <span class="rd-tile-title">Schematic</span>
-        </div>
-        <p class="rd-tile-meta" id="rdTileSchematicMeta">—</p>
-      </a>
-      <a class="rd-tile" data-tool="memory-bank" id="rdTileMemoryBank">
-        <div class="rd-tile-head">
-          <svg class="rd-tile-icon" viewBox="0 0 24 24"><path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14l-4-2-4 2-4-2-4 2z"/><path d="M12 3v16"/></svg>
-          <span class="rd-tile-title">Memory Bank</span>
-        </div>
-        <p class="rd-tile-meta" id="rdTileMemoryBankMeta">—</p>
-      </a>
+    <!-- Capabilities banner — derived ribbon explaining what the AI can
+         (and cannot) do given the data the technician has provided. -->
+    <section class="rd-cap" id="rdCap">
+      <div class="rd-cap-head">
+        <span class="rd-cap-pulse" id="rdCapPulse"></span>
+        <span class="rd-cap-tag">capacités IA</span>
+        <h2 class="rd-cap-title" id="rdCapTitle">—</h2>
+        <span class="rd-cap-score" id="rdCapScore">—</span>
+      </div>
+      <p class="rd-cap-body" id="rdCapBody">
+        L'agent dispose de ses outils en fonction des données que tu lui fournis.
+      </p>
+      <ul class="rd-cap-list" id="rdCapList">
+        <!-- 4 capability rows injected by JS: schematic, boardview, graph, memory_bank -->
+      </ul>
     </section>
+
+    <!-- Single 4-card grid: 2 inputs (Schematic, Boardview — uploadable)
+         + 2 derived (Graphe, Memory Bank — built by the pipeline). The
+         color rail on the left of each card encodes whether that source
+         is on (emerald), off / missing (amber), or being built (cyan). -->
+    <section class="rd-data-grid rd-data-grid-4" id="rdCards">
+
+      <article class="rd-data-card" id="rdCardSchematic" data-state="loading" data-kind="schematic_pdf">
+        <header class="rd-data-card-head">
+          <span class="rd-data-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h13l3 3v13a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z"/><path d="M16 4v4h4"/><path d="M7 12h6M7 16h10"/></svg>
+          </span>
+          <div class="rd-data-card-titles">
+            <h3>Schematic PDF</h3>
+            <span class="rd-data-card-sub">vision pipeline · entrée</span>
+          </div>
+          <span class="rd-data-card-state" id="rdCardSchematicState">—</span>
+        </header>
+        <p class="rd-data-card-meta" id="rdCardSchematicMeta">vérification…</p>
+        <div class="rd-data-card-actions" id="rdCardSchematicActions"></div>
+        <div class="rd-data-card-loss" id="rdCardSchematicLoss" hidden>
+          <strong>Sans schematic :</strong>
+          <span>pas de simulateur, pas d'<code>mb_hypothesize</code>, pas de graphe électrique.
+          L'agent ne peut pas raisonner sur la causalité du board.</span>
+        </div>
+      </article>
+
+      <article class="rd-data-card" id="rdCardBoardview" data-state="loading" data-kind="boardview">
+        <header class="rd-data-card-head">
+          <span class="rd-data-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18M15 9v12M3 15h12"/></svg>
+          </span>
+          <div class="rd-data-card-titles">
+            <h3>Boardview</h3>
+            <span class="rd-data-card-sub" id="rdCardBoardviewFmt">entrée · .brd / .kicad_pcb / .fz…</span>
+          </div>
+          <span class="rd-data-card-state" id="rdCardBoardviewState">—</span>
+        </header>
+        <p class="rd-data-card-meta" id="rdCardBoardviewMeta">vérification…</p>
+        <div class="rd-data-card-actions" id="rdCardBoardviewActions"></div>
+        <div class="rd-data-card-loss" id="rdCardBoardviewLoss" hidden>
+          <strong>Sans boardview :</strong>
+          <span>12 outils visuels indisponibles
+          (<code>bv_highlight</code>, <code>bv_focus</code>, <code>bv_measure_distance</code>…).
+          L'agent ne peut pas te <em>montrer</em> un composant.</span>
+        </div>
+      </article>
+
+      <article class="rd-data-card rd-data-card-derived" id="rdCardKnowledge" data-state="loading">
+        <header class="rd-data-card-head">
+          <span class="rd-data-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.5 7.5L11 16.5M16.5 7.5L13 16.5M8 6h8"/></svg>
+          </span>
+          <div class="rd-data-card-titles">
+            <h3>Graphe causal</h3>
+            <span class="rd-data-card-sub">dérivé · symptôme → action</span>
+          </div>
+          <span class="rd-data-card-state" id="rdCardKnowledgeState">—</span>
+        </header>
+        <p class="rd-data-card-meta" id="rdCardKnowledgeMeta">—</p>
+        <div class="rd-data-card-actions" id="rdCardKnowledgeActions"></div>
+      </article>
+
+      <article class="rd-data-card rd-data-card-derived" id="rdCardMemory" data-state="loading">
+        <header class="rd-data-card-head">
+          <span class="rd-data-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14l-4-2-4 2-4-2-4 2z"/><path d="M12 3v16"/></svg>
+          </span>
+          <div class="rd-data-card-titles">
+            <h3>Memory Bank</h3>
+            <span class="rd-data-card-sub">dérivé · rules · findings</span>
+          </div>
+          <span class="rd-data-card-state" id="rdCardMemoryState">—</span>
+        </header>
+        <p class="rd-data-card-meta" id="rdCardMemoryMeta">—</p>
+        <div class="rd-data-card-actions" id="rdCardMemoryActions"></div>
+      </article>
+
+    </section>
+
+    <!-- Compatibility shim — home.js still derives an Electrical card.
+         The "Graphe causal" tile above absorbs both the knowledge graph
+         AND the electrical graph status; this hidden block keeps the JS
+         calls to setCardState / setCardField from throwing. -->
+    <div hidden>
+      <div id="rdCardElectrical" data-state="loading"></div>
+      <span id="rdCardElectricalState"></span>
+      <span id="rdCardElectricalMeta"></span>
+      <div id="rdCardElectricalActions"></div>
+    </div>
+
+    <!-- Hidden upload inputs — wired by home.js to per-card "Importer" buttons. -->
+    <input type="file" id="rdUploadSchematic" hidden accept=".pdf,application/pdf">
+    <input type="file" id="rdUploadBoardview" hidden
+      accept=".brd,.brd2,.kicad_pcb,.asc,.bdv,.bv,.cad,.cst,.f2b,.fz,.gr,.tvw">
+
+    <!-- Inline upload-progress toast — fixed bottom-right while uploading. -->
+    <div class="rd-toast hidden" id="rdToast" role="status" aria-live="polite">
+      <span class="rd-toast-icon" id="rdToastIcon"></span>
+      <div class="rd-toast-body">
+        <div class="rd-toast-title" id="rdToastTitle">Import en cours…</div>
+        <div class="rd-toast-sub" id="rdToastSub">—</div>
+      </div>
+    </div>
 
     <div class="rd-body">
       <aside class="rd-col rd-col-primary">

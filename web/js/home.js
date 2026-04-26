@@ -244,13 +244,25 @@ export async function renderRepairDashboard(session) {
   const taxEntry = taxIndex.get(slug) || null;
 
   renderDashboardHeader(repair, taxEntry, slug, rid);
-  renderDashboardTiles(slug, rid, pack, taxEntry);
+  renderDashboardData(slug, rid, pack);
+  renderCapabilities(pack);
   renderDashboardConvs(convs.conversations || [], rid);
   renderDashboardFindings(findings, rid);
   renderDashboardTimeline(repair, convs.conversations || [], findings, pack);
   renderDashboardPack(pack, slug, rid);
   wireDashboardHandlers();
+  wireUploadHandlers(slug, rid);
   wireFixButton(slug, rid);
+}
+
+// Mid-dashboard re-render after an upload completes — same payload as the
+// initial mount, but we don't touch conversations / findings / timeline
+// because those are unaffected by a boardview/schematic upload.
+async function refreshDashboardData(slug, rid) {
+  const pack = await fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null);
+  renderDashboardData(slug, rid, pack);
+  renderCapabilities(pack);
+  renderDashboardPack(pack, slug, rid);
 }
 
 export function hideRepairDashboard() {
@@ -296,31 +308,355 @@ function renderDashboardHeader(repair, taxEntry, slug, rid) {
     `<span class="rd-created">créée ${escapeHtml(created)}</span>`;
 }
 
-function renderDashboardTiles(slug, rid, pack, taxEntry) {
-  const qs = `?device=${encodeURIComponent(slug)}&repair=${encodeURIComponent(rid)}`;
-  const pcb = document.getElementById("rdTilePcb");
-  const graphe = document.getElementById("rdTileGraphe");
-  const schematic = document.getElementById("rdTileSchematic");
-  const memoryBank = document.getElementById("rdTileMemoryBank");
-  if (pcb) pcb.href = `${qs}#pcb`;
-  if (graphe) graphe.href = `${qs}#graphe`;
-  if (schematic) schematic.href = `${qs}#schematic`;
-  if (memoryBank) memoryBank.href = `${qs}&view=md#graphe`;
+const ICONS = {
+  arrowRight: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  upload:     '<svg viewBox="0 0 24 24"><path d="M12 17V5"/><path d="M5 12l7-7 7 7"/><path d="M5 19h14"/></svg>',
+};
 
-  // Tile metas — static text when we don't have richer data. Keep mono and
-  // short so the tile stays scannable.
-  const pcbMeta = document.getElementById("rdTilePcbMeta");
-  if (pcbMeta) pcbMeta.textContent = taxEntry?.form_factor || "board";
-  const grapheMeta = document.getElementById("rdTileGrapheMeta");
-  if (grapheMeta) {
-    const complete = pack && pack.has_registry && pack.has_knowledge_graph
-      && pack.has_rules && pack.has_dictionary && pack.has_audit_verdict;
-    grapheMeta.textContent = complete ? "APPROUVÉ" : (pack ? "en construction" : "aucune mémoire");
+// Pretty file-size formatter — KB/MB with one decimal. Used in card metas
+// after an upload so the tech sees "iphone-x.brd · 2.4 MB" not raw bytes.
+function fmtBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+// ───────────────────────────────────────────────────────────────
+// Data-aware dashboard — per-input cards + per-derived-data cards.
+// Each card boils down to one of: on / off / building / loading / error.
+// ───────────────────────────────────────────────────────────────
+
+function renderDashboardData(slug, rid, pack) {
+  const qs = `?device=${encodeURIComponent(slug)}&repair=${encodeURIComponent(rid)}`;
+
+  // ── INPUT 1 — Schematic PDF ────────────────────────────────────────
+  setCardState("rdCardSchematic", pack?.has_schematic_pdf ? "on" : "off");
+  setCardField("rdCardSchematicState", pack?.has_schematic_pdf
+    ? (pack.has_electrical_graph ? "compilé" : "importé")
+    : "à importer");
+  setCardField("rdCardSchematicMeta", pack?.has_schematic_pdf
+    ? (pack.has_electrical_graph
+        ? "PDF + electrical_graph.json — l'agent peut simuler & hypothétiser."
+        : "PDF importé. Compilation en cours ou en attente.")
+    : "Aucun PDF — l'agent travaille à l'aveugle sur le hardware.");
+  toggleEl("rdCardSchematicLoss", !pack?.has_schematic_pdf);
+
+  const schemActions = document.getElementById("rdCardSchematicActions");
+  if (schemActions) {
+    schemActions.innerHTML = "";
+    if (pack?.has_schematic_pdf) {
+      schemActions.appendChild(linkButton(`${qs}#schematic`,
+        ICONS.arrowRight + " Ouvrir", "is-primary"));
+      schemActions.appendChild(actionButton(ICONS.upload + " Remplacer", () => {
+        document.getElementById("rdUploadSchematic")?.click();
+      }));
+    } else {
+      schemActions.appendChild(actionButton(
+        ICONS.upload + " Importer un PDF", () => {
+          document.getElementById("rdUploadSchematic")?.click();
+        }, "is-warn"));
+    }
   }
-  const schematicMeta = document.getElementById("rdTileSchematicMeta");
-  if (schematicMeta) schematicMeta.textContent = pack?.has_schematic_graph ? "importé" : "non importé";
-  const mbMeta = document.getElementById("rdTileMemoryBankMeta");
-  if (mbMeta) mbMeta.textContent = pack?.has_rules ? "rules + findings" : "vide";
+
+  // ── INPUT 2 — Boardview ─────────────────────────────────────────────
+  setCardState("rdCardBoardview", pack?.has_boardview ? "on" : "off");
+  setCardField("rdCardBoardviewState", pack?.has_boardview ? "importé" : "à importer");
+  setCardField("rdCardBoardviewFmt", pack?.boardview_format
+    ? `format ${pack.boardview_format}`
+    : ".brd / .kicad_pcb / .fz / .tvw…");
+  setCardField("rdCardBoardviewMeta", pack?.has_boardview
+    ? `12 outils visuels disponibles · format ${pack.boardview_format || "détecté"}.`
+    : "L'agent ne peut pas pointer un composant ni mesurer une distance.");
+  toggleEl("rdCardBoardviewLoss", !pack?.has_boardview);
+
+  const bvActions = document.getElementById("rdCardBoardviewActions");
+  if (bvActions) {
+    bvActions.innerHTML = "";
+    if (pack?.has_boardview) {
+      bvActions.appendChild(linkButton(`${qs}#pcb`,
+        ICONS.arrowRight + " Ouvrir", "is-primary"));
+      bvActions.appendChild(actionButton(ICONS.upload + " Remplacer", () => {
+        document.getElementById("rdUploadBoardview")?.click();
+      }));
+    } else {
+      bvActions.appendChild(actionButton(
+        ICONS.upload + " Importer un boardview", () => {
+          document.getElementById("rdUploadBoardview")?.click();
+        }, "is-warn"));
+    }
+  }
+
+  // ── DERIVED 1 — Knowledge graph (causal pack) ──────────────────────
+  const packComplete = !!(pack && pack.has_registry && pack.has_knowledge_graph
+    && pack.has_rules && pack.has_dictionary && pack.has_audit_verdict);
+  const packPartial = !!(pack && (pack.has_registry || pack.has_knowledge_graph
+    || pack.has_rules || pack.has_dictionary));
+  const knowledgeState = packComplete ? "on" : (packPartial ? "building" : "off");
+  setCardState("rdCardKnowledge", knowledgeState);
+  setCardField("rdCardKnowledgeState",
+    packComplete ? "approuvé" : (packPartial ? "en construction" : "vide"));
+  setCardField("rdCardKnowledgeMeta",
+    packComplete ? "registry + graph + rules + dictionary + audit. Prêt pour le diag."
+    : packPartial ? "Pipeline en cours — l'agent pourra l'utiliser dès la fin."
+    : "Construit automatiquement quand la réparation démarre.");
+  const knowledgeActions = document.getElementById("rdCardKnowledgeActions");
+  if (knowledgeActions) {
+    knowledgeActions.innerHTML = "";
+    if (packComplete || packPartial) {
+      knowledgeActions.appendChild(linkButton(`${qs}#graphe`,
+        ICONS.arrowRight + " Voir le graphe", packComplete ? "is-primary" : ""));
+    }
+  }
+
+  // ── DERIVED 2 — Electrical graph (compiled from schematic PDF) ──────
+  const electricalState = pack?.has_electrical_graph
+    ? "on"
+    : (pack?.has_schematic_pdf ? "building" : "off");
+  setCardState("rdCardElectrical", electricalState);
+  setCardField("rdCardElectricalState", pack?.has_electrical_graph
+    ? "compilé"
+    : (pack?.has_schematic_pdf ? "compilation" : "indisponible"));
+  setCardField("rdCardElectricalMeta", pack?.has_electrical_graph
+    ? "Nets, rails et boot sequence prêts. mb_schematic_graph + simulator OK."
+    : (pack?.has_schematic_pdf
+        ? "Le schematic est importé — la compilation se fait en arrière-plan."
+        : "Importer un schematic PDF débloque ce graphe et le simulateur."));
+  const electricalActions = document.getElementById("rdCardElectricalActions");
+  if (electricalActions) {
+    electricalActions.innerHTML = "";
+    if (pack?.has_electrical_graph) {
+      electricalActions.appendChild(linkButton(`${qs}#schematic`,
+        ICONS.arrowRight + " Ouvrir", "is-primary"));
+    }
+  }
+
+  // ── DERIVED 3 — Memory bank (rules + findings + dictionary) ────────
+  const memoryState = pack?.has_rules ? "on" : (pack?.has_registry ? "building" : "off");
+  setCardState("rdCardMemory", memoryState);
+  setCardField("rdCardMemoryState", pack?.has_rules
+    ? "active"
+    : (pack?.has_registry ? "construction" : "vide"));
+  setCardField("rdCardMemoryMeta", pack?.has_rules
+    ? "L'agent peut faire mb_get_component, mb_get_rules_for_symptoms, mb_record_finding."
+    : (pack?.has_registry
+        ? "Vocabulaire en place, Clinicien rédige les règles…"
+        : "Sera peuplée par le pipeline. Toujours active dès que les rules existent."));
+  const memoryActions = document.getElementById("rdCardMemoryActions");
+  if (memoryActions) {
+    memoryActions.innerHTML = "";
+    if (pack?.has_rules || pack?.has_registry) {
+      memoryActions.appendChild(linkButton(`${qs}&view=md#graphe`,
+        ICONS.arrowRight + " Ouvrir", pack?.has_rules ? "is-primary" : ""));
+    }
+  }
+}
+
+// Capability banner — single ribbon at the top showing what the AI has
+// access to right now. Reads as a mission-status header.
+function renderCapabilities(pack) {
+  const cap = document.getElementById("rdCap");
+  const title = document.getElementById("rdCapTitle");
+  const body = document.getElementById("rdCapBody");
+  const score = document.getElementById("rdCapScore");
+  const list = document.getElementById("rdCapList");
+  if (!cap || !title || !body || !score || !list) return;
+
+  const flags = {
+    schematic: !!pack?.has_schematic_pdf,
+    boardview: !!pack?.has_boardview,
+    graph:     !!(pack && pack.has_knowledge_graph && pack.has_rules),
+    memory:    !!pack?.has_rules,
+  };
+  const onCount = Object.values(flags).filter(Boolean).length;
+  let level = "minimal";
+  let label = "Capacités IA limitées";
+  let blurb = "Crée la mémoire de ce device et importe schematic + boardview pour débloquer tous les outils.";
+  if (onCount === 4) {
+    level = "full";
+    label = "Capacités IA — toutes débloquées";
+    blurb = "Schematic + boardview + mémoire chargés. L'agent dispose de l'ensemble de ses outils visuels et causaux.";
+  } else if (onCount >= 2) {
+    level = "partial";
+    label = "Capacités IA — partielles";
+    blurb = "Une partie de la boîte à outils est active. Importe les sources manquantes pour débloquer le reste.";
+  } else if (onCount === 1) {
+    level = "minimal";
+    label = "Capacités IA — minimales";
+    blurb = "L'agent peut discuter mais ne peut ni montrer ni simuler. Importe schematic + boardview pour le rendre opérationnel.";
+  } else {
+    level = "minimal";
+    label = "Capacités IA — agent à froid";
+    blurb = "Aucune source liée à ce device. Démarre une réparation et importe schematic + boardview.";
+  }
+  cap.dataset.level = level;
+  title.textContent = label;
+  body.textContent = blurb;
+  score.textContent = `${onCount} / 4 sources actives`;
+
+  const rows = [
+    { key: "schematic", label: "Schematic", on: "simulateur, hypothesize", off: "off" },
+    { key: "boardview", label: "Boardview", on: "12 bv_* tools", off: "off" },
+    { key: "graph",     label: "Graphe",    on: "rules + dictionary",  off: "off" },
+    { key: "memory",    label: "Memory",    on: "mb_* tools",          off: "off" },
+  ];
+  list.innerHTML = rows.map(r => {
+    const on = flags[r.key];
+    return `<li class="rd-cap-pill ${on ? "on" : "off"}">
+      <span class="rd-cap-pill-dot"></span>
+      <span class="rd-cap-pill-label">${escapeHtml(r.label)}</span>
+      <span class="rd-cap-pill-tag">${escapeHtml(on ? r.on : r.off)}</span>
+    </li>`;
+  }).join("");
+}
+
+// Helpers ───────────────────────────────────────────────────────
+function setCardState(id, state) {
+  const el = document.getElementById(id);
+  if (el) el.dataset.state = state;
+}
+function setCardField(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+function toggleEl(id, on) {
+  const el = document.getElementById(id);
+  if (el) el.hidden = !on;
+}
+function linkButton(href, html, extra = "") {
+  const a = document.createElement("a");
+  a.className = `rd-data-card-btn ${extra}`.trim();
+  a.href = href;
+  a.innerHTML = html;
+  return a;
+}
+function actionButton(html, onclick, extra = "") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `rd-data-card-btn ${extra}`.trim();
+  b.innerHTML = html;
+  b.addEventListener("click", onclick);
+  return b;
+}
+
+// ───────────────────────────────────────────────────────────────
+// Upload wiring — POST /pipeline/packs/{slug}/documents
+// Schematic = .pdf  →  kind=schematic_pdf
+// Boardview = parser-supported extensions  →  kind=boardview
+// ───────────────────────────────────────────────────────────────
+let _uploadHandlersWired = false;
+function wireUploadHandlers(slug, rid) {
+  // Always re-bind the per-session slug/rid even on re-mount.
+  const schemInput = document.getElementById("rdUploadSchematic");
+  const bvInput = document.getElementById("rdUploadBoardview");
+  if (schemInput) {
+    schemInput.value = "";
+    schemInput.onchange = (ev) => {
+      const file = ev.target.files?.[0];
+      if (file) handleUpload(slug, rid, file, "schematic_pdf");
+      ev.target.value = "";
+    };
+  }
+  if (bvInput) {
+    bvInput.value = "";
+    bvInput.onchange = (ev) => {
+      const file = ev.target.files?.[0];
+      if (file) handleUpload(slug, rid, file, "boardview");
+      ev.target.value = "";
+    };
+  }
+  if (_uploadHandlersWired) return;
+  _uploadHandlersWired = true;
+
+  // Drag-drop on the off-state cards. Visual hint via .is-dragover.
+  const wireDrop = (cardId, kind) => {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    card.addEventListener("dragenter", (ev) => {
+      if (card.dataset.state !== "off") return;
+      ev.preventDefault();
+      card.classList.add("is-dragover");
+    });
+    card.addEventListener("dragover", (ev) => {
+      if (card.dataset.state !== "off") return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "copy";
+    });
+    card.addEventListener("dragleave", () => card.classList.remove("is-dragover"));
+    card.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      card.classList.remove("is-dragover");
+      const file = ev.dataTransfer?.files?.[0];
+      if (!file) return;
+      const slugNow = new URLSearchParams(window.location.search).get("device");
+      const ridNow = new URLSearchParams(window.location.search).get("repair");
+      if (!slugNow || !ridNow) return;
+      handleUpload(slugNow, ridNow, file, kind);
+    });
+  };
+  wireDrop("rdCardSchematic", "schematic_pdf");
+  wireDrop("rdCardBoardview", "boardview");
+}
+
+async function handleUpload(slug, rid, file, kind) {
+  const cardId = kind === "schematic_pdf" ? "rdCardSchematic" : "rdCardBoardview";
+  const card = document.getElementById(cardId);
+  if (card) card.dataset.state = "building";
+
+  showToast("info", `Import ${kind === "schematic_pdf" ? "schematic" : "boardview"} en cours…`,
+    `${file.name} · ${fmtBytes(file.size)}`);
+
+  const fd = new FormData();
+  fd.append("kind", kind);
+  fd.append("file", file);
+
+  try {
+    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      showToast("warn", "Échec de l'import",
+        `${res.status} ${detail || "essaie un autre fichier"}`);
+      // Restore previous state on failure.
+      await refreshDashboardData(slug, rid);
+      return;
+    }
+    showToast("ok", "Import terminé",
+      `${file.name} · ${fmtBytes(file.size)}`);
+    await refreshDashboardData(slug, rid);
+  } catch (err) {
+    console.error("upload failed", err);
+    showToast("warn", "Réseau", "impossible de joindre le backend.");
+    await refreshDashboardData(slug, rid);
+  }
+}
+
+let _toastTimer = null;
+function showToast(tone, title, sub) {
+  const toast = document.getElementById("rdToast");
+  const titleEl = document.getElementById("rdToastTitle");
+  const subEl = document.getElementById("rdToastSub");
+  const iconEl = document.getElementById("rdToastIcon");
+  if (!toast || !titleEl || !subEl || !iconEl) return;
+  toast.dataset.tone = tone;
+  titleEl.textContent = title;
+  subEl.textContent = sub || "";
+  iconEl.innerHTML = tone === "ok"
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>'
+    : tone === "warn"
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity=".3"/><path d="M21 12a9 9 0 00-9-9"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></path></svg>';
+  toast.classList.remove("hidden");
+  if (_toastTimer) clearTimeout(_toastTimer);
+  // "info" stays until the next showToast (upload-in-progress); ok/warn auto-clear.
+  if (tone !== "info") {
+    _toastTimer = setTimeout(() => toast.classList.add("hidden"), 3600);
+  }
 }
 
 function renderDashboardConvs(conversations, rid) {
