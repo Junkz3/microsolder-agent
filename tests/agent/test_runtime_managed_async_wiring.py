@@ -15,6 +15,15 @@ from pathlib import Path
 import pytest
 
 RUNTIME_PATH = Path(__file__).parent.parent.parent / "api" / "agent" / "runtime_managed.py"
+# `_SessionMirrors` was lifted out of ``runtime_managed.py`` into its own
+# module when the dispatch refactor landed (see ``tool_dispatch.py``), so
+# the AST contract test below has to inspect that module directly. The
+# runtime still re-exports the symbol under its legacy name via
+# ``from api.agent._session_mirrors import SessionMirrors as
+# _SessionMirrors`` so existing imports keep working.
+SESSION_MIRRORS_PATH = (
+    Path(__file__).parent.parent.parent / "api" / "agent" / "_session_mirrors.py"
+)
 
 
 @pytest.fixture(scope="module")
@@ -25,6 +34,11 @@ def runtime_source() -> str:
 @pytest.fixture(scope="module")
 def runtime_tree(runtime_source: str) -> ast.Module:
     return ast.parse(runtime_source)
+
+
+@pytest.fixture(scope="module")
+def session_mirrors_tree() -> ast.Module:
+    return ast.parse(SESSION_MIRRORS_PATH.read_text())
 
 
 # ---------------------------------------------------------------------------
@@ -154,22 +168,28 @@ def test_post_cancel_per_task_unwind_present_before_finally(
     )
 
 
-def test_session_mirrors_class_contract_unchanged(runtime_tree: ast.Module):
-    """The `_SessionMirrors` class must keep its three public surfaces
+def test_session_mirrors_class_contract_unchanged(
+    session_mirrors_tree: ast.Module,
+):
+    """The `SessionMirrors` class must keep its three public surfaces
     (spawn, wait_drain, _pending) — the F1 + F2 fixes both depend on the
     spawn() tracking semantics. Any future refactor that drops `_pending`
     or renames `spawn` would silently break the regression coverage.
+
+    The class lives in :mod:`api.agent._session_mirrors` since the
+    dispatch refactor; ``runtime_managed`` re-exports it as
+    ``_SessionMirrors`` so legacy importers keep working.
     """
     cls = next(
-        (n for n in ast.walk(runtime_tree)
-         if isinstance(n, ast.ClassDef) and n.name == "_SessionMirrors"),
+        (n for n in ast.walk(session_mirrors_tree)
+         if isinstance(n, ast.ClassDef) and n.name == "SessionMirrors"),
         None,
     )
-    assert cls is not None, "_SessionMirrors class must exist"
+    assert cls is not None, "SessionMirrors class must exist"
 
     methods = {n.name for n in cls.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
-    assert "spawn" in methods, "_SessionMirrors must expose spawn()"
-    assert "wait_drain" in methods, "_SessionMirrors must expose wait_drain()"
+    assert "spawn" in methods, "SessionMirrors must expose spawn()"
+    assert "wait_drain" in methods, "SessionMirrors must expose wait_drain()"
 
     # spawn must be sync (returns Task), not async — otherwise call sites
     # that do `mirrors.spawn(...)` without await would silently no-op.
@@ -177,4 +197,13 @@ def test_session_mirrors_class_contract_unchanged(runtime_tree: ast.Module):
                  if isinstance(n, ast.FunctionDef) and n.name == "spawn")
     assert spawn.__class__.__name__ == "FunctionDef", (
         "spawn must be sync (def spawn) so call sites work without await"
+    )
+
+    # Importer alias from runtime_managed must still expose the legacy name.
+    from api.agent._session_mirrors import SessionMirrors
+    from api.agent.runtime_managed import _SessionMirrors as _Reexport
+
+    assert _Reexport is SessionMirrors, (
+        "runtime_managed must re-export SessionMirrors as _SessionMirrors so "
+        "tests + scripts importing the legacy name keep working"
     )

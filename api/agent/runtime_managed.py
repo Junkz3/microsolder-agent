@@ -29,6 +29,7 @@ from typing import Any, Literal
 from anthropic import AsyncAnthropic
 from fastapi import WebSocket, WebSocketDisconnect
 
+from api.agent._session_mirrors import SessionMirrors as _SessionMirrors
 from api.agent.chat_history import (
     append_event,
     build_ctx_tag,
@@ -43,7 +44,6 @@ from api.agent.chat_history import (
     strip_ctx_tag,
     touch_conversation,
 )
-from api.agent.dispatch_bv import dispatch_bv
 from api.agent.macros import persist_macro
 from api.agent.managed_ids import get_agent, load_managed_ids
 from api.agent.memory_stores import (
@@ -57,15 +57,9 @@ from api.agent.session_start_mode import (
     SessionStartMode,
     decide_session_start_mode,
 )
-from api.agent.tools import (
-    mb_expand_knowledge,
-    mb_get_component,
-    mb_get_rules_for_symptoms,
-    mb_record_finding,
-)
+from api.agent.tool_dispatch import ToolContext, dispatch_tool
 from api.config import get_settings
 from api.session.state import SessionState
-from api.tools.schematic import mb_schematic_graph
 
 TierLiteral = Literal["fast", "normal", "deep"]
 DEFAULT_TIER: TierLiteral = "fast"
@@ -190,36 +184,15 @@ async def _sessions_create_with_retry(
     raise last_exc
 
 
-class _SessionMirrors:
-    """Tracks fire-and-forget mirror tasks and awaits them on session close."""
-
-    def __init__(self) -> None:
-        self._pending: set[asyncio.Task] = set()
-
-    def spawn(self, coro) -> asyncio.Task:
-        task = asyncio.create_task(coro)
-        self._pending.add(task)
-        task.add_done_callback(self._pending.discard)
-        return task
-
-    async def wait_drain(self, timeout: float | None = None) -> None:
-        if not self._pending:
-            return
-        if timeout is None:
-            timeout = get_settings().ma_session_drain_timeout_seconds
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*self._pending, return_exceptions=True),
-                timeout=timeout,
-            )
-        except TimeoutError:
-            logger.warning(
-                "[Diag-MA] %d mirror tasks still pending after %.1fs — cancelling",
-                len(self._pending),
-                timeout,
-            )
-            for task in list(self._pending):
-                task.cancel()
+# NOTE: ``_SessionMirrors`` (the fire-and-forget task tracker used by
+# every mb_validate_finding mirror, the cam_capture round-trip and the
+# auto-seed re-upload) lives in :mod:`api.agent._session_mirrors` so the
+# tool-dispatch table can reference it without importing this runtime
+# module (avoiding a cycle). The alias at the top of this file
+# (``from api.agent._session_mirrors import SessionMirrors as
+# _SessionMirrors``) preserves the legacy ``rm._SessionMirrors`` import
+# path used by the test suite — see the wiring tests in
+# ``tests/agent/test_runtime_managed_async_wiring.py``.
 
 
 def _mirror_jsonl(
@@ -626,353 +599,26 @@ async def _dispatch_tool(
     session_mirrors: _SessionMirrors | None = None,
     conv_id: str | None = None,
 ) -> dict:
-    """Run a custom tool locally and return the raw result.
+    """Thin shim around :func:`api.agent.tool_dispatch.dispatch_tool`.
 
-    Routes bv_* → dispatch_bv (synchronous), mb_* → their Python handlers.
-    The returned dict may contain a Pydantic `event` field — the caller is
-    responsible for emitting it on the WS and stripping it from the agent
-    tool_result.
+    Bundles the legacy ten-positional-arg signature into a ``ToolContext``
+    and forwards to the dispatch table. Kept as a module-level symbol so
+    existing callers (and the in-flight ``mb_expand_knowledge`` interceptor
+    at ``_forward_session_to_ws``) need no rewiring. Behaviour is byte-for-
+    byte equivalent to the pre-refactor waterfall — see ``tool_dispatch.py``
+    for the per-tool handlers.
     """
-    if name.startswith("profile_"):
-        from api.profile.tools import (
-            profile_check_skills,
-            profile_get,
-            profile_track_skill,
-        )
-
-        if name == "profile_get":
-            return profile_get(session=session)
-        if name == "profile_check_skills":
-            return profile_check_skills(payload.get("candidate_skills", []))
-        if name == "profile_track_skill":
-            return profile_track_skill(
-                payload.get("skill_id", ""),
-                payload.get("evidence", {}),
-            )
-        return {"ok": False, "reason": "unknown-tool", "error": f"unknown profile tool: {name}"}
-    if name == "bv_propose_protocol":
-        from api.tools.protocol import (
-            StepInput as _SI,
-        )
-        from api.tools.protocol import (
-            propose_protocol as _propose,
-        )
-
-        valid_refdes = (
-            {p.refdes for p in session.board.parts}
-            if session.board is not None
-            else None
-        )
-        # Tolerate "comp:U7" / "rail:+5V" prefixes the agent learns from
-        # mb_set_observation; strip "comp:" so the refdes validates, drop
-        # rail/test-point prefixes into test_point so the step still anchors
-        # somewhere meaningful even without a board part.
-        for s in payload.get("steps", []) or []:
-            t = s.get("target")
-            if isinstance(t, str) and ":" in t:
-                kind, _, rest = t.partition(":")
-                if kind == "comp":
-                    s["target"] = rest
-                else:
-                    s["target"] = None
-                    s.setdefault("test_point", t)
-        try:
-            step_inputs = [_SI.model_validate(s) for s in payload.get("steps", [])]
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "reason": "invalid_step_input", "detail": str(exc)}
-        result = _propose(
-            memory_root=memory_root,
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            title=payload.get("title", ""),
-            rationale=payload.get("rationale", ""),
-            steps=step_inputs,
-            rule_inspirations=payload.get("rule_inspirations") or None,
-            valid_refdes=valid_refdes,
-            conv_id=conv_id,
-        )
-        if result.get("ok"):
-            from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
-            if proto is not None:
-                result["event"] = {
-                    "type": "protocol_proposed",
-                    "protocol_id": proto.protocol_id,
-                    "title": proto.title,
-                    "rationale": proto.rationale,
-                    "steps": [s.model_dump() for s in proto.steps],
-                    "current_step_id": proto.current_step_id,
-                }
-        return result
-
-    if name == "bv_update_protocol":
-        from api.tools.protocol import StepInput as _SI
-        from api.tools.protocol import update_protocol as _update
-
-        new_step_payload = payload.get("new_step")
-        new_step = None
-        if new_step_payload is not None:
-            try:
-                new_step = _SI.model_validate(new_step_payload)
-            except Exception as exc:  # noqa: BLE001
-                return {"ok": False, "reason": "invalid_new_step", "detail": str(exc)}
-        result = _update(
-            memory_root=memory_root,
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            action=payload.get("action", ""),
-            reason=payload.get("reason", ""),
-            step_id=payload.get("step_id"),
-            after=payload.get("after"),
-            new_step=new_step,
-            new_order=payload.get("new_order"),
-            verdict=payload.get("verdict"),
-            conv_id=conv_id,
-        )
-        if result.get("ok"):
-            from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
-            history_tail = proto.history[-3:] if proto is not None else []
-            result["event"] = {
-                "type": "protocol_updated",
-                "protocol_id": result.get("protocol_id"),
-                "action": payload.get("action"),
-                "current_step_id": result.get("current_step_id"),
-                "steps": [s.model_dump() for s in (proto.steps if proto else [])],
-                "history_tail": [h.model_dump() for h in history_tail],
-            }
-        return result
-
-    if name == "bv_record_step_result":
-        from api.tools.protocol import record_step_result as _record
-        result = _record(
-            memory_root=memory_root,
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            step_id=payload.get("step_id", ""),
-            value=payload.get("value"),
-            unit=payload.get("unit"),
-            observation=payload.get("observation"),
-            skip_reason=payload.get("skip_reason"),
-            submitted_by="agent",
-            conv_id=conv_id,
-        )
-        if result.get("ok"):
-            from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
-            history_tail = proto.history[-3:] if proto is not None else []
-            result["event"] = {
-                "type": "protocol_updated",
-                "protocol_id": result.get("protocol_id"),
-                "action": "step_completed",
-                "current_step_id": result.get("current_step_id"),
-                "steps": [s.model_dump() for s in (proto.steps if proto else [])],
-                "history_tail": [h.model_dump() for h in history_tail],
-            }
-        return result
-
-    if name == "bv_get_protocol":
-        from api.tools.protocol import load_active_protocol
-        proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
-        if proto is None:
-            return {"ok": True, "active": False}
-        return {
-            "ok": True, "active": True,
-            "protocol_id": proto.protocol_id,
-            "title": proto.title,
-            "rationale": proto.rationale,
-            "current_step_id": proto.current_step_id,
-            "status": proto.status,
-            "steps": [s.model_dump() for s in proto.steps],
-            "history": [h.model_dump() for h in proto.history],
-        }
-
-    if name.startswith("bv_"):
-        return dispatch_bv(session, name, payload)
-    if name == "mb_get_component":
-        return mb_get_component(
-            device_slug=device_slug,
-            refdes=payload.get("refdes", ""),
-            memory_root=memory_root,
-            session=session,
-        )
-    if name == "mb_get_rules_for_symptoms":
-        return mb_get_rules_for_symptoms(
-            device_slug=device_slug,
-            symptoms=payload.get("symptoms", []),
-            memory_root=memory_root,
-            max_results=payload.get("max_results", 5),
-            session=session,
-        )
-    if name == "mb_record_finding":
-        return await mb_record_finding(
-            client=client,
-            device_slug=device_slug,
-            refdes=payload.get("refdes", ""),
-            symptom=payload.get("symptom", ""),
-            confirmed_cause=payload.get("confirmed_cause", ""),
-            memory_root=memory_root,
-            mechanism=payload.get("mechanism"),
-            notes=payload.get("notes"),
-            session_id=session_id,
-        )
-    if name == "mb_record_session_log":
-        from api.agent.tools import mb_record_session_log as _mb_session_log
-
-        return await _mb_session_log(
-            client=client,
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            conv_id=conv_id or "",
-            symptom=payload.get("symptom", ""),
-            outcome=payload.get("outcome", "unresolved"),
-            memory_root=memory_root,
-            tested=payload.get("tested"),
-            hypotheses=payload.get("hypotheses"),
-            findings=payload.get("findings"),
-            next_steps=payload.get("next_steps"),
-            lesson=payload.get("lesson"),
-        )
-    if name == "mb_schematic_graph":
-        return mb_schematic_graph(
-            device_slug=device_slug,
-            memory_root=memory_root,
-            query=payload.get("query", ""),
-            label=payload.get("label"),
-            refdes=payload.get("refdes"),
-            index=payload.get("index"),
-            domain=payload.get("domain"),
-            killed_refdes=payload.get("killed_refdes"),
-            failures=payload.get("failures"),
-            rail_overrides=payload.get("rail_overrides"),
-            session=session,
-        )
-    if name == "mb_hypothesize":
-        from api.tools.hypothesize import mb_hypothesize as _mb_hypothesize
-
-        return _mb_hypothesize(
-            device_slug=device_slug,
-            memory_root=memory_root,
-            state_comps=payload.get("state_comps"),
-            state_rails=payload.get("state_rails"),
-            metrics_comps=payload.get("metrics_comps"),
-            metrics_rails=payload.get("metrics_rails"),
-            max_results=payload.get("max_results", 5),
-            # Always pass the session's repair_id — it scopes the
-            # diagnosis_log.jsonl hook (for field-corpus calibration) and
-            # is the fallback for journal-based synthesis when the agent
-            # didn't supply explicit state/metrics.
-            repair_id=payload.get("repair_id") or repair_id,
-        )
-    if name == "mb_record_measurement":
-        from api.tools.measurements import mb_record_measurement as _mb_rec
-
-        return _mb_rec(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-            target=payload.get("target", ""),
-            value=payload.get("value", 0.0),
-            unit=payload.get("unit", "V"),
-            nominal=payload.get("nominal"),
-            note=payload.get("note"),
-            source="agent",
-        )
-    if name == "mb_list_measurements":
-        from api.tools.measurements import mb_list_measurements as _mb_list
-
-        return _mb_list(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-            target=payload.get("target"),
-            since=payload.get("since"),
-        )
-    if name == "mb_compare_measurements":
-        from api.tools.measurements import mb_compare_measurements as _mb_cmp
-
-        return _mb_cmp(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-            target=payload.get("target", ""),
-            before_ts=payload.get("before_ts"),
-            after_ts=payload.get("after_ts"),
-        )
-    if name == "mb_observations_from_measurements":
-        from api.tools.measurements import mb_observations_from_measurements as _mb_syn
-
-        return _mb_syn(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-        )
-    if name == "mb_set_observation":
-        from api.tools.measurements import mb_set_observation as _mb_set
-
-        return _mb_set(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-            target=payload.get("target", ""),
-            mode=payload.get("mode", "unknown"),
-        )
-    if name == "mb_clear_observations":
-        from api.tools.measurements import mb_clear_observations as _mb_clr
-
-        return _mb_clr(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-        )
-    if name == "mb_validate_finding":
-        from api.tools.validation import (
-            mb_validate_finding as _mb_val,
-        )
-        from api.tools.validation import (
-            mirror_outcome_to_memory,
-        )
-
-        result = _mb_val(
-            device_slug=device_slug,
-            repair_id=repair_id or "",
-            memory_root=memory_root,
-            fixes=payload.get("fixes", []),
-            tech_note=payload.get("tech_note"),
-            agent_confidence=payload.get("agent_confidence", "high"),
-        )
-        # Fire-and-forget: mirror the validated outcome into the device's
-        # MA memory store so future repair sessions can `memory_search` it.
-        # Kept off the critical path — the tool's response to the agent
-        # doesn't wait for the HTTP upsert to complete.
-        # session_mirrors ensures the task is awaited on WS close so a
-        # fast disconnect doesn't cancel it mid-flight.
-        if result.get("validated") and repair_id:
-            if session_mirrors is None:
-                raise RuntimeError(
-                    "mb_validate_finding dispatch requires session_mirrors; "
-                    "this path is only valid from run_diagnostic_session_managed"
-                )
-            session_mirrors.spawn(
-                mirror_outcome_to_memory(
-                    client=client,
-                    device_slug=device_slug,
-                    repair_id=repair_id,
-                    memory_root=memory_root,
-                )
-            )
-        return result
-    if name == "mb_expand_knowledge":
-        return await mb_expand_knowledge(
-            client=client,
-            device_slug=device_slug,
-            focus_symptoms=payload.get("focus_symptoms", []),
-            focus_refdes=payload.get("focus_refdes", []),
-            memory_root=memory_root,
-            session=session,
-        )
-    logger.warning("unknown mb_* tool: %s", name)
-    return {"ok": False, "reason": "unknown-tool", "error": f"unknown tool: {name}"}
+    ctx = ToolContext(
+        device_slug=device_slug,
+        memory_root=memory_root,
+        client=client,
+        session=session,
+        session_id=session_id,
+        repair_id=repair_id,
+        session_mirrors=session_mirrors,
+        conv_id=conv_id,
+    )
+    return await dispatch_tool(name, payload, ctx)
 
 
 async def maybe_auto_seed(
