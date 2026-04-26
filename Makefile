@@ -1,4 +1,4 @@
-.PHONY: install run test test-eval lint format clean help build-field-corpus demo-fallback pin-cdn
+.PHONY: install run test test-all test-fast test-eval lint format clean help build-field-corpus demo-fallback pin-cdn
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -15,8 +15,9 @@ help:
 	@echo ""
 	@echo "  make install   Create .venv and install dependencies (incl. dev)"
 	@echo "  make run       Start uvicorn in dev mode on port $(PORT) with --reload"
-	@echo "  make test      Run pytest (fast subset, skips slow benchmarks)"
+	@echo "  make test      Run pytest (fast subset, skips slow benchmarks) — live output, --durations=10"
 	@echo "  make test-all  Run all pytest tests (incl. slow accuracy benchmarks)"
+	@echo "  make test-fast Run pytest with -x --ff (stop at first fail, failures-first next time)"
 	@echo "  make lint      Run ruff check"
 	@echo "  make format    Run ruff format"
 	@echo "  make clean     Remove caches (keeps .venv)"
@@ -35,11 +36,21 @@ run:
 build-field-corpus:
 	$(PY) scripts/build_benchmark_corpus.py
 
+# `python -u -m pytest` (unbuffered) so progress streams live when the output
+# is piped or redirected — `pytest` directly buffers output in those cases and
+# you only see the result at the end. `--tb=short` keeps tracebacks compact;
+# `--durations=10` flags the 10 slowest tests so we can mark them `@slow` if
+# they shouldn't be in the fast subset.
 test:
-	$(PYTEST) tests/ -v -m "not slow"
+	$(PY) -u -m pytest tests/ -v --tb=short --durations=10 -m "not slow"
 
 test-all:
-	$(PYTEST) tests/ -v
+	$(PY) -u -m pytest tests/ -v --tb=short --durations=10
+
+# Iteration-friendly: stop at first failure, then re-run failures first next
+# time. Use during active debugging; `make test` for the full sweep.
+test-fast:
+	$(PY) -u -m pytest tests/ -v --tb=short -x --ff -m "not slow"
 
 # Score floor guard: fail the build if the simulator + hypothesize stack
 # drops below 0.5 on the frozen MNT Reform bench. The floor only becomes
