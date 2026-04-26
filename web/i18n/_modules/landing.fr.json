@@ -28,6 +28,7 @@
     "title_default": "Construction de la fiche…",
     "title_build": "Construction de la fiche · {device}",
     "title_expand": "Enrichissement ciblé · {device}",
+    "title_loading": "Chargement de la fiche · {device}",
     "title_ready": "Fiche prête · {status}",
     "title_failed": "Pipeline échoué",
     "elapsed": "Écoulé · {n}s",

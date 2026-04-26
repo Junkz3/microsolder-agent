@@ -28,6 +28,7 @@
     "title_default": "Building the knowledge sheet…",
     "title_build": "Building the sheet · {device}",
     "title_expand": "Targeted enrichment · {device}",
+    "title_loading": "Loading sheet · {device}",
     "title_ready": "Sheet ready · {status}",
     "title_failed": "Pipeline failed",
     "elapsed": "Elapsed · {n}s",

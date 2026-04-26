@@ -480,8 +480,9 @@ function _sleep(ms) {
 // the technician sees the cache hit as a fast pipeline run instead of
 // an instant flash. ~15s total + 1.5s success grace = ~16–17s.
 async function playCachedPipelineTimeline(slug, repairId, deviceLabel) {
+  const t = window.t || ((k) => k);
   showTimeline();
-  setTimelineTitle(`Chargement de la fiche · ${deviceLabel}`);
+  setTimelineTitle(t("landing.timeline.title_loading", { device: deviceLabel }));
   setLandingMascot("working");
 
   // PHASE_ORDER includes "mapper" which the live pipeline marks hidden
@@ -501,10 +502,13 @@ async function playCachedPipelineTimeline(slug, repairId, deviceLabel) {
   setLandingMascot("success");
   setTimelineTitle(t("landing.timeline.title_ready", { status: deviceLabel }));
   await _sleep(1500);
-  goToWorkspace(repairId, slug);
+  // Cache hit: land on the repair dashboard (#home) so the tech sees the
+  // findings + timeline straight away, not the graph view that the live
+  // pipeline path defaults to.
+  goToWorkspace(repairId, slug, "#home");
 }
 
-function goToWorkspace(repairId, slug) {
+function goToWorkspace(repairId, slug, hash = "#graphe") {
   // Land the tech on the graph view (loads graph + memory bank + opens
   // the LLM chat panel via openLLMPanelIfRepairParam) rather than the
   // home / repair_dashboard which only surfaces findings + timeline.
@@ -525,7 +529,7 @@ function goToWorkspace(repairId, slug) {
   const target = new URL(location.origin + location.pathname);
   target.searchParams.set("repair", repairId);
   target.searchParams.set("device", slug);
-  target.hash = "#graphe";
+  target.hash = hash;
 
   // Force a real navigation. location.href to the same URL is a no-op
   // and location.href to a hash-only delta does not reload the page —

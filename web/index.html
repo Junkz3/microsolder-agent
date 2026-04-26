@@ -894,31 +894,32 @@
        aria-labelledby="protocolConfirmTitle">
     <header class="modal-head">
       <div class="type-row">
-        <span class="type-badge action">Protocole proposé</span>
-        <span id="protocolConfirmStepCount">— étapes</span>
+        <span class="type-badge action" data-i18n="protocol.confirm.badge">Proposed protocol</span>
+        <span id="protocolConfirmStepCount" data-i18n="protocol.confirm.step_count_placeholder">— steps</span>
       </div>
       <h2 id="protocolConfirmTitle">—</h2>
     </header>
     <div class="modal-body">
       <div class="modal-field">
-        <span class="modal-label">Justification</span>
+        <span class="modal-label" data-i18n="protocol.confirm.rationale_label">Rationale</span>
         <p class="protocol-confirm-rationale" id="protocolConfirmRationale">—</p>
       </div>
       <div class="modal-field">
-        <span class="modal-label">Étapes</span>
+        <span class="modal-label" data-i18n="protocol.confirm.steps_label">Steps</span>
         <ol class="protocol-confirm-steps" id="protocolConfirmSteps"></ol>
       </div>
       <div class="modal-field" id="protocolConfirmRejectField" hidden>
-        <label class="modal-label" for="protocolConfirmReason">Raison du refus (optionnel)</label>
+        <label class="modal-label" for="protocolConfirmReason" data-i18n="protocol.confirm.reject_reason_label">Reason for rejection (optional)</label>
         <textarea class="modal-textarea" id="protocolConfirmReason" rows="2"
-                  placeholder="Pourquoi refuser ce protocole — l'agent en tiendra compte."></textarea>
+                  data-i18n-placeholder="protocol.confirm.reject_reason_placeholder"
+                  placeholder="Why reject this protocol — the agent will take it into account."></textarea>
       </div>
-      <p class="modal-hint" id="protocolConfirmHint">
-        L'agent attend votre décision avant de pousser le protocole.
+      <p class="modal-hint" id="protocolConfirmHint" data-i18n="protocol.confirm.hint">
+        The agent is waiting for your decision before pushing the protocol.
       </p>
       <footer class="modal-actions">
-        <button type="button" class="btn" id="protocolConfirmReject">Refuser</button>
-        <button type="button" class="btn primary" id="protocolConfirmAccept">Accepter</button>
+        <button type="button" class="btn" id="protocolConfirmReject" data-i18n="protocol.confirm.reject">Reject</button>
+        <button type="button" class="btn primary" id="protocolConfirmAccept" data-i18n="protocol.confirm.accept">Accept</button>
       </footer>
     </div>
   </div>

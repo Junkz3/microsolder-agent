@@ -216,11 +216,12 @@ export function showConfirmation(ev) {
   const stepsEl = document.getElementById("protocolConfirmSteps");
   const countEl = document.getElementById("protocolConfirmStepCount");
 
-  if (titleEl) titleEl.textContent = decodeEscapes(ev.title || "Protocole proposé");
+  const t = window.t || ((k) => k);
+  if (titleEl) titleEl.textContent = decodeEscapes(ev.title || t("protocol.confirm.badge"));
   if (rationaleEl) rationaleEl.textContent = decodeEscapes(ev.rationale || "—");
   if (countEl) {
     const n = Number(ev.step_count || (ev.steps || []).length || 0);
-    countEl.textContent = `${n} étape${n > 1 ? "s" : ""}`;
+    countEl.textContent = t("protocol.confirm.step_count", { n });
   }
   if (stepsEl) {
     stepsEl.innerHTML = "";
