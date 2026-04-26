@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -76,33 +75,6 @@ app.include_router(profile_router)
 async def health() -> JSONResponse:
     """Liveness probe."""
     return JSONResponse({"status": "ok", "version": __version__})
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Legacy echo endpoint — kept so old smoke tests keep passing.
-
-    The real diagnostic loop lives at `/ws/diagnostic/{device_slug}`.
-    """
-    await websocket.accept()
-    logger.info("WebSocket connection opened")
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                payload = {"text": raw}
-
-            user_text = payload.get("text", "")
-            reply = {
-                "type": "message",
-                "role": "assistant",
-                "text": f"(not implemented yet) received: {user_text}",
-            }
-            await websocket.send_text(json.dumps(reply))
-    except WebSocketDisconnect:
-        logger.info("WebSocket connection closed")
 
 
 _VALID_TIERS = {"fast", "normal", "deep"}
