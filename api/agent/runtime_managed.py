@@ -1975,7 +1975,7 @@ async def _forward_session_to_ws(
                             device_slug=device_slug,
                             repair_id=repair_id,
                             session=session_state,
-                            conv_id=resolved_conv_id,
+                            conv_id=conv_id,
                         )
                     result_for_agent = {k: v for k, v in result.items() if k not in ("event", "events")}
                     await client.beta.sessions.events.send(
