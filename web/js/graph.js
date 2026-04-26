@@ -50,8 +50,9 @@ const TYPE_FILL   = { component:"oklch(0.82 0.14 210 / 0.22)", symptom:"oklch(0.
 const TYPE_GLOW   = { component:"glow-cyan", symptom:"glow-amber", net:"glow-emerald", action:"glow-violet" };
 const TYPE_LABEL_FR = { component:"Composant", symptom:"Symptôme", net:"Net / Rail", action:"Action" };
 const REL_LABEL_FR  = { causes:"provoque", powers:"alimente", connected_to:"connecté à", resolves:"résout" };
-// Strict L→R diagnostic narrative — must match the visible .col-band order
-// in the HTML. Reads problem-first: symptom → net → component → action.
+// Strict L→R diagnostic narrative reading problem-first:
+// symptom → net → component → action. The forceX layout below uses this
+// order to keep nodes drifting toward their column rather than freely.
 const COL_ORDER = ["symptom","net","component","action"];
 
 export function initGraphWithData(data) {
@@ -504,35 +505,25 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------- TWEAKS ---------- */
-const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+const TWEAK_DEFAULTS = {
   "labelMode": "hover",
   "minConfidence": 0,
   "particleSpeed": 1
-}/*EDITMODE-END*/;
+};
 
 let labelMode = TWEAK_DEFAULTS.labelMode;
 const tweaksPanel = document.getElementById("tweaksPanel");
 document.getElementById("tweaksToggle").onclick = () => tweaksPanel.classList.toggle("show");
 document.getElementById("tweaksClose").onclick  = () => tweaksPanel.classList.remove("show");
 
-function postEdit(){
-  const edits = {
-    labelMode,
-    minConfidence: parseFloat(document.getElementById("tConf").value),
-    particleSpeed: parseFloat(document.getElementById("tParticle").value),
-  };
-  try { window.parent.postMessage({type:"__edit_mode_set_keys", edits}, "*"); } catch(e){}
-}
-
 document.getElementById("tConf").addEventListener("input", e => {
   minConf = parseFloat(e.target.value);
   document.getElementById("tConfVal").textContent = minConf.toFixed(2);
-  applyFilters(); postEdit();
+  applyFilters();
 });
 document.getElementById("tParticle").addEventListener("input", e => {
   particleSpeed = parseFloat(e.target.value);
   document.getElementById("tParticleVal").textContent = particleSpeed.toFixed(1) + "×";
-  postEdit();
 });
 document.querySelectorAll("#tLabels button").forEach(b => {
   b.onclick = () => {
@@ -542,18 +533,10 @@ document.querySelectorAll("#tLabels button").forEach(b => {
     if (labelMode==="all") linkLabelSel.style("opacity", 1);
     else if (labelMode==="none") linkLabelSel.style("opacity", 0);
     else linkLabelSel.style("opacity", null);
-    postEdit();
   };
 });
 // default: hover mode
 linkLabelSel.style("opacity", null);
-
-window.addEventListener("message", e => {
-  if (!e.data || typeof e.data!=="object") return;
-  if (e.data.type==="__activate_edit_mode") tweaksPanel.classList.add("show");
-  if (e.data.type==="__deactivate_edit_mode") tweaksPanel.classList.remove("show");
-});
-try { window.parent.postMessage({type:"__edit_mode_available"}, "*"); } catch(e){}
 
 /* ---------- RESIZE ---------- */
 // Bubble positions are absolute (pre-computed via bubbleSim + pack).

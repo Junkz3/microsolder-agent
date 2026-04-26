@@ -648,7 +648,7 @@ function safeJSON(v) {
 }
 
 function currentDeviceSlug() {
-  return new URLSearchParams(window.location.search).get("device") || "demo-pi";
+  return new URLSearchParams(window.location.search).get("device");
 }
 
 function currentRepairId() {
@@ -687,6 +687,10 @@ function interruptAgent() {
 
 function connect() {
   const slug = currentDeviceSlug();
+  if (!slug) {
+    console.warn("[llm] connect() called without ?device= in the URL — aborting.");
+    return;
+  }
   const repairId = currentRepairId();
   el("llmDevice").textContent = repairId ? `${slug} · ${repairId.slice(0, 8)}` : slug;
   el("llmDevice").style.display = "";

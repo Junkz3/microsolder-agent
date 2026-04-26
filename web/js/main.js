@@ -4,14 +4,14 @@
 // colour pickers.
 
 import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode } from './router.js';
-import { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
+import { loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
 import { initProfileSection } from './profile.js';
 import { initPipelineProgress } from './pipeline_progress.js';
 import { initLLMPanel, openLLMPanelIfRepairParam } from './llm.js';
 import { loadSchematic, closeSchematicInspector } from './schematic.js';
-import { initLanding, showLanding, hideLanding } from './landing.js';
+import { initLanding, showLanding } from './landing.js';
 import * as Protocol from './protocol.js?v=quest3';
 
 // Tracks which device slug the graph has already been mounted for. Guards
@@ -116,8 +116,8 @@ if (!window.Boardview) {
       renderRepairDashboard(session);
     } else {
       hideRepairDashboard();
-      const [packs, taxonomy, repairs] = await Promise.all([loadHomePacks(), loadTaxonomy(), loadRepairs()]);
-      renderHome(packs, taxonomy, repairs);
+      const [taxonomy, repairs] = await Promise.all([loadTaxonomy(), loadRepairs()]);
+      renderHome(taxonomy, repairs);
     }
   } else if (initial === "schematic") {
     loadSchematic();
@@ -146,8 +146,8 @@ if (!window.Boardview) {
         renderRepairDashboard(session);
       } else {
         hideRepairDashboard();
-        const [packs, taxonomy, repairs] = await Promise.all([loadHomePacks(), loadTaxonomy(), loadRepairs()]);
-        renderHome(packs, taxonomy, repairs);
+        const [taxonomy, repairs] = await Promise.all([loadTaxonomy(), loadRepairs()]);
+        renderHome(taxonomy, repairs);
       }
     }
   });

@@ -27,7 +27,7 @@ export function showLanding() {
   setTimeout(() => document.getElementById("landingDevice")?.focus(), 50);
 }
 
-export function hideLanding() {
+function hideLanding() {
   document.body.classList.remove("show-landing");
   const ov = document.getElementById("landing-overlay");
   if (ov) ov.hidden = true;
@@ -209,10 +209,6 @@ function subscribeToProgress(slug, repairId) {
   const url = `${proto}//${location.host}/pipeline/progress/${encodeURIComponent(slug)}`;
 
   progressWs = new WebSocket(url);
-
-  progressWs.addEventListener("open", () => {
-    console.log("[landing] progress WS open", slug);
-  });
 
   progressWs.addEventListener("message", (ev) => {
     let data;

@@ -315,10 +315,10 @@ export async function leaveSession() {
   // between router.js and home.js. hideRepairDashboard() must run explicitly
   // because history.replaceState() does NOT fire a hashchange event, so the
   // hashchange dispatch in main.js that would normally call it never runs.
-  const { loadHomePacks, loadTaxonomy, loadRepairs, renderHome, hideRepairDashboard } = await import("./home.js");
+  const { loadTaxonomy, loadRepairs, renderHome, hideRepairDashboard } = await import("./home.js");
   hideRepairDashboard();
-  const [packs, taxonomy, repairs] = await Promise.all([
-    loadHomePacks(), loadTaxonomy(), loadRepairs(),
+  const [taxonomy, repairs] = await Promise.all([
+    loadTaxonomy(), loadRepairs(),
   ]);
-  renderHome(packs, taxonomy, repairs);
+  renderHome(taxonomy, repairs);
 }

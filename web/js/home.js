@@ -1,6 +1,9 @@
 // Home (journal des réparations) + the "nouvelle réparation" modal.
 //
-// renderHome() renders the pack grid from a /pipeline/packs response, and
+// renderHome() renders the repair grid from a /pipeline/repairs response
+// (taxonomy supplies the brand > model > version grouping). The pure
+// pack list at /pipeline/packs is no longer surfaced here — repairs own
+// the home view and reuse pack metadata via the taxonomy payload.
 // initNewRepairModal() wires the modal's open/close/submit handlers plus
 // its own document-level keydown interceptor. The keydown listener is
 // intentionally registered before main.js adds its global Cmd+K / Esc
@@ -11,17 +14,6 @@ import { openPipelineProgress } from './pipeline_progress.js';
 import { leaveSession } from './router.js';
 import { openPanel } from './llm.js';
 import { ICON_CHECK } from './icons.js';
-
-export async function loadHomePacks() {
-  try {
-    const res = await fetch("/pipeline/packs");
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    console.warn("loadHomePacks failed", err);
-    return [];
-  }
-}
 
 export async function loadTaxonomy() {
   try {
@@ -186,7 +178,7 @@ function brandBlockHTML(brandName, devicesMap) {
   `;
 }
 
-export function renderHome(_packs, taxonomy, repairs = []) {
+export function renderHome(taxonomy, repairs = []) {
   const container = document.getElementById("homeSections");
   const empty = document.getElementById("homeEmpty");
   container.innerHTML = "";

@@ -7,31 +7,6 @@
 /* subtle workshop grid */
 .grid-bg{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(45,70,110,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(45,70,110,.06) 1px,transparent 1px);background-size:48px 48px}
 
-/* =========== LOGICAL COLUMN BANDS (the "fond logique") =========== */
-.columns{position:absolute;inset:0;pointer-events:none;display:flex;z-index:1}
-.col-band{flex:1;position:relative;border-right:1px dashed rgba(80,110,160,.18)}
-.col-band:last-child{border-right:0}
-.col-band::before{content:"";position:absolute;inset:0;opacity:.5}
-.col-band.sym::before{background:radial-gradient(ellipse 80% 70% at 50% 40%, rgba(245,158,11,.07), transparent 65%)}
-.col-band.cmp::before{background:radial-gradient(ellipse 80% 70% at 50% 40%, rgba(56,189,248,.07), transparent 65%)}
-.col-band.net::before{background:radial-gradient(ellipse 80% 70% at 50% 40%, rgba(52,211,153,.07), transparent 65%)}
-.col-band.act::before{background:radial-gradient(ellipse 80% 70% at 50% 40%, rgba(192,132,252,.08), transparent 65%)}
-.col-head{position:absolute;top:14px;left:0;right:0;padding:0 22px;display:flex;align-items:center;gap:10px}
-.col-head .chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:20px;background:rgba(10,17,32,.9);border:1px solid var(--border);font-family:var(--mono);font-size:10.5px;letter-spacing:.4px;text-transform:uppercase}
-.col-head .chip .dot{width:7px;height:7px;border-radius:50%}
-.col-head .num{font-family:var(--mono);color:var(--text-3);font-size:10.5px}
-.col-head .flow-arrow{flex:1;height:1px;background:linear-gradient(90deg,var(--border-soft),transparent);position:relative}
-.col-head .flow-arrow::after{content:"→";position:absolute;right:0;top:-9px;color:var(--text-3);font-family:var(--mono);font-size:11px}
-.col-sub{position:absolute;top:50px;left:22px;right:22px;color:var(--text-3);font-size:10.5px;line-height:1.4;font-family:var(--mono)}
-.col-band.sym .chip .dot{background:var(--amber);box-shadow:0 0 6px var(--amber)}
-.col-band.cmp .chip .dot{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
-.col-band.net .chip .dot{background:var(--emerald);box-shadow:0 0 6px var(--emerald)}
-.col-band.act .chip .dot{background:var(--violet);box-shadow:0 0 6px var(--violet)}
-.col-band.sym .chip{color:var(--amber)}
-.col-band.cmp .chip{color:var(--cyan)}
-.col-band.net .chip{color:var(--emerald)}
-.col-band.act .chip{color:var(--violet)}
-
 /* =========== LINKS & NODES =========== */
 .link{fill:none;stroke-linecap:round;transition:stroke-opacity .25s,stroke .25s}
 .link.causes{stroke:oklch(0.70 0.15 70);stroke-opacity:.55;stroke-dasharray:5 4}
@@ -44,11 +19,9 @@
 .node{cursor:pointer}
 .node-shape{transition:filter .2s,stroke-width .2s}
 .node-label{font-family:'Inter',sans-serif;font-size:11px;font-weight:500;fill:var(--text);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:var(--bg);stroke-width:3.5px}
-.node-sub{font-family:var(--mono);font-size:9px;fill:var(--text-3);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:var(--bg);stroke-width:3px}
 .graph.has-focus .node:not(.focus):not(.neighbor){opacity:.15}
 .graph.has-focus .link:not(.active-link){stroke-opacity:.06}
 .node.selected .node-shape{stroke-width:2.4px}
-.node-icon{pointer-events:none}
 
 /* =========== ZOOM CONTROLS =========== */
 .controls{position:absolute;right:16px;bottom:16px;display:flex;flex-direction:column;gap:6px;background:rgba(20,32,48,.85);border:1px solid var(--border);backdrop-filter:blur(8px);border-radius:8px;padding:6px;z-index:5}
