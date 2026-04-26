@@ -258,4 +258,4 @@ def test_compose_scene_empty_returns_ok():
     assert result["ok"] is True
     assert result["events"] == []
     assert result["errors"] == []
-    assert "vide" in result["summary"]
+    assert "empty" in result["summary"]

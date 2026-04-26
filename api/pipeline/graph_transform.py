@@ -28,15 +28,15 @@ def _slug(s: str) -> str:
 
 
 _SUBSYSTEM_LABELS: dict[str, str] = {
-    "power":   "ALIMENTATION",
+    "power":   "POWER",
     "charge":  "CHARGE",
     "display": "DISPLAY",
     "usb":     "USB",
     "audio":   "AUDIO",
-    "cpu-mem": "CPU / MÉMOIRE",
-    "io":      "E/S",
+    "cpu-mem": "CPU / MEMORY",
+    "io":      "I/O",
     "rf":      "RF / RADIO",
-    "unknown": "AUTRES",
+    "unknown": "OTHER",
 }
 
 

@@ -315,9 +315,9 @@ def compose_scene(
         parts.append(f"focus {focus.get('refdes')}")
     if dim_unrelated:
         parts.append("dim")
-    summary = f"Scène: {', '.join(parts) or 'vide'}"
+    summary = f"Scene: {', '.join(parts) or 'empty'}"
     if errors:
-        summary += f" ({len(errors)} erreur{'s' if len(errors) > 1 else ''})"
+        summary += f" ({len(errors)} error{'s' if len(errors) > 1 else ''})"
 
     overall_ok = bool(events) or not errors
     return {"ok": overall_ok, "summary": summary, "events": events, "errors": errors}

@@ -252,8 +252,8 @@ class PackSummary(BaseModel):
     has_dictionary: bool
     has_audit_verdict: bool
     # Inputs the technician may have provided. Drive the data-aware
-    # repair dashboard (cards explicitly switch between "importé" and
-    # "à importer" based on these flags).
+    # repair dashboard (cards explicitly switch between "imported" and
+    # "to import" based on these flags).
     has_boardview: bool
     boardview_format: str | None
     has_schematic_pdf: bool
@@ -1045,7 +1045,7 @@ async def create_repair(request: RepairRequest) -> RepairResponse:
     slug = request.device_slug or _slugify(request.device_label)
     pack_dir = memory_root / slug
 
-    # Every "nouvelle réparation" IS a repair session — persist the record
+    # Every "new repair" IS a repair session — persist the record
     # whether the pack is fresh or already on disk. Two repairs on the same
     # iPhone X are two separate sessions with two separate contexts; both
     # must be reopenable later from the library.
@@ -1658,7 +1658,7 @@ async def switch_pack_source(
       - `rebuilding` : the hash is unknown, the source PDF was copied to
         `memory/{slug}/schematic.pdf`, the in-place derived files were
         cleared, and a background ingest_schematic was kicked off. The
-        Schematic / Graphe électrique cards stay in `building` until done.
+        Schematic / Electrical graph cards stay in `building` until done.
       - `pinned`     : (rare) pin updated but the target file is missing
         from disk; nothing else changed.
     """
@@ -1713,7 +1713,7 @@ async def switch_pack_source(
             kind=kind,
             active=payload.filename,
             status="cached",
-            detail="cache hit; graphe électrique restored from cache.",
+            detail="cache hit; electrical graph restored from cache.",
         )
     return SwitchSourceResponse(
         device_slug=slug,

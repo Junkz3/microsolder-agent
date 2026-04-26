@@ -52,18 +52,18 @@ class ToolEntry:
 
 
 TOOLS_CATALOG: tuple[ToolEntry, ...] = (
-    ToolEntry(ToolId.SOLDERING_IRON, "Fer à souder",        "soldering"),
-    ToolEntry(ToolId.HOT_AIR,        "Hot air",              "rework"),
-    ToolEntry(ToolId.BGA_REWORK,     "BGA rework",           "rework"),
-    ToolEntry(ToolId.PREHEATER,      "Preheater",            "rework"),
-    ToolEntry(ToolId.MICROSCOPE,     "Microscope",           "inspection"),
-    ToolEntry(ToolId.THERMAL_CAMERA, "Caméra thermique",     "inspection"),
-    ToolEntry(ToolId.UV_LAMP,        "Lampe UV",             "inspection"),
-    ToolEntry(ToolId.MULTIMETER,     "Multimètre",           "measurement"),
-    ToolEntry(ToolId.OSCILLOSCOPE,   "Oscilloscope",         "measurement"),
-    ToolEntry(ToolId.BENCH_PSU,      "Alimentation de labo", "power"),
-    ToolEntry(ToolId.REBALLING_KIT,  "Kit de reballing",     "supplies"),
-    ToolEntry(ToolId.STENCIL_PRINTER,"Stencil / pochoir",    "supplies"),
+    ToolEntry(ToolId.SOLDERING_IRON, "Soldering iron",  "soldering"),
+    ToolEntry(ToolId.HOT_AIR,        "Hot air",         "rework"),
+    ToolEntry(ToolId.BGA_REWORK,     "BGA rework",      "rework"),
+    ToolEntry(ToolId.PREHEATER,      "Preheater",       "rework"),
+    ToolEntry(ToolId.MICROSCOPE,     "Microscope",      "inspection"),
+    ToolEntry(ToolId.THERMAL_CAMERA, "Thermal camera",  "inspection"),
+    ToolEntry(ToolId.UV_LAMP,        "UV lamp",         "inspection"),
+    ToolEntry(ToolId.MULTIMETER,     "Multimeter",      "measurement"),
+    ToolEntry(ToolId.OSCILLOSCOPE,   "Oscilloscope",    "measurement"),
+    ToolEntry(ToolId.BENCH_PSU,      "Bench PSU",       "power"),
+    ToolEntry(ToolId.REBALLING_KIT,  "Reballing kit",   "supplies"),
+    ToolEntry(ToolId.STENCIL_PRINTER,"Stencil printer", "supplies"),
 )
 
 
@@ -97,21 +97,21 @@ class SkillEntry:
 
 
 SKILLS_CATALOG: tuple[SkillEntry, ...] = (
-    SkillEntry(SkillId.REFLOW_BGA,            "Reflow BGA",                  (ToolId.HOT_AIR,)),
-    SkillEntry(SkillId.REBALLING,             "Reballing",                   (ToolId.BGA_REWORK, ToolId.REBALLING_KIT)),
-    SkillEntry(SkillId.JUMPER_WIRE,           "Jumper wires",                (ToolId.SOLDERING_IRON, ToolId.MICROSCOPE)),
-    SkillEntry(SkillId.MICROSOLDER_0201,      "Microsoudure 0201",           (ToolId.SOLDERING_IRON, ToolId.MICROSCOPE)),
-    SkillEntry(SkillId.POP_REWORK,            "Rework PoP",                  (ToolId.HOT_AIR, ToolId.PREHEATER)),
-    SkillEntry(SkillId.TRACE_REPAIR,          "Réparation pistes gravées",   (ToolId.SOLDERING_IRON, ToolId.MICROSCOPE)),
-    SkillEntry(SkillId.STENCIL_APPLICATION,   "Pose de stencil",             (ToolId.STENCIL_PRINTER, ToolId.PREHEATER)),
-    SkillEntry(SkillId.SHORT_ISOLATION,       "Isolation court-circuit",     (ToolId.MULTIMETER,)),
-    SkillEntry(SkillId.VOLTAGE_PROBING,       "Mesure tensions de rails",    (ToolId.MULTIMETER,)),
-    SkillEntry(SkillId.SIGNAL_PROBING,        "Mesure signaux scope",        (ToolId.OSCILLOSCOPE,)),
-    SkillEntry(SkillId.THERMAL_IMAGING,       "Imagerie thermique diag",     (ToolId.THERMAL_CAMERA,)),
-    SkillEntry(SkillId.POWER_SEQUENCING,      "Analyse power sequencing",    (ToolId.OSCILLOSCOPE,)),
-    SkillEntry(SkillId.FLUX_CLEANING,         "Nettoyage flux / résidus",    ()),
-    SkillEntry(SkillId.COLD_JOINT_REWORK,     "Rework soudure froide",       (ToolId.SOLDERING_IRON,)),
-    SkillEntry(SkillId.CONNECTOR_REPLACEMENT, "Remplacement connecteur",     (ToolId.HOT_AIR, ToolId.MICROSCOPE)),
+    SkillEntry(SkillId.REFLOW_BGA,            "BGA reflow",              (ToolId.HOT_AIR,)),
+    SkillEntry(SkillId.REBALLING,             "Reballing",               (ToolId.BGA_REWORK, ToolId.REBALLING_KIT)),
+    SkillEntry(SkillId.JUMPER_WIRE,           "Jumper wires",            (ToolId.SOLDERING_IRON, ToolId.MICROSCOPE)),
+    SkillEntry(SkillId.MICROSOLDER_0201,      "0201 microsoldering",     (ToolId.SOLDERING_IRON, ToolId.MICROSCOPE)),
+    SkillEntry(SkillId.POP_REWORK,            "PoP rework",              (ToolId.HOT_AIR, ToolId.PREHEATER)),
+    SkillEntry(SkillId.TRACE_REPAIR,          "Etched trace repair",     (ToolId.SOLDERING_IRON, ToolId.MICROSCOPE)),
+    SkillEntry(SkillId.STENCIL_APPLICATION,   "Stencil application",     (ToolId.STENCIL_PRINTER, ToolId.PREHEATER)),
+    SkillEntry(SkillId.SHORT_ISOLATION,       "Short isolation",         (ToolId.MULTIMETER,)),
+    SkillEntry(SkillId.VOLTAGE_PROBING,       "Rail voltage probing",    (ToolId.MULTIMETER,)),
+    SkillEntry(SkillId.SIGNAL_PROBING,        "Scope signal probing",    (ToolId.OSCILLOSCOPE,)),
+    SkillEntry(SkillId.THERMAL_IMAGING,       "Thermal imaging diag",    (ToolId.THERMAL_CAMERA,)),
+    SkillEntry(SkillId.POWER_SEQUENCING,      "Power sequencing",        (ToolId.OSCILLOSCOPE,)),
+    SkillEntry(SkillId.FLUX_CLEANING,         "Flux / residue cleaning", ()),
+    SkillEntry(SkillId.COLD_JOINT_REWORK,     "Cold joint rework",       (ToolId.SOLDERING_IRON,)),
+    SkillEntry(SkillId.CONNECTOR_REPLACEMENT, "Connector replacement",   (ToolId.HOT_AIR, ToolId.MICROSCOPE)),
 )
 
 
@@ -121,6 +121,6 @@ SPECIALTIES: tuple[tuple[str, str], ...] = (
     ("android",     "Android"),
     ("consoles",    "Consoles"),
     ("laptops",     "Laptops"),
-    ("industriel",  "Industriel"),
+    ("industriel",  "Industrial"),
     ("vintage",     "Vintage"),
 )

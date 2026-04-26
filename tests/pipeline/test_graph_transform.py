@@ -145,13 +145,13 @@ def test_payload_includes_subsystems_index():
     unknown = [i for i, s in enumerate(subs) if s["key"] == "unknown"]
     if unknown:
         assert unknown[0] == len(subs) - 1
-    # Fixed French labels.
+    # Fixed English labels.
     labels = {s["key"]: s["label"] for s in subs}
-    expected_fr = {"power": "ALIMENTATION", "charge": "CHARGE", "display": "DISPLAY",
-                   "usb": "USB", "audio": "AUDIO", "cpu-mem": "CPU / MÉMOIRE",
-                   "io": "E/S", "rf": "RF / RADIO", "unknown": "AUTRES"}
+    expected = {"power": "POWER", "charge": "CHARGE", "display": "DISPLAY",
+                "usb": "USB", "audio": "AUDIO", "cpu-mem": "CPU / MEMORY",
+                "io": "I/O", "rf": "RF / RADIO", "unknown": "OTHER"}
     for key, label in labels.items():
-        assert label == expected_fr[key]
+        assert label == expected[key]
 
 
 def test_subsystems_sorted_by_count_descending_unknown_last():
