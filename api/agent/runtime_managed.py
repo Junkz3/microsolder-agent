@@ -46,9 +46,17 @@ from api.agent.chat_history import (
 from api.agent.dispatch_bv import dispatch_bv
 from api.agent.macros import persist_macro
 from api.agent.managed_ids import get_agent, load_managed_ids
-from api.agent.memory_stores import ensure_memory_store
+from api.agent.memory_stores import (
+    ensure_global_store,
+    ensure_memory_store,
+    ensure_repair_store,
+)
 from api.agent.pricing import compute_turn_cost
 from api.agent.sanitize import sanitize_agent_text
+from api.agent.session_start_mode import (
+    SessionStartMode,
+    decide_session_start_mode,
+)
 from api.agent.tools import (
     mb_expand_knowledge,
     mb_get_component,
@@ -1001,10 +1009,6 @@ async def run_diagnostic_session_managed(
     #   4. repair-{repair_id} (RW) — agent's working notes (scribe layer)
     # Each surfaces as /mnt/memory/<store-name>/ inside the session container.
     # See docs/superpowers/plans/2026-04-26-ma-memory-layered-architecture.md
-    from api.agent.memory_stores import (
-        ensure_global_store,
-        ensure_repair_store,
-    )
 
     PATTERNS_DESC_RUNTIME = (
         "Cross-device failure archetypes for board-level diagnostics: "
@@ -1021,15 +1025,56 @@ async def run_diagnostic_session_managed(
         "they are field-tested."
     )
 
-    patterns_store_id = await ensure_global_store(
-        client, kind="patterns", description=PATTERNS_DESC_RUNTIME,
+    # Collect any store-provisioning failures so the WS layer can tell
+    # the technician they're operating with a degraded memory layer.
+    # Without this signal the agent silently runs without its scribe
+    # mount or its global-patterns / global-playbooks references — the
+    # tech would see "session ready" and have no idea memory was off.
+    # Each entry: {"store": "device|repair|patterns|playbooks", "error": "<msg>"}.
+    memory_setup_failures: list[dict[str, str]] = []
+
+    async def _safe_ensure(store_label: str, coro):
+        """Run an ensure_* coroutine; on failure record the error and return None.
+
+        Memory stores are non-critical for session start — the agent can
+        still function (custom mb_* tools also serve the same data via
+        disk reads). But the technician needs to know so they can stop
+        relying on cross-session continuity.
+        """
+        try:
+            return await coro
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[Diag-MA] memory store %s provision failed: %s — "
+                "session continues with that layer disabled",
+                store_label,
+                exc,
+            )
+            memory_setup_failures.append(
+                {"store": store_label, "error": str(exc)[:300]}
+            )
+            return None
+
+    patterns_store_id = await _safe_ensure(
+        "patterns",
+        ensure_global_store(
+            client, kind="patterns", description=PATTERNS_DESC_RUNTIME,
+        ),
     ) if settings.ma_memory_store_enabled else None
-    playbooks_store_id = await ensure_global_store(
-        client, kind="playbooks", description=PLAYBOOKS_DESC_RUNTIME,
+    playbooks_store_id = await _safe_ensure(
+        "playbooks",
+        ensure_global_store(
+            client, kind="playbooks", description=PLAYBOOKS_DESC_RUNTIME,
+        ),
     ) if settings.ma_memory_store_enabled else None
-    memory_store_id = await ensure_memory_store(client, device_slug)
-    repair_store_id = await ensure_repair_store(
-        client, device_slug=device_slug, repair_id=repair_id,
+    memory_store_id = await _safe_ensure(
+        "device", ensure_memory_store(client, device_slug),
+    )
+    repair_store_id = await _safe_ensure(
+        "repair",
+        ensure_repair_store(
+            client, device_slug=device_slug, repair_id=repair_id,
+        ),
     ) if (repair_id and settings.ma_memory_store_enabled) else None
 
     await maybe_auto_seed(
@@ -1153,48 +1198,72 @@ async def run_diagnostic_session_managed(
             tier=tier,
         )
     session = None
-    resumed = False
-    # Distinguish two paths into the "fresh MA session + recap" branch:
-    #  - real recovery (MA returned an error / agent_id matches but retrieve
-    #    failed for whatever reason — expired, archived, outage)
-    #  - agent-version drift (the saved session is bound to an agent that is
-    #    no longer the current one because microsolder-agent-evolve bumped
-    #    the SYSTEM_PROMPT or manifest). The agent has new capabilities so
-    #    we must run on the current one, but the user shouldn't see the
-    #    "Reprise de session" UI card every overnight bump — the recap is
-    #    still injected into the new agent's intro for context continuity,
-    #    just not surfaced to the chat panel.
-    stale_agent_recovery = False
+    # Classify the session-start path into one of five disjoint modes
+    # (see api/agent/session_start_mode.py for the full table). The mode
+    # drives the WS event contract — `context_lost` vs `session_resumed`
+    # vs silent — and the recap-injection branch downstream. Centralizing
+    # the decision here keeps the UI contract auditable instead of
+    # reconstructing it from intermixed booleans 200 lines later.
+    session = None
+    retrieved_agent_id: str | None = None
+    retrieve_failed = False
     if reused_session_id:
         try:
             session = await client.beta.sessions.retrieve(reused_session_id)
             session_agent = getattr(session, "agent", None)
-            session_agent_id = getattr(session_agent, "id", None) if session_agent else None
-            if session_agent_id and session_agent_id != agent_info["id"]:
-                logger.info(
-                    "[Diag-MA] session=%s bound to stale agent=%s (current=%s) — "
-                    "forcing fresh session + silent recap",
-                    reused_session_id,
-                    session_agent_id,
-                    agent_info["id"],
-                )
-                session = None
-                stale_agent_recovery = True
-            else:
-                resumed = True
-                logger.info(
-                    "[Diag-MA] Resuming existing session=%s for repair=%s conv=%s",
-                    reused_session_id,
-                    repair_id,
-                    resolved_conv_id,
-                )
+            retrieved_agent_id = (
+                getattr(session_agent, "id", None) if session_agent else None
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "[Diag-MA] could not resume session=%s (%s) — creating fresh",
+                "[Diag-MA] could not retrieve session=%s (%s) — creating fresh",
                 reused_session_id,
                 exc,
             )
-            session = None
+            retrieve_failed = True
+
+    decision = decide_session_start_mode(
+        reused_session_id=reused_session_id,
+        retrieved_session_agent_id=retrieved_agent_id,
+        current_agent_id=agent_info["id"],
+        retrieve_failed=retrieve_failed,
+    )
+    start_mode = decision.mode
+    if start_mode == SessionStartMode.RESUMED:
+        logger.info(
+            "[Diag-MA] Resuming existing session=%s for repair=%s conv=%s",
+            reused_session_id,
+            repair_id,
+            resolved_conv_id,
+        )
+    elif start_mode == SessionStartMode.FRESH_RECOVERED_AGENT_BUMP:
+        logger.info(
+            "[Diag-MA] session=%s bound to stale agent=%s (current=%s) — "
+            "forcing fresh session + silent recap",
+            reused_session_id,
+            retrieved_agent_id,
+            agent_info["id"],
+        )
+        session = None  # discard the retrieved (stale-agent) session
+    elif start_mode in (
+        SessionStartMode.FRESH_RECOVERED_LOST,
+        SessionStartMode.FRESH_NEW,
+    ):
+        # Either no prior id on disk, or retrieve failed — both lead to
+        # the create branch below. session is already None.
+        session = None
+
+    # Back-compat aliases for the rest of the function — the boolean
+    # forms are still threaded through replay decisions and intro
+    # injection. Kept as derived views of `start_mode` so there's a
+    # single source of truth.
+    resumed = start_mode in (
+        SessionStartMode.RESUMED,
+        SessionStartMode.RESUMED_BUT_EMPTY,
+    )
+    stale_agent_recovery = (
+        start_mode == SessionStartMode.FRESH_RECOVERED_AGENT_BUMP
+    )
 
     if session is None:
         # The old MA session is gone (archived / expired) OR its bound agent
@@ -1275,6 +1344,17 @@ async def run_diagnostic_session_managed(
             "conversation_count": conversation_count,
         }
     )
+    if memory_setup_failures:
+        # Tell the UI which memory layers came up degraded so the chat
+        # banner can warn the tech that cross-session continuity is off
+        # for this run. The session itself is healthy — we only emit
+        # this when at least one ensure_* failed silently.
+        await ws.send_json(
+            {
+                "type": "memory_store_setup_failed",
+                "failures": memory_setup_failures,
+            }
+        )
 
     # Hydrate any active protocol so the UI panel rebuilds on reconnect.
     # When no protocol exists for this conv, push an explicit
@@ -1477,6 +1557,20 @@ async def run_diagnostic_session_managed(
         # is effectively starting fresh. Emit `context_lost` so the
         # frontend renders an explicit alert card.
         if not replayed_anything:
+            # Promote the start mode to the post-replay observation:
+            # session retrieved fine, agent_id matched, but the event
+            # log was empty. This is a runtime fact, not a startup
+            # decision — `decide_session_start_mode` cannot return this
+            # value because it doesn't have replay information. Logging
+            # the transition keeps the audit trail intact.
+            start_mode = SessionStartMode.RESUMED_BUT_EMPTY
+            logger.info(
+                "[Diag-MA] start_mode promoted to RESUMED_BUT_EMPTY for "
+                "session=%s repair=%s — agent has no conversational "
+                "history, will be primed with state block",
+                session.id,
+                repair_id,
+            )
             # The resumed MA session is alive but empty (events.list returned
             # only metadata, no JSONL backup). The agent has no
             # conversational history. Inject the on-disk state snapshot as
