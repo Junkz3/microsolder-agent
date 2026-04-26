@@ -444,6 +444,7 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin-left: 18px;
   padding: 4px 4px 4px 10px;
   background: var(--panel-2);
   border: 1px solid var(--cyan);

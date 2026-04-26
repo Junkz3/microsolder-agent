@@ -31,19 +31,64 @@ async function loadPackSummary(slug) {
   }
 }
 
+// Repair metadata cache for the topbar — keyed by repair_id, populated
+// lazily by ensureRepairMeta on cache miss. Lets the breadcrumb show the
+// human symptom and the session-pill show the start date instead of the
+// raw UUID, without making updateChrome async.
+const _repairCache = new Map();
+const _repairCacheInFlight = new Map();
+
+async function ensureRepairMeta(repairId) {
+  if (!repairId) return null;
+  if (_repairCache.has(repairId)) return _repairCache.get(repairId);
+  if (_repairCacheInFlight.has(repairId)) return _repairCacheInFlight.get(repairId);
+  const p = (async () => {
+    try {
+      const res = await fetch(`/pipeline/repairs/${encodeURIComponent(repairId)}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      _repairCache.set(repairId, data);
+      return data;
+    } catch (_err) {
+      return null;
+    }
+  })();
+  _repairCacheInFlight.set(repairId, p);
+  try { return await p; } finally { _repairCacheInFlight.delete(repairId); }
+}
+
+const _dateFmt = new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+});
+function formatRepairDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  // fr-FR formats as "26 avr., 14:32" — drop the comma to read as one phrase.
+  return _dateFmt.format(d).replace(/,\s*/g, " ");
+}
+
+function truncateForCrumb(text, max = 38) {
+  if (!text) return "";
+  return text.length > max ? text.slice(0, max - 1).trimEnd() + "…" : text;
+}
+
 function renderCrumbs(items) {
   const el = document.getElementById("crumbs");
   el.innerHTML = "";
-  items.forEach((text, i) => {
+  items.forEach((it, i) => {
     if (i > 0) {
       const sep = document.createElement("span");
       sep.className = "sep";
       sep.textContent = "/";
       el.appendChild(sep);
     }
+    const text = typeof it === "string" ? it : it.text;
+    const title = typeof it === "string" ? null : it.title;
     const span = document.createElement("span");
     if (i === items.length - 1) span.classList.add("active");
     span.textContent = text;
+    if (title) span.title = title;
     el.appendChild(span);
   });
 }
@@ -91,33 +136,58 @@ function updateChrome(section, deviceSlug, pack) {
   pill.className = `mode-pill ${mode.color}`;
   document.getElementById("modePillText").textContent = `${mode.tag} · ${mode.sub}`;
 
+  // Repair metadata for the active session — drives the symptom in the
+  // breadcrumb and the start date in the session-pill. Synchronous read;
+  // a cache miss kicks off an async fetch + re-render at the bottom.
+  const sessionMeta = activeSession ? _repairCache.get(activeSession.repair) : null;
+
   // Session pill — persistent across sections when a session is active.
   const sessionPill = document.getElementById("sessionPill");
   if (sessionPill) {
-    const sess = currentSession();
-    if (sess) {
+    if (activeSession) {
       sessionPill.classList.remove("hidden");
       const devEl = document.getElementById("sessionPillDevice");
       const ridEl = document.getElementById("sessionPillRid");
-      if (devEl) devEl.textContent = prettifySlug(sess.device);
-      if (ridEl) ridEl.textContent = sess.repair.slice(0, 8);
+      if (devEl) devEl.textContent = prettifySlug(activeSession.device);
+      if (ridEl) {
+        if (sessionMeta && sessionMeta.created_at) {
+          ridEl.textContent = formatRepairDate(sessionMeta.created_at);
+          ridEl.title = `Repair ${activeSession.repair}`;
+        } else {
+          ridEl.textContent = activeSession.repair.slice(0, 8);
+          ridEl.title = `Repair ${activeSession.repair}`;
+        }
+      }
     } else {
       sessionPill.classList.add("hidden");
     }
   }
 
-  // Breadcrumbs — contextual path: device / repair-short / section.
+  // Breadcrumbs — contextual path: device / symptom / section.
   // The brand name already lives in the .brand block on the left, so we
-  // don't repeat it here. With no session we fall back to just the section.
+  // don't repeat it here. The symptom comes from the repair metadata; on
+  // cache miss we fall back to the UUID-short and refresh asynchronously.
   const crumbs = [];
   if (activeSession) {
     crumbs.push(prettifySlug(activeSession.device));
-    crumbs.push(activeSession.repair.slice(0, 8));
+    if (sessionMeta && sessionMeta.symptom) {
+      crumbs.push({ text: truncateForCrumb(sessionMeta.symptom), title: sessionMeta.symptom });
+    } else {
+      crumbs.push(activeSession.repair.slice(0, 8));
+    }
   } else if (deviceSlug) {
     crumbs.push(prettifySlug(deviceSlug));
   }
   crumbs.push(meta.crumb);
   renderCrumbs(crumbs);
+
+  // Async upgrade — fetch repair meta on miss, re-render the chrome once
+  // it lands. The cache prevents the recursive call from looping.
+  if (activeSession && !sessionMeta) {
+    ensureRepairMeta(activeSession.repair).then(m => {
+      if (m) updateChrome(section, deviceSlug, pack);
+    });
+  }
 
   // Metabar — Graphe-only. body.no-metabar pulls .canvas/.home/.stub up.
   document.body.classList.toggle("no-metabar", section !== "graphe");
@@ -315,14 +385,15 @@ export async function leaveSession() {
   document.getElementById("llmClose")?.click();
   // Refresh chrome (drops the pill) and swap to list mode.
   navigate("home");
-  // Reload the list data. Dynamic import avoids a static circular dependency
-  // between router.js and home.js. hideRepairDashboard() must run explicitly
-  // because history.replaceState() does NOT fire a hashchange event, so the
-  // hashchange dispatch in main.js that would normally call it never runs.
-  const { loadTaxonomy, loadRepairs, renderHome, hideRepairDashboard } = await import("./home.js");
+  // Quitting a session always returns to the landing hero — the tech is
+  // declaring "I'm done with this repair", so the start screen (where they
+  // can pick another device or open a new diagnostic) is the right next
+  // step. The journal list stays accessible from the rail's home button.
+  // hideRepairDashboard() runs explicitly because history.replaceState()
+  // does NOT fire a hashchange event, so the hashchange dispatch in main.js
+  // that would normally call it never runs.
+  const { hideRepairDashboard } = await import("./home.js");
   hideRepairDashboard();
-  const [taxonomy, repairs] = await Promise.all([
-    loadTaxonomy(), loadRepairs(),
-  ]);
-  renderHome(taxonomy, repairs);
+  const { showLanding } = await import("./landing.js");
+  showLanding();
 }
