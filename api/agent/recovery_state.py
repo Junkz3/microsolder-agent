@@ -35,7 +35,7 @@ from api.tools.protocol import load_active_protocol
 logger = logging.getLogger("wrench_board.agent.recovery_state")
 
 
-_BLOCK_HEADER = "[ÉTAT REPAIR — faits persistés sur disque, indépendants de MA]"
+_BLOCK_HEADER = "[REPAIR STATE — facts persisted on disk, independent of MA]"
 
 # Cap measurement lines so the intro stays readable. The deterministic
 # engines (simulator + hypothesize) consume the full journal anyway via
@@ -75,17 +75,17 @@ def _format_protocol_block(proto: Any) -> tuple[str, dict[str, Any]]:
         (i + 1 for i, s in enumerate(steps) if s.id == current_id), None
     )
     lines = [
-        f"Protocole actif: « {proto.title} » (id={proto.protocol_id})",
-        f"Progression: {completed}/{total} steps",
+        f"Active protocol: « {proto.title} » (id={proto.protocol_id})",
+        f"Progress: {completed}/{total} steps",
     ]
     if current_idx is not None:
         current_step = steps[current_idx - 1]
         lines.append(
-            f"Step courant ({current_idx}/{total}, id={current_id}): "
+            f"Current step ({current_idx}/{total}, id={current_id}): "
             f"{current_step.instruction}"
         )
     if completed:
-        lines.append("Steps complétés:")
+        lines.append("Completed steps:")
         for step in steps:
             if step.result is None:
                 continue
@@ -95,14 +95,14 @@ def _format_protocol_block(proto: Any) -> tuple[str, dict[str, Any]]:
             if step.type == "numeric" and res.value is not None:
                 detail = f"{res.value}{res.unit or step.unit or ''}"
             elif step.type == "boolean":
-                detail = "oui" if res.value else "non"
+                detail = "yes" if res.value else "no"
             elif step.type == "observation":
                 obs = (res.observation or res.value or "")
                 detail = str(obs)[:80]
             elif res.skip_reason:
                 detail = f"skip ({res.skip_reason[:40]})"
             else:
-                detail = "fait"
+                detail = "done"
             lines.append(f"  - {step.id} ({target}): {detail} → {outcome}")
     return "\n".join(lines), {
         "id": proto.protocol_id,
@@ -134,7 +134,7 @@ def build_repair_state_block(
     repair_id: str | None,
     conv_id: str | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    """Render an `[ÉTAT REPAIR …]` block from on-disk artefacts.
+    """Render a `[REPAIR STATE …]` block from on-disk artefacts.
 
     Returns `(block_text_or_None, summary_dict)`. Summary always has the
     `measurements` / `protocol` / `outcome` keys (counts / nested dict /
@@ -162,8 +162,8 @@ def build_repair_state_block(
         tail = measurements[-_MEASUREMENTS_TAIL_CAP:]
         elided = len(measurements) - len(tail)
         header = (
-            f"Mesures persistées ({len(measurements)} total"
-            + (f", {len(tail)} dernières affichées" if elided else "")
+            f"Persisted measurements ({len(measurements)} total"
+            + (f", {len(tail)} latest shown" if elided else "")
             + "):"
         )
         sections.append(
@@ -186,13 +186,13 @@ def build_repair_state_block(
     outcome = _load_outcome(memory_root, device_slug, repair_id)
     if outcome:
         summary["outcome"] = True
-        verdict = outcome.get("verdict") or outcome.get("status") or "validé"
+        verdict = outcome.get("verdict") or outcome.get("status") or "validated"
         components = outcome.get("components") or outcome.get("fixes") or []
         comp_str = ", ".join(str(c) for c in components) if components else "—"
         sections.append(
-            "Outcome final enregistré:\n"
+            "Final outcome recorded:\n"
             f"  - verdict: {verdict}\n"
-            f"  - composants: {comp_str}"
+            f"  - components: {comp_str}"
         )
 
     if not sections:
@@ -200,11 +200,11 @@ def build_repair_state_block(
 
     body = (
         f"{_BLOCK_HEADER}\n"
-        "Ces faits viennent du disque (measurements.jsonl, "
-        "protocols/, outcome.json) — pas de la mémoire MA. "
-        "Ils restent valides même si la session conversationnelle a été "
-        "réinitialisée. Pars de là plutôt que de redemander au technicien "
-        "ce qu'il a déjà mesuré.\n\n"
+        "These facts come from disk (measurements.jsonl, protocols/, "
+        "outcome.json) — not from MA memory. They remain valid even "
+        "if the conversational session was reset. Start from here "
+        "rather than re-asking the technician what they already "
+        "measured.\n\n"
         + "\n\n".join(sections)
     )
     return body, summary

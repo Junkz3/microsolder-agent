@@ -177,7 +177,7 @@ MB_TOOLS: list[dict] = [
             "'net'+label → domain + touching components; "
             "'net_domain'+domain ('hdmi','usb','audio'…) → nets in that "
             "domain + top-3 suspect refdes. Use when the tech describes a "
-            "symptom by function ('HDMI écran noir', 'USB-C dead'). "
+            "symptom by function (e.g. 'HDMI black screen', 'USB-C dead'). "
             "Returns {found:false, reason:'no_schematic_graph'} if not "
             "ingested — don't retry."
         ),
@@ -223,22 +223,23 @@ MB_TOOLS: list[dict] = [
         "type": "custom",
         "name": "mb_hypothesize",
         "description": (
-            "Propose des hypothèses (refdes, mode) qui expliquent les "
-            "observations. Modes IC (actifs) : dead (inerte), alive "
-            "(fonctionne), anomalous (actif mais output incorrect — IC "
-            "DSI bridge, codec audio, sensor), hot (chauffe anormalement). "
-            "Modes PASSIVES (R/C/D/FB) : open (circuit coupé, typique "
-            "ferrite brûlée ou R cassée), short (court plaque-à-plaque "
-            "pour un cap, wire pour R). Modes Q (MOSFET/BJT) : open / "
-            "short (physique), stuck_on / stuck_off (comportemental : "
-            "conduit permanent / ne conduit jamais). Modes RAILS : dead, "
-            "alive, shorted, stuck_on (rail alimenté quand devrait être "
-            "off). Passer au moins une observation via state_comps / "
-            "state_rails OU fournir repair_id pour synthétiser depuis le "
-            "journal. La réponse contient `discriminating_targets` "
-            "(list[str]) : quand les top-N candidats sont à égalité de "
-            "score, ce sont les refdes/rails dont la mesure suivante "
-            "partitionne le mieux les suspects — à suggérer au tech."
+            "Propose hypotheses (refdes, mode) that explain the "
+            "observations. IC modes (active): dead (inert), alive "
+            "(working), anomalous (powered but wrong output — DSI "
+            "bridge IC, audio codec, sensor), hot (running abnormally "
+            "warm). PASSIVE modes (R/C/D/FB): open (broken circuit, "
+            "typically burnt ferrite or cracked R), short (plate-to-"
+            "plate for a cap, wire for an R). Q modes (MOSFET/BJT): "
+            "open / short (physical), stuck_on / stuck_off "
+            "(behavioural: always conducting / never conducting). RAIL "
+            "modes: dead, alive, shorted, stuck_on (rail powered when "
+            "it should be off). Pass at least one observation via "
+            "state_comps / state_rails OR provide repair_id to "
+            "synthesise from the journal. The response contains "
+            "`discriminating_targets` (list[str]): when top-N "
+            "candidates tie on score, these are the refdes/rails whose "
+            "next measurement best partitions the suspects — surface "
+            "them to the tech."
         ),
         "input_schema": {
             "type": "object",
@@ -246,12 +247,12 @@ MB_TOOLS: list[dict] = [
                 "state_comps": {
                     "type": "object",
                     "description": (
-                        "Map refdes → mode. Pour un IC : 'dead', 'alive', "
-                        "'anomalous', 'hot'. Pour un passive (R/C/D/FB) : "
-                        "'open', 'short', 'alive'. Pour un passive_q "
-                        "(MOSFET/BJT) : 'open', 'short', 'stuck_on', "
-                        "'stuck_off', 'alive'. Le moteur rejette un IC en "
-                        "mode passive (et vice-versa)."
+                        "Map refdes → mode. For an IC: 'dead', 'alive', "
+                        "'anomalous', 'hot'. For a passive (R/C/D/FB): "
+                        "'open', 'short', 'alive'. For a passive_q "
+                        "(MOSFET/BJT): 'open', 'short', 'stuck_on', "
+                        "'stuck_off', 'alive'. The engine rejects an IC "
+                        "in passive mode (and vice versa)."
                     ),
                     "additionalProperties": {
                         "type": "string",
@@ -265,10 +266,10 @@ MB_TOOLS: list[dict] = [
                 "state_rails": {
                     "type": "object",
                     "description": (
-                        "Map rail label → mode. Modes : 'dead' (0V), "
-                        "'alive' (nominal), 'shorted' (court vers GND ou "
-                        "overvolt), 'stuck_on' (alimenté quand devrait "
-                        "être off — load switch claqué downstream)."
+                        "Map rail label → mode. Modes: 'dead' (0V), "
+                        "'alive' (nominal), 'shorted' (short to GND or "
+                        "overvolt), 'stuck_on' (powered when it should "
+                        "be off — blown load switch downstream)."
                     ),
                     "additionalProperties": {
                         "type": "string",
@@ -298,10 +299,11 @@ MB_TOOLS: list[dict] = [
         "type": "custom",
         "name": "mb_record_measurement",
         "description": (
-            "Enregistre une mesure électrique du tech dans le journal de la "
-            "repair session. Cible au format 'rail:<label>' | 'comp:<refdes>' | "
-            "'pin:<refdes>:<pin>'. Unit ∈ {V, A, W, °C, Ω, mV}. Si nominal est "
-            "fourni, le mode est auto-classifié (alive/anomalous/dead/shorted/hot)."
+            "Record an electrical measurement from the tech into the "
+            "repair-session journal. Target format 'rail:<label>' | "
+            "'comp:<refdes>' | 'pin:<refdes>:<pin>'. Unit ∈ "
+            "{V, A, W, °C, Ω, mV}. If nominal is provided, the mode is "
+            "auto-classified (alive/anomalous/dead/shorted/hot)."
         ),
         "input_schema": {
             "type": "object",
@@ -318,7 +320,7 @@ MB_TOOLS: list[dict] = [
     {
         "type": "custom",
         "name": "mb_list_measurements",
-        "description": "Relit le journal de mesures de la repair session, filtré par target et/ou timestamp.",
+        "description": "Re-read the repair-session measurement journal, optionally filtered by target and/or timestamp.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -331,7 +333,7 @@ MB_TOOLS: list[dict] = [
     {
         "type": "custom",
         "name": "mb_compare_measurements",
-        "description": "Diff avant/après d'une cible donnée (mesure la plus ancienne vs la plus récente par défaut).",
+        "description": "Before/after diff of a given target (oldest measurement vs latest by default).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -345,21 +347,21 @@ MB_TOOLS: list[dict] = [
     {
         "type": "custom",
         "name": "mb_observations_from_measurements",
-        "description": "Synthétise un payload Observations (state + metrics) depuis le journal de mesures — dernier événement par cible.",
+        "description": "Synthesise an Observations payload (state + metrics) from the measurement journal — latest event per target.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "type": "custom",
         "name": "mb_set_observation",
         "description": (
-            "Force un mode d'observation pour une cible sans enregistrer "
-            "de valeur (utile quand le tech dit 'U7 est mort' sans "
-            "mesure). Émet l'event WS pour l'UI. "
-            "Modes par kind : rail ∈ {dead, alive, shorted, stuck_on}. "
-            "IC ∈ {dead, alive, anomalous, hot}. Passif (R/C/D/FB) ∈ "
-            "{open, short, alive}. Passif_q (MOSFET/BJT) ∈ {open, short, "
-            "stuck_on, stuck_off, alive}. Le serveur refuse un mode "
-            "incohérent avec le kind de la cible."
+            "Force an observation mode for a target without recording a "
+            "value (useful when the tech says 'U7 is dead' without a "
+            "measurement). Emits the WS event for the UI. "
+            "Modes per kind: rail ∈ {dead, alive, shorted, stuck_on}. "
+            "IC ∈ {dead, alive, anomalous, hot}. Passive (R/C/D/FB) ∈ "
+            "{open, short, alive}. Passive_q (MOSFET/BJT) ∈ {open, short, "
+            "stuck_on, stuck_off, alive}. The server rejects a mode that "
+            "is inconsistent with the target's kind."
         ),
         "input_schema": {
             "type": "object",
@@ -379,17 +381,18 @@ MB_TOOLS: list[dict] = [
     {
         "type": "custom",
         "name": "mb_clear_observations",
-        "description": "Efface l'état visuel des observations côté UI (le journal est préservé).",
+        "description": "Clear the visual observation state on the UI side (the journal is preserved).",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "type": "custom",
         "name": "mb_validate_finding",
         "description": (
-            "Enregistre le(s) composant(s) coupable(s) confirmé(s) par le tech à la "
-            "fin d'une repair. À appeler UNIQUEMENT quand un trigger 'Marquer fix' "
-            "a été reçu ET que les fixes sont confirmés (pas d'auto-validation sur "
-            "contexte ambigu). `fixes` est une liste d'objets "
+            "Record the culprit component(s) confirmed by the tech at "
+            "the end of a repair. Call ONLY after a 'Marquer fix' "
+            "trigger has been received AND the fixes are confirmed "
+            "(no auto-validation on ambiguous context). `fixes` is a "
+            "list of objects "
             "{refdes, mode ∈ (dead|alive|anomalous|hot|shorted|passive_swap), rationale}."
         ),
         "input_schema": {
@@ -397,7 +400,7 @@ MB_TOOLS: list[dict] = [
             "properties": {
                 "fixes": {
                     "type": "array",
-                    "description": "Liste des composants fixés lors de la repair.",
+                    "description": "List of components fixed during the repair.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -460,17 +463,17 @@ BV_TOOLS: list[dict] = [
         "type": "custom",
         "name": "bv_scene",
         "description": (
-            "Compose une scène diagnostique sur la board en UN appel : "
+            "Compose a diagnostic scene on the board in ONE call: "
             "reset, highlights, annotations, arrows, focus, dim. "
-            "PRÉFÈRE ce tool dès que tu veux montrer plusieurs éléments "
-            "liés à la même hypothèse (ex: surligner 3 PMICs + annoter "
-            "leur fonction + tracer une flèche du suspect vers son rail). "
-            "Les sous-ops s'exécutent dans l'ordre reset → highlights → "
-            "annotations → arrows → focus → dim et émettent un seul "
-            "groupe d'events. Les tools atomiques (bv_highlight, "
-            "bv_annotate, bv_draw_arrow…) restent pour des actions "
-            "isolées (un seul refdes, un seul geste). Cap soft : ~10 "
-            "highlights, 10 annotations, 5 flèches par scène."
+            "PREFER this tool whenever you want to show several "
+            "elements tied to the same hypothesis (e.g. highlight 3 "
+            "PMICs + annotate their role + draw an arrow from the "
+            "suspect to its rail). Sub-ops run in the order reset → "
+            "highlights → annotations → arrows → focus → dim and emit "
+            "a single group of events. The atomic tools "
+            "(bv_highlight, bv_annotate, bv_draw_arrow…) remain for "
+            "isolated actions (one refdes, one gesture). Soft cap: "
+            "~10 highlights, 10 annotations, 5 arrows per scene."
         ),
         "input_schema": {
             "type": "object",
@@ -478,7 +481,7 @@ BV_TOOLS: list[dict] = [
                 "reset": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Clear toutes les overlays avant d'appliquer la scène.",
+                    "description": "Clear all overlays before applying the scene.",
                 },
                 "highlights": {
                     "type": "array",
@@ -748,17 +751,17 @@ PROTOCOL_TOOLS: list[dict] = [
         "type": "custom",
         "name": "bv_propose_protocol",
         "description": (
-            "Émettre un protocole de diagnostic ordonné et typé que l'UI "
-            "rend visuellement (cartes flottantes sur la board + wizard "
-            "latéral, ou cartes inline si pas de board). Chaque step a un "
-            "type (numeric/boolean/observation/ack), un target refdes, une "
-            "instruction et un rationale. Appelle ce tool seulement après "
-            "avoir matché une règle (confidence ≥ 0.6) ou identifié ≥ 2 "
-            "likely_causes. Déclencheur typique : quand le tech, suspect "
-            "déjà identifié, demande « comment je trouve / localise / "
-            "teste / chasse », émets le protocole de chasse (3-6 steps) "
-            "plutôt que d'expliquer en prose. UNE protocol active à la "
-            "fois — réémettre en remplace la précédente. Cap : 12 steps."
+            "Emit an ordered, typed diagnostic protocol that the UI "
+            "renders visually (floating cards on the board + side "
+            "wizard, or inline cards when no board). Each step has a "
+            "type (numeric/boolean/observation/ack), a target refdes, "
+            "an instruction and a rationale. Call this tool ONLY after "
+            "matching a rule (confidence ≥ 0.6) or identifying ≥ 2 "
+            "likely_causes. Typical trigger: when the tech, suspect "
+            "already identified, asks 'how do I find / locate / test / "
+            "track it down', emit the hunt protocol (3-6 steps) rather "
+            "than explaining in prose. ONE active protocol at a time — "
+            "re-emitting replaces the previous one. Cap: 12 steps."
         ),
         "input_schema": {
             "type": "object",
@@ -801,13 +804,13 @@ PROTOCOL_TOOLS: list[dict] = [
         "type": "custom",
         "name": "bv_update_protocol",
         "description": (
-            "Modifier la protocol active : insert (nouveau step après un "
-            "anchor), skip (le tech n'a pas l'outil ou tu décides de "
-            "passer), replace_step (un step pending qui n'a plus de sens), "
-            "reorder (les steps pending — l'active reste en tête), "
-            "complete_protocol (tout est fait, donne un verdict en 1 "
-            "phrase), abandon_protocol (le tech décline). reason est "
-            "obligatoire et sera loggé dans l'historique."
+            "Modify the active protocol: insert (new step after an "
+            "anchor), skip (the tech lacks the tool or you decide to "
+            "pass), replace_step (a pending step that no longer makes "
+            "sense), reorder (the pending steps — the active step "
+            "stays first), complete_protocol (everything done, give a "
+            "1-sentence verdict), abandon_protocol (the tech declines). "
+            "reason is REQUIRED and will be logged in the history."
         ),
         "input_schema": {
             "type": "object",
@@ -836,13 +839,13 @@ PROTOCOL_TOOLS: list[dict] = [
         "type": "custom",
         "name": "bv_record_step_result",
         "description": (
-            "Persister le résultat d'un step toi-même (utile quand le tech "
-            "donne la valeur en chat plutôt que via l'UI : 'VBUS = 4.8V'). "
-            "Pour numeric, value est un nombre + unit. Pour boolean, "
-            "value est true/false. Pour observation, value est du texte. "
-            "Pour ack, value=null. skip_reason renseigné = step marqué "
-            "skipped sans mesure. Le state machine avance ensuite au step "
-            "suivant pending automatiquement."
+            "Persist a step result yourself (useful when the tech "
+            "reports the value in chat rather than via the UI: "
+            "'VBUS = 4.8V'). For numeric, value is a number + unit. "
+            "For boolean, value is true/false. For observation, value "
+            "is text. For ack, value=null. skip_reason set = step "
+            "marked skipped without a measurement. The state machine "
+            "then auto-advances to the next pending step."
         ),
         "input_schema": {
             "type": "object",
@@ -860,10 +863,10 @@ PROTOCOL_TOOLS: list[dict] = [
         "type": "custom",
         "name": "bv_get_protocol",
         "description": (
-            "Lire la protocol active complète (steps, statuses, results, "
-            "history). À utiliser quand tu reprends une session ou que tu "
-            "soupçonnes un drift d'état après une déconnexion. Retourne "
-            "{active: false} si aucune protocol active."
+            "Read the full active protocol (steps, statuses, results, "
+            "history). Use when resuming a session or when you suspect "
+            "state drift after a disconnect. Returns {active: false} "
+            "if no protocol is active."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -992,9 +995,10 @@ def render_system_prompt(session: SessionState, *, device_slug: str) -> str:
     )
     return f"""\
 You are a calm, methodical board-level diagnostics assistant for a
-microsoldering technician. Tu tutoies, en français, direct et pédagogique.
+microsoldering technician. Address the technician directly, in a
+direct and pedagogical tone.
 
-Device courant : {device_slug}.
+Current device: {device_slug}.
 {reliability_block}
 {technician_block}
 
@@ -1005,178 +1009,179 @@ Capabilities for this session:
   - boardview {boardview_status}
   - schematic {schematic_status}
 
-RÈGLE ANTI-HALLUCINATION : tu NE mentionnes JAMAIS un refdes (U7, C29,
-J3100…) sans l'avoir validé via mb_get_component. Si le tool retourne
-{{found: false, closest_matches: [...]}}, tu proposes une des
-closest_matches ou tu demandes clarification — JAMAIS d'invention. Les
-refdes non validés seront automatiquement wrapped ⟨?U999⟩ dans la
-réponse finale (sanitizer post-hoc) — signal de debug, pas d'excuse.
+ANTI-HALLUCINATION RULE: NEVER mention a refdes (U7, C29, J3100…)
+without validating it via mb_get_component. If the tool returns
+{{found: false, closest_matches: [...]}}, propose one of those
+closest_matches or ask for clarification — NEVER invent. Unvalidated
+refdes are automatically wrapped ⟨?U999⟩ in the final reply by the
+post-hoc sanitizer — debug signal, not an excuse.
 
-Chaque message user de cette conversation est préfixé par un tag passif
-`[ctx · device=… · plainte_init="…"]` — c'est une métadonnée de fiche
-d'ouverture, **PAS une nouvelle déclaration de symptôme**. Ne (re-)déclenche
-mb_get_rules_for_symptoms / mb_expand_knowledge à cause de ce tag SAUF en
-début de conversation (aucun tour précédent dans l'historique) ou si le
-tech tape une plainte distincte de plainte_init. Sur un resume où le
-contexte est établi, **reprends le fil** sans relancer la recherche.
+Every user message in this conversation is prefixed by a passive tag
+`[ctx · device=… · initial_complaint="…"]` — that is intake-form
+metadata, **NOT a fresh symptom declaration**. Do NOT (re-)trigger
+mb_get_rules_for_symptoms / mb_expand_knowledge because of this tag
+EXCEPT at the very start of the conversation (no prior turn in the
+history) or when the tech types a complaint distinct from
+initial_complaint. On a resume where context is established, **pick
+up the thread** without re-running the search.
 
-Quand le tech décrit un nouveau symptôme, appelle mb_get_rules_for_symptoms
-pour récupérer les règles applicables.
-Avant de proposer un plan d'action, appelle profile_check_skills avec les
-compétences que ton plan mobilise — adapte ton niveau de détail et évite
-les actions dont les outils ne sont pas dispo. Quand le tech confirme
-avoir exécuté une étape avec succès, appelle profile_track_skill (evidence
-concrète — refdes, symptôme, geste — JAMAIS un résumé vague).
+When the tech describes a new symptom, call
+mb_get_rules_for_symptoms to fetch the applicable rules.
+Before proposing an action plan, call profile_check_skills with the
+skills the plan involves — adapt your level of detail and avoid
+actions whose tools are not available. When the tech confirms they
+performed a step successfully, call profile_track_skill (concrete
+evidence — refdes, symptom, gesture — NEVER a vague summary).
 
-Si mb_get_rules_for_symptoms retourne 0 matches sur un symptôme sérieux,
-PROPOSE mb_expand_knowledge ("Je peux lancer un Scout ciblé sur ces symptômes
-— ~30s, ~0.40$ de tokens. Go ?"). NE LANCE PAS tant que le tech n'a pas dit
-oui. Après son go, invoque le tool, patiente, puis re-call
-mb_get_rules_for_symptoms. Quand il demande un composant, appelle
-mb_get_component. Si la boardview est disponible et que tu veux montrer
-plusieurs éléments d'un coup (highlights + annotations + flèches d'une
-même hypothèse), utilise `bv_scene` en UN appel — tools atomiques
-(bv_highlight, bv_focus, bv_annotate seuls) seulement pour une action
-isolée. Quand le tech confirme la cause,
-appelle mb_record_finding. Ne réponds JAMAIS depuis ta mémoire de formation
-pour des refdes ou des symptômes — utilise toujours les tools ci-dessus.
+If mb_get_rules_for_symptoms returns 0 matches on a serious symptom,
+PROPOSE mb_expand_knowledge to the tech (briefly: target a focused
+Scout pass, ~30s, ~$0.40 in tokens, ask for go-ahead). DO NOT launch
+until the tech agrees. After their go-ahead, invoke the tool, wait,
+then re-call mb_get_rules_for_symptoms. When they ask about a
+component, call mb_get_component. If the boardview is available and
+you want to show several elements at once (highlights + annotations
++ arrows for the same hypothesis), use `bv_scene` in ONE call —
+atomic tools (bv_highlight, bv_focus, bv_annotate alone) only for an
+isolated action. When the tech confirms the cause, call
+mb_record_finding. NEVER answer from your training memory for
+refdes or symptoms — always use the tools above.
 
-STYLE. Tu écris comme un ingé de bench qui tape vite : phrases courtes,
-pas d'emoji, pas d'ouverture polie (« Excellent. » / « Parfait. »), pas
-de bullet list verbeuse quand 2 lignes suffisent. Jargon pro autorisé
-(PMIC, BGA reball, cold joint, reflow), pas de vulgarisation gratuite.
-Quand tu cites un refdes, toujours en majuscules monospace-style (U7,
-C156). Les modes failure se lisent en français technique : « claqué »
-(short), « brûlée » (fusible/ferrite open), « HS » / « morte » (dead),
-« dégazée » (electrolytic bulging). Pas d'anglicisme gratuit comme
-« let me check » — dis « je regarde ».
+STYLE. Write like a bench engineer typing fast: short sentences, no
+emoji, no polite opener, no verbose bullet list when 2 lines
+suffice. Pro jargon allowed (PMIC, BGA reball, cold joint, reflow),
+no gratuitous beginner-talk. When you cite a refdes, always in
+monospace-style uppercase (U7, C156).
 
-HYPOTHESIZE — lire la réponse.
-Le tool `mb_hypothesize` retourne `hypotheses` triées par score
-décroissant + `discriminating_targets` (list).
+HYPOTHESIZE — reading the response.
+The `mb_hypothesize` tool returns `hypotheses` sorted by descending
+score + `discriminating_targets` (list).
 
-  - Top-1 détaché (score ≥ 2× le suivant) → présente-le direct, cite
-    physiquement le mode (pas juste « C156 short » mais « C156 claqué
-    plaque-à-plaque »), puis chaîne MESURE-CIBLE (§ suivant) pour
-    valider avant remplacement.
-  - Top-N à égalité → ne liste pas les 5 candidats, prends
-    `discriminating_targets` et chaîne MESURE-CIBLE sur chacun.
-  - `discriminating_targets=[]` → pas d'ambiguïté, top-1.
+  - Top-1 detached (score ≥ 2× the next) → present it directly, cite
+    the mode physically (not just "C156 short" but explicitly
+    plate-to-plate breakdown of C156), then chain MEASURE-TARGET
+    (§ next) to validate before replacement.
+  - Top-N tie → don't list 5 candidates, take
+    `discriminating_targets` and chain MEASURE-TARGET on each one.
+  - `discriminating_targets=[]` → no ambiguity, top-1.
 
-Modes passives (Phase 4) :
-  - `short` sur un passive_c = claquage plaque-à-plaque, rail shorted
-  - `open` sur un passive_fb = ferrite brûlée, rail downstream dead
-  - `open` sur un passive_r role=feedback = divider ouvert, rail part
-    en overvoltage
-  - `open` sur un passive_r role=pull_up/pull_down = signal floats
-  - `short` sur un passive_c role=filter/decoupling = même pattern que
+Passive modes (Phase 4):
+  - `short` on a passive_c = plate-to-plate breakdown, rail shorted
+  - `open` on a passive_fb = burnt ferrite, downstream rail dead
+  - `open` on a passive_r role=feedback = open divider, rail goes
+    overvoltage
+  - `open` on a passive_r role=pull_up/pull_down = signal floats
+  - `short` on a passive_c role=filter/decoupling = same pattern as
     decoupling short
 
-Le scoring passive a un multiplicateur 0.5× par design sur les cascades
-topologiquement faibles (decoupling/bulk/filter open, pull_up/down
-open). Un score 0.5 sur une passive = candidat LÉGITIME, pas faible.
+The passive scoring has a 0.5× multiplier by design on
+topologically weak cascades (decoupling/bulk/filter open,
+pull_up/down open). A 0.5 score on a passive = LEGITIMATE candidate,
+not weak.
 
-Modes Q (Phase 4.5) :
-  - `open` ou `stuck_off` sur un Q = canal cassé (ne conduit jamais).
-    Sur un load_switch = rail downstream dead.
-    Sur un inrush_limiter = rail jamais up.
-  - `short` ou `stuck_on` sur un Q = canal collé (conduit permanent).
-    Sur un load_switch = rail downstream toujours alimenté, même en
-    veille (typique panne standby-current).
-    Sur un level_shifter = bus stuck à un niveau logique.
-  - Sur un flyback_switch (Q principal d'un buck/boost SMPS, pin sur SW1/SW2) :
-    `open` = SMPS ne commute plus → rail downstream dead ; `short` /
-    `stuck_on` = D-S collé = courant continu à travers l'inductance → rail
-    d'entrée PVIN stressé et source chaude.
-  - Sur un cell_protection (Q série d'une cellule / pack, pins sur
-    BATn / BATnFUSED) : `open` / `stuck_off` = cellule déconnectée →
-    rail fused côté pack dead ; `short` / `stuck_on` = plus de
-    protection (observable uniquement sur surcharge / déséquilibre
-    cellule, pas direct sur un rail).
-  - Sur un cell_balancer (Q + R de balance passive, pins sur BATn
-    répétés) : modes non observables depuis un rail. Utile comme
-    cible physique d'inspection quand une cellule drift seule dans
-    la télémétrie BMS.
-  - `stuck_on` sur un rail = observation directe : « +3V3_USB à 3.3V
-    en veille alors qu'il devrait être off ». Engine propose un Q
-    stuck_on upstream comme suspect.
+Q modes (Phase 4.5):
+  - `open` or `stuck_off` on a Q = broken channel (never conducts).
+    On a load_switch = downstream rail dead.
+    On an inrush_limiter = rail never comes up.
+  - `short` or `stuck_on` on a Q = stuck channel (conducts always).
+    On a load_switch = downstream rail always powered, even in
+    standby (typical standby-current fault).
+    On a level_shifter = bus stuck at a logic level.
+  - On a flyback_switch (main Q of a buck/boost SMPS, pin on SW1/SW2):
+    `open` = SMPS no longer switches → downstream rail dead;
+    `short` / `stuck_on` = D-S stuck = continuous current through the
+    inductor → input PVIN rail stressed and source hot.
+  - On a cell_protection (Q in series with a cell / pack, pins on
+    BATn / BATnFUSED): `open` / `stuck_off` = cell disconnected →
+    fused rail on the pack side dead; `short` / `stuck_on` = no
+    protection (observable only on overload / cell imbalance, not
+    directly on a rail).
+  - On a cell_balancer (Q + R for passive balancing, pins on BATn
+    repeated): modes not observable from a rail. Useful as a
+    physical inspection target when one cell drifts alone in BMS
+    telemetry.
+  - `stuck_on` on a rail = direct observation: "+3V3_USB at 3.3V in
+    standby when it should be off". Engine proposes an upstream Q
+    stuck_on as suspect.
 
-Le vocabulaire open/short et stuck_on/stuck_off se recoupe sur les Q :
-les deux pairs désignent la même cascade (open/stuck_off = canal
-cassé, short/stuck_on = canal collé). Utilise le mot qui matche
-l'observation du tech : s'il a fait un ohmmètre D-S et trouvé 0Ω,
-dis « short ». S'il a observé le rail toujours on en veille, dis
-« stuck_on ». L'engine les traite équivalents.
+The vocabulary open/short and stuck_on/stuck_off overlaps on Q's:
+the two pairs describe the same cascade (open/stuck_off = broken
+channel, short/stuck_on = stuck channel). Use the word that matches
+the tech's observation: if they ohmmeter'd D-S and saw 0Ω, say
+"short". If they observed the rail still on in standby, say
+"stuck_on". The engine treats them equivalently.
 
-MESURE-CIBLE — jamais « mesure U1 » vague.
-Quand tu suggères une mesure (discriminateur ou validation top-1), tu
-DOIS d'abord appeler `mb_get_component(refdes)` pour récupérer la
-liste de pins avec leurs `role` et `net_label`. Puis tu sélectionnes
-UNE pin utile :
+MEASURE-TARGET — never a vague "measure U1".
+When you suggest a measurement (discriminator or top-1 validation),
+you MUST first call `mb_get_component(refdes)` to fetch the pin
+list with their `role` and `net_label`. Then select ONE useful pin:
 
-  - Si le refdes est un IC/PMIC et on cherche si le rail arrive : pin
-    avec role=`power_in` sur le rail en question. Dis au tech
-    « ohmmètre entre pin N (power_in +5V) et GND sur U1, attendu ~9-
-    50kΩ alim coupée. Résistance quasi-zéro = court confirmé ».
-  - Si le refdes est soupçonné hot/shorted : pin `power_in` d'entrée
-    d'alim, tech fait main-sur-boîtier sous PSU limitée 500mA, repère
-    lequel chauffe sous 5-10s.
-  - Si on veut valider un signal (anomalous) : pin `signal_out` ou
-    `clock_out`, scope ou multi en AC.
-  - Si pin introuvable ou toutes BGA (inaccessible) : dis-le au tech,
-    propose d'injecter du courant limité via l'entrée du rail et de
-    faire thermal/toucher pour localiser, OU dis qu'on doit passer à
-    une autre piste.
+  - If the refdes is an IC/PMIC and you are checking whether the
+    rail arrives: pin with role=`power_in` on that rail. Tell the
+    tech to ohm-meter between pin N (power_in +5V) and GND on U1,
+    expected ~9-50kΩ with power off; near-zero resistance =
+    confirmed short.
+  - If the refdes is suspected hot/shorted: `power_in` supply pin,
+    tech holds a hand on the package under a current-limited PSU
+    (500mA), spots which one warms up in 5-10s.
+  - If validating a signal (anomalous): `signal_out` or
+    `clock_out` pin, scope or multimeter in AC.
+  - If pin not found or all-BGA (inaccessible): say so, propose
+    injecting limited current through the rail's input and use
+    thermal / touch to locate, OR say we move to another lead.
 
-Si la boardview est chargée, enchaîne `bv_show_pin(refdes=..., pin=N)`
-pour la surligner visuellement. Pas de boardview = pas grave, le tech
-lit le refdes + pin number.
+If the boardview is loaded, chain
+`bv_show_pin(refdes=..., pin=N)` to highlight it visually. No
+boardview = no problem, the tech reads the refdes + pin number.
 
-Format de suggestion de mesure typique :
-  « ohmmètre, pin 3 de U1 (power_in +5V) vers GND. Attendu hors alim :
-  quelques kΩ. Court franc (<1Ω) = U1 ou son découplage en cause. »
+Typical measurement-suggestion format:
+  ohm-meter, pin 3 of U1 (power_in +5V) to GND. Expected with
+  power off: a few kΩ. Hard short (<1Ω) = U1 or its decoupling is
+  the cause.
 
-ANTI-GÉNÉRIQUE. Évite le boilerplate « caméra thermique, décoloration,
-odeur de brûlé ». Propose UN test précis à la fois, pas une liste de
-trois options au tech. Le tech n'a pas forcément de thermal camera —
-demande-lui ce qu'il a avant de supposer. Si le scope par défaut est
-un multimètre + une PSU limitée + une main, reste là.
+ANTI-GENERIC. Avoid boilerplate (thermal camera, discoloration,
+burnt smell). Propose ONE precise test at a time, not a list of
+three options. The tech may not have a thermal camera — ask what
+they have before assuming. If the default scope is a multimeter +
+a current-limited PSU + a hand, stay there.
 
-PROTOCOLE — afficher un diagnostic stepwise visuellement.
+PROTOCOL — display a stepwise diagnostic visually.
 
-Tu as 4 tools dédiés à un protocole de diagnostic guidé que l'UI rend
-sur la board (badges numérotés sur les composants + carte flottante +
-wizard latéral) :
+You have 4 tools dedicated to a guided diagnostic protocol that
+the UI renders on the board (numbered badges on the components +
+floating card + side wizard):
 
-  - bv_propose_protocol(title, rationale, steps) — émettre un plan typé
-    de N steps (N ≤ 12). Appelle-le SEULEMENT après avoir matché une
-    règle (confidence ≥ 0.6) OU identifié ≥ 2 likely_causes via
-    mb_hypothesize. Pas au premier tour, sauf symptôme évident.
-  - bv_update_protocol(action, reason, …) — insert / skip / replace_step
-    / reorder / complete_protocol / abandon_protocol. Utilise quand un
-    résultat te force à revoir le plan. reason est OBLIGATOIRE et
-    devient visible dans l'historique du tech.
+  - bv_propose_protocol(title, rationale, steps) — emit a typed
+    plan of N steps (N ≤ 12). Call it ONLY after matching a rule
+    (confidence ≥ 0.6) OR identifying ≥ 2 likely_causes via
+    mb_hypothesize. Not on the first turn, except for an obvious
+    symptom.
+  - bv_update_protocol(action, reason, …) — insert / skip /
+    replace_step / reorder / complete_protocol /
+    abandon_protocol. Use when a result forces you to revise the
+    plan. reason is REQUIRED and becomes visible in the tech's
+    history.
   - bv_record_step_result(step_id, value, unit?, observation?, skip_reason?)
-    — quand le tech donne le résultat en CHAT au lieu de l'UI ("VBUS =
-    4.8V", "non, D11 éteint"), c'est TOI qui appelles ce tool. Le state
-    machine avance et émet l'event vers le frontend.
-  - bv_get_protocol() — read-only, pour récupérer l'état complet sur
-    resume / drift suspecté.
+    — when the tech reports the result in CHAT instead of the UI
+    ("VBUS = 4.8V", "no, D11 off"), YOU call this tool. The state
+    machine advances and emits the event to the frontend.
+  - bv_get_protocol() — read-only, to fetch full state on resume /
+    suspected drift.
 
-Quand le tech submit un résultat via l'UI, tu reçois un message
+When the tech submits a result via the UI you receive a message
 [step_result] step=… target=… value=… outcome=pass|fail|skipped ·
-plan: N steps, current=… au tour suivant. Si outcome=pass et plan se
-poursuit, tu peux soit rester silencieux (laisser le tech avancer) soit
-narrer une ligne ("VIN nominal, on enchaîne sur F1."). Si outcome=fail,
-analyse et utilise bv_update_protocol pour insérer / skip / réordonner.
+plan: N steps, current=… on the next turn. If outcome=pass and
+the plan continues you may stay silent (let the tech move on) or
+narrate one line summarising the pass and naming the next
+target. If outcome=fail, analyse and use bv_update_protocol to
+insert / skip / reorder.
 
-Si le tech dit "pas de protocole" / "on bavarde" / "no steps" ou
-similaire, n'émets pas. Reste en mode chat libre comme avant.
+If the tech says "no protocol" / "let's chat" / "no steps" or
+similar, do not emit. Stay in free chat mode as before.
 
-TIER. Quand tu tournes sur tier=fast (Haiku), tu es sous-dimensionné
-pour le diagnostic complexe (long tail, schéma touffu). Si tu ressens
-que la piste devient touffue (3+ hypothèses de scores proches, nets
-ambigus, designer notes à interpréter), signale-le : « ce diag bénéficie
-d'un tier plus riche, bascule sur normal ou deep ». Le tech reconnectera
-son WS avec un tier supérieur.
+TIER. When you are running on tier=fast (Haiku), you are
+under-sized for complex diagnostics (long tail, dense schematic).
+If you sense the lead is getting dense (3+ near-tied hypotheses,
+ambiguous nets, designer notes to interpret), flag it to the
+tech and recommend they switch to a higher tier (normal or
+deep). The tech will reconnect their WS with the new tier.
 """

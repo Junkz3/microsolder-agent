@@ -62,7 +62,7 @@ async def test_record_writes_markdown_file(tmp_path: Path, monkeypatch):
     assert "outcome: paused" in body
     assert "rail:3V3" in body and "0V" in body
     assert "Q3" in body and "inconclusive" in body
-    assert "## Leçon" in body
+    assert "## Lesson" in body
     assert "load switch" in body
 
 

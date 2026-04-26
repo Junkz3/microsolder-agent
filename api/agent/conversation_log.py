@@ -91,31 +91,31 @@ class SessionLog:
             "",
         ]
         if self.tested:
-            lines.append("## Symptômes testés")
+            lines.append("## Symptoms tested")
             lines.append("")
             for t in self.tested:
                 lines.append(f"- `{t.target}` → {t.result}")
             lines.append("")
         if self.hypotheses:
-            lines.append("## Hypothèses explorées")
+            lines.append("## Hypotheses explored")
             lines.append("")
             for h in self.hypotheses:
                 evid = f" — {h.evidence}" if h.evidence else ""
                 lines.append(f"- `{h.refdes}` · **{h.verdict}**{evid}")
             lines.append("")
         if self.findings:
-            lines.append("## Findings archivés (field_reports)")
+            lines.append("## Archived findings (field_reports)")
             lines.append("")
             for fid in self.findings:
                 lines.append(f"- `{fid}`")
             lines.append("")
         if self.next_steps:
-            lines.append("## Prochaines étapes")
+            lines.append("## Next steps")
             lines.append("")
             lines.append(self.next_steps)
             lines.append("")
         if self.lesson:
-            lines.append("## Leçon")
+            lines.append("## Lesson")
             lines.append("")
             lines.append(self.lesson)
             lines.append("")

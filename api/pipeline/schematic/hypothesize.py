@@ -1187,56 +1187,56 @@ def _narrate(
     diff: HypothesisDiff,
     observations: Observations,
 ) -> str:
-    """Deterministic FR narrative — no LLM."""
+    """Deterministic English narrative — no LLM."""
     obs_total = len(observations.state_comps) + len(observations.state_rails)
     tp = metrics.tp_comps + metrics.tp_rails
     fp = metrics.fp_comps + metrics.fp_rails
 
     # Pick a rails preview — shorted takes precedence visually.
     shorted_preview = ", ".join(sorted(cascade["shorted_rails"])[:2])
-    dead_preview = ", ".join(sorted(cascade["dead_rails"])[:3]) or "aucun rail"
+    dead_preview = ", ".join(sorted(cascade["dead_rails"])[:3]) or "no rail"
     rails_preview = shorted_preview or dead_preview
     dead_count = max(0, len(cascade["dead_comps"]) - len(kill_refdes))
     anom_count = len(cascade["anomalous_comps"])
 
     if len(kill_refdes) == 1:
         verb = {
-            "dead": "meurt",
-            "anomalous": "dysfonctionne (output faux)",
-            "hot": "chauffe anormalement",
-            "shorted": "court vers GND",
-        }.get(kill_modes[0], "échoue")
-        head = f"Si {kill_refdes[0]} {verb} : {rails_preview}"
+            "dead": "dies",
+            "anomalous": "malfunctions (wrong output)",
+            "hot": "runs abnormally hot",
+            "shorted": "shorts to GND",
+        }.get(kill_modes[0], "fails")
+        head = f"If {kill_refdes[0]} {verb}: {rails_preview}"
         if dead_count > 0:
-            head += f" → {dead_count} composant(s) downstream morts"
+            head += f" → {dead_count} downstream component(s) dead"
         if anom_count > 1:
-            head += f", {anom_count} composant(s) aval anormaux"
+            head += f", {anom_count} downstream component(s) anomalous"
         head += "."
     else:
         parts = [f"{r} ({m})" for r, m in zip(kill_refdes, kill_modes, strict=True)]
         head = (
-            f"Si {' ET '.join(parts)} échouent simultanément : "
-            f"{rails_preview} → {dead_count} composant(s) downstream morts."
+            f"If {' AND '.join(parts)} fail simultaneously: "
+            f"{rails_preview} → {dead_count} downstream component(s) dead."
         )
 
-    coverage = f" Explique {tp}/{obs_total} observations, {fp} contradiction(s)."
+    coverage = f" Explains {tp}/{obs_total} observations, {fp} contradiction(s)."
 
     # Cite up to 2 measurements.
     metric_snippets: list[str] = []
     for target, metric in list(observations.metrics_comps.items())[:2]:
         unit = metric.unit
-        metric_snippets.append(f"{target} à {metric.measured}{unit}")
+        metric_snippets.append(f"{target} at {metric.measured}{unit}")
     for target, metric in list(observations.metrics_rails.items())[:2]:
         unit = metric.unit
-        metric_snippets.append(f"{target} à {metric.measured}{unit}")
-    metrics_tail = " Mesures : " + ", ".join(metric_snippets) + "." if metric_snippets else ""
+        metric_snippets.append(f"{target} at {metric.measured}{unit}")
+    metrics_tail = " Measurements: " + ", ".join(metric_snippets) + "." if metric_snippets else ""
 
     tail = ""
     if diff.contradictions:
-        contras = ", ".join(f"{t} observé {o}, prédit {p}" for t, o, p in diff.contradictions[:3])
-        tail += f" Contredit : {contras}."
+        contras = ", ".join(f"{t} observed {o}, predicted {p}" for t, o, p in diff.contradictions[:3])
+        tail += f" Contradicts: {contras}."
     if diff.under_explained:
-        tail += f" Ne couvre pas : {', '.join(diff.under_explained[:4])}."
+        tail += f" Does not cover: {', '.join(diff.under_explained[:4])}."
 
     return head + coverage + metrics_tail + tail
 

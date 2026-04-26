@@ -288,12 +288,13 @@ async def main() -> None:
     print("Opening SESSION 2 on same repair_id (no context handoff)…")
     print("=" * 60)
 
-    # In production, the runtime injects a `[ctx · device=… · plainte_init=…]`
-    # tag at the head of every user message. Reproduce that here so S2 knows
-    # which repair to look for in the mount.
+    # In production, the runtime injects a
+    # `[ctx · device=… · initial_complaint=…]` tag at the head of every
+    # user message. Reproduce that here so S2 knows which repair to look
+    # for in the mount.
     s2_kickoff = (
         f"[ctx · device=iphone-x · repair_id={repair_id} · "
-        "plainte_init=\"ne s'allume pas, écran reste noir\"]\n\n"
+        "initial_complaint=\"ne s'allume pas, écran reste noir\"]\n\n"
         "Salut, je reprends ce repair. Avant de me redire le symptôme: "
         "qu'est-ce qu'on avait conclu la dernière fois? Va lire ton mount "
         "repair (state.md, decisions/) et résume-moi en 3 lignes l'état exact, "

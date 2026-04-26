@@ -72,6 +72,57 @@ DEFAULT_TIER: TierLiteral = "fast"
 
 logger = logging.getLogger("wrench_board.agent.managed")
 
+def _safe_tool_result_text(result: dict[str, Any]) -> str:
+    """Serialize a tool result for the MA `user.custom_tool_result` event.
+
+    Plain `json.dumps(result, default=str)` silently coerces any object
+    via `str()` — a Path becomes a string OK, but a custom object's
+    `__str__` may render as `<Foo at 0x7f…>` which the agent then sees
+    as opaque garbage in its tool-result history. Worse, an object
+    holding a file descriptor or socket can crash inside `str()`.
+
+    Try `json.dumps` without the default first (catches non-JSON-clean
+    results immediately), fall back to `default=str` only when the
+    type system genuinely tolerates lossy stringification (Path,
+    datetime, UUID — common Pydantic round-trip targets). On total
+    failure return a structured error so the agent at least sees
+    "the tool result couldn't be serialized" instead of nothing.
+    """
+    try:
+        return json.dumps(result)
+    except TypeError:
+        pass
+    try:
+        return json.dumps(result, default=str)
+    except (TypeError, ValueError) as exc:
+        logger.error(
+            "[Diag-MA] tool result serialization failed: %s — type=%s",
+            exc,
+            type(result).__name__,
+        )
+        return json.dumps({
+            "ok": False,
+            "reason": "serialization_failed",
+            "error": str(exc)[:200],
+        })
+
+
+def _build_log_id(
+    repair_id: str | None,
+    conv_id: str | None,
+    tier: str,
+) -> str:
+    """Compact correlation id for logs: `repair:conv:tier`.
+
+    Trace a single session across thousands of log lines without grepping
+    on the bare `session_id` (which is the same across resumes — and
+    multiple conv_ids can resume on the same session). The order is
+    repair → conv → tier so partial matches narrow naturally:
+    `grep "rep_001:" logs/`  → all activity on a repair across convs.
+    """
+    return f"{repair_id or 'anon'}:{conv_id or 'new'}:{tier}"
+
+
 # Process-local guard: at most one diagnostic WS per
 # (device_slug, repair_id, conv_id) triplet at a time. The audit-revealed
 # bug — `responded_tool_ids` lives inside `_forward_session_to_ws` and is
@@ -2931,7 +2982,7 @@ async def _forward_session_to_ws(
                                 "custom_tool_use_id": eid,
                                 "content": [{
                                     "type": "text",
-                                    "text": json.dumps(expand_result, default=str),
+                                    "text": _safe_tool_result_text(expand_result),
                                 }],
                             }],
                         )
@@ -2980,7 +3031,7 @@ async def _forward_session_to_ws(
                                 "custom_tool_use_id": eid,
                                 "content": [{
                                     "type": "text",
-                                    "text": json.dumps(sub_result, default=str),
+                                    "text": _safe_tool_result_text(sub_result),
                                 }],
                             }],
                         )
@@ -3105,7 +3156,7 @@ async def _forward_session_to_ws(
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps(result_for_agent, default=str),
+                                        "text": _safe_tool_result_text(result_for_agent),
                                     }
                                 ],
                             }

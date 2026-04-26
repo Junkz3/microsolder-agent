@@ -366,7 +366,7 @@ def test_hypothesize_end_to_end_dead_recovery():
     assert top.score > 0
     assert top.narrative != ""
     assert "U7" in top.narrative
-    assert "meurt" in top.narrative
+    assert "dies" in top.narrative
 
 
 def test_hypothesize_end_to_end_anomalous_recovery():

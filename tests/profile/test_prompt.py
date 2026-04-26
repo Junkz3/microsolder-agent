@@ -11,9 +11,9 @@ def test_default_profile_produces_minimal_block():
     block = render_technician_block(p)
     assert "<technician_profile>" in block
     assert "</technician_profile>" in block
-    assert "Niveau : beginner" in block
-    assert "Verbosité cible : teaching" in block
-    assert "Aucun outil déclaré" in block
+    assert "Level: beginner" in block
+    assert "Target verbosity: teaching" in block
+    assert "no tool declared" in block
 
 
 def test_rich_profile_lists_tools_and_mastered_skills():
@@ -31,11 +31,11 @@ def test_rich_profile_lists_tools_and_mastered_skills():
 
     block = render_technician_block(p)
     assert "Alexis" in block
-    assert "5 ans" in block
+    assert "5 years" in block
     assert "apple, consoles" in block
     assert "soldering_iron" in block
     assert "hot_air" in block
-    # Non-disponibles list should include oscilloscope (unchecked)
+    # Unavailable list should include oscilloscope (unchecked)
     assert "oscilloscope" in block
     assert "reflow_bga (12)" in block
     assert "jumper_wire (18)" in block

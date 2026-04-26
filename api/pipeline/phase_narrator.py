@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Pipeline phase narrator — turns each phase artifact into a 2-3 sentence French narration.
+"""Pipeline phase narrator — turns each phase artifact into a 2-3 sentence narration.
 
 The orchestrator emits `phase_finished` events as Scout / Registry / Writers / Auditor
 complete. After each, this module reads the artifact written to `memory/{slug}/`,
-asks Haiku for a friendly French summary, and returns the text. The caller publishes
+asks Haiku for a friendly English summary, and returns the text. The caller publishes
 that text as a `phase_narration` event on the same WS bus, where the landing UI renders
 it as the user watches the pipeline build their device's knowledge in real time.
 
@@ -27,15 +27,15 @@ _MAX_ARTIFACT_CHARS = 8_000  # cap input fed to Haiku — narration is summary, 
 
 _TOOL_SCHEMA = {
     "name": _TOOL_NAME,
-    "description": "Emit a 2-3 sentence French narration of what the pipeline phase just produced.",
+    "description": "Emit a 2-3 sentence narration of what the pipeline phase just produced.",
     "input_schema": {
         "type": "object",
         "properties": {
             "text": {
                 "type": "string",
                 "description": (
-                    "Two or three short French sentences for the technician watching the screen. "
-                    "Use first person ('J'ai trouvé…', 'Je peux maintenant…'). Be concrete — "
+                    "Two or three short sentences for the technician watching the screen. "
+                    "Use first person ('I found…', 'I can now…'). Be concrete — "
                     "cite specific component counts, signal names, or rule counts. No markdown."
                 ),
             },
@@ -56,28 +56,28 @@ _ARTIFACT_PATHS: dict[str, str] = {
 # Per-phase prompt directive — gives Haiku context about WHAT it's looking at and what's next.
 _PHASE_PROMPTS: dict[str, str] = {
     "scout": (
-        "Phase Scout terminée. Tu lis le dump brut de recherche web sur l'appareil. "
-        "Résume en 2-3 phrases ce que tu sais de cet appareil maintenant : MCU/SoC, "
-        "PMIC, rails principaux, symptômes connus. Termine par 'Je peux maintenant…'."
+        "Scout phase complete. You are reading the raw web-research dump on the device. "
+        "Summarise in 2-3 sentences what you now know about this device: MCU/SoC, "
+        "PMIC, main rails, known symptoms. End with 'I can now…'."
     ),
     "registry": (
-        "Phase Registry terminée. Tu lis le vocabulaire canonique extrait du dump. "
-        "Cite le nombre de composants et de signaux identifiés. Termine par "
-        "'Je peux maintenant construire le graphe et les règles de diagnostic.'"
+        "Registry phase complete. You are reading the canonical vocabulary extracted "
+        "from the dump. Cite the number of components and signals identified. End with "
+        "'I can now build the knowledge graph and the diagnostic rules.'"
     ),
     "mapper": (
-        "Phase Mapper terminée. Le mapper a relié les composants du registry aux refdes "
-        "du graphe schematique chargé. Cite combien de mappings ont été produits."
+        "Mapper phase complete. The mapper linked registry components to the loaded "
+        "schematic graph refdes. Cite how many mappings were produced."
     ),
     "writers": (
-        "Phase Writers terminée. Trois sous-agents ont produit en parallèle : "
-        "le graphe de connaissances, les règles de diagnostic, et le glossaire. "
-        "Cite le nombre de nœuds du graphe (le JSON contient 'nodes')."
+        "Writers phase complete. Three sub-agents produced in parallel: the knowledge "
+        "graph, the diagnostic rules, and the glossary. Cite the number of graph "
+        "nodes (the JSON contains 'nodes')."
     ),
     "audit": (
-        "Phase Auditor terminée. C'est la dernière étape — l'auditeur a validé la cohérence. "
-        "Cite le verdict (APPROVED / NEEDS_REVISION / REJECTED) et conclus par "
-        "'Je suis prêt à diagnostiquer.' uniquement si APPROVED."
+        "Auditor phase complete. This is the final step — the auditor validated the "
+        "coherence. Cite the verdict (APPROVED / NEEDS_REVISION / REJECTED) and "
+        "conclude with 'I am ready to diagnose.' only if APPROVED."
     ),
 }
 
@@ -89,7 +89,7 @@ async def narrate_phase(
     client: AsyncAnthropic,
     memory_root: Path | None = None,
 ) -> str:
-    """Generate a French narration of the artifact produced by `phase` for `slug`.
+    """Generate a short narration of the artifact produced by `phase` for `slug`.
 
     Returns "" when:
       - `phase` is unknown.
@@ -120,7 +120,7 @@ async def narrate_phase(
 
     user_prompt = (
         f"{_PHASE_PROMPTS[phase]}\n\n"
-        f"Artefact (extrait):\n```\n{excerpt}\n```"
+        f"Artifact (excerpt):\n```\n{excerpt}\n```"
     )
 
     try:

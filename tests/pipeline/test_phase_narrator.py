@@ -39,15 +39,15 @@ async def test_narrate_scout_reads_raw_dump(tmp_path: Path):
     fake_client = MagicMock()
     fake_client.messages.create = AsyncMock(
         return_value=_make_anthropic_response(
-            "J'ai trouvé que ton appareil utilise un STM32 et un PMIC TPS65185. "
-            "Les symptômes connus incluent un écran mort et un échec de boot."
+            "I found that your device uses an STM32 and a TPS65185 PMIC. "
+            "Known symptoms include a dead screen and a boot failure."
         )
     )
 
     text = await narrate_phase(
         phase="scout", slug="demo-device", client=fake_client, memory_root=tmp_path
     )
-    assert text.startswith("J'ai trouvé")
+    assert text.startswith("I found")
     assert len(text) <= 600  # cap enforced
     fake_client.messages.create.assert_called_once()
 
@@ -63,13 +63,13 @@ async def test_narrate_registry_reads_registry_json(tmp_path: Path):
 
     fake_client = MagicMock()
     fake_client.messages.create = AsyncMock(
-        return_value=_make_anthropic_response("J'ai catalogué 2 composants. Je peux maintenant construire le graphe.")
+        return_value=_make_anthropic_response("I catalogued 2 components. I can now build the graph.")
     )
 
     text = await narrate_phase(
         phase="registry", slug="demo-device", client=fake_client, memory_root=tmp_path
     )
-    assert "catalogué" in text
+    assert "catalogued" in text
 
 
 @pytest.mark.asyncio

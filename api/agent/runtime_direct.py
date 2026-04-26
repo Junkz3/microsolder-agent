@@ -910,7 +910,7 @@ async def run_diagnostic_session_direct(
         and isinstance(messages[-1], dict)
         and messages[-1].get("role") == "user"
         and isinstance(messages[-1].get("content"), str)
-        and messages[-1]["content"].startswith("[Nouvelle session")
+        and messages[-1]["content"].startswith("[New diagnostic session")
         else None
     )
 
@@ -931,7 +931,7 @@ async def run_diagnostic_session_direct(
     first_user_seen = any(
         isinstance(m, dict)
         and m.get("role") == "user"
-        and not (isinstance(m.get("content"), str) and m["content"].startswith("[Nouvelle session"))
+        and not (isinstance(m.get("content"), str) and m["content"].startswith("[New diagnostic session"))
         for m in messages
     )
 
@@ -1047,12 +1047,12 @@ async def run_diagnostic_session_direct(
             if isinstance(incoming, dict) and incoming.get("type") == "validation.start":
                 is_trigger = True
                 user_text = (
-                    "J'ai fini cette réparation. Peux-tu résumer en une phrase "
-                    "quel(s) composant(s) j'ai réparé ou remplacé à partir de "
-                    "l'historique de notre discussion et des mesures prises, "
-                    "puis enregistrer le résultat avec l'outil "
-                    "`mb_validate_finding` ? Si tu as un doute sur un refdes ou "
-                    "un mode, demande-moi avant d'appeler l'outil."
+                    "I just finished this repair. Can you summarise in one "
+                    "sentence which component(s) I fixed or replaced based on "
+                    "the history of our chat and the measurements taken, then "
+                    "record the result with the `mb_validate_finding` tool? "
+                    "If you have any doubt about a refdes or a mode, ask me "
+                    "before calling the tool."
                 )
                 if resolved_conv_id:
                     _materialize_and_flush_intro()

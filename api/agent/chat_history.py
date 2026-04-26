@@ -360,19 +360,19 @@ def build_session_intro(
     )
     if not meta:
         # Still worth surfacing the device slug even if the repair file is gone.
-        return f"[Nouvelle session · device_slug: {device_slug}]"
+        return f"[New diagnostic session · device_slug: {device_slug}]"
     label = meta.get("device_label") or device_slug
     symptom = (meta.get("symptom") or "").strip()
     lines = [
-        "[Nouvelle session de diagnostic]",
+        "[New diagnostic session]",
         f"Device: {label} (slug: {device_slug})",
     ]
     if symptom:
-        lines.append(f"Symptôme signalé par le technicien: {symptom}")
+        lines.append(f"Symptom reported by the technician: {symptom}")
     lines.append(
-        f"Commence par grep sur /mnt/memory/wrench-board-{device_slug}/field_reports/ "
-        "pour voir les réparations passées, puis mb_get_rules_for_symptoms "
-        "pour les règles applicables."
+        f"Start by grep'ing /mnt/memory/wrench-board-{device_slug}/field_reports/ "
+        "to see past repairs, then mb_get_rules_for_symptoms for the "
+        "applicable rules."
     )
     return "\n".join(lines)
 
@@ -395,15 +395,15 @@ def build_ctx_tag(
     user message keeps that context in the foreground for ~25 tokens/turn,
     which is also a stable cache hit after the first turn.
 
-    The wording is deliberately **passive** — `plainte_init` (initial
-    complaint), not `symptôme`, with the value quoted so the tag is
-    visibly self-delimiting. The system prompt instructs the agent to
-    treat this tag as opening-sheet metadata, never as a fresh symptom
+    The wording is deliberately **passive** — `initial_complaint`, not
+    `symptom`, with the value quoted so the tag is visibly
+    self-delimiting. The system prompt instructs the agent to treat
+    this tag as intake-sheet metadata, never as a fresh symptom
     declaration that should re-trigger `mb_get_rules_for_symptoms` /
     `mb_expand_knowledge` on a resumed session.
 
-    Returns None when no repair_id is given (anonymous sessions don't have
-    a known plainte_init to restate).
+    Returns None when no repair_id is given (anonymous sessions don't
+    have a known initial_complaint to restate).
     """
     if not repair_id:
         return None
@@ -413,7 +413,7 @@ def build_ctx_tag(
     label = (meta or {}).get("device_label") or device_slug
     symptom = ((meta or {}).get("symptom") or "").strip()
     if symptom:
-        return f'{CTX_TAG_PREFIX} device={label} ({device_slug}) · plainte_init="{symptom}"]'
+        return f'{CTX_TAG_PREFIX} device={label} ({device_slug}) · initial_complaint="{symptom}"]'
     return f"{CTX_TAG_PREFIX} device={label} ({device_slug})]"
 
 

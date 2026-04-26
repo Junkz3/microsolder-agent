@@ -29,7 +29,7 @@ async def test_phase_finished_triggers_phase_narration(tmp_path: Path):
         async def fake_narrate(phase, slug_arg, *, client, memory_root=None):
             assert phase == "scout"
             assert slug_arg == slug
-            return "J'ai trouvé un STM32."
+            return "I found an STM32."
 
         # Force a fake API key so narrator_client gets instantiated.
         with patch("api.pipeline.generate_knowledge_pack", new=fake_generate), \
@@ -55,7 +55,7 @@ async def test_phase_finished_triggers_phase_narration(tmp_path: Path):
         assert "phase_narration" in types
         narration = next(e for e in seen if e["type"] == "phase_narration")
         assert narration["phase"] == "scout"
-        assert narration["text"] == "J'ai trouvé un STM32."
+        assert narration["text"] == "I found an STM32."
     finally:
         events.unsubscribe(slug, queue)
 
