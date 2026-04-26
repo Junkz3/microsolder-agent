@@ -10,6 +10,27 @@ const state = {
   hasBoard: false,
 };
 
+// Some agents (Haiku) double-escape Unicode in tool-argument JSON strings,
+// so titles arrive as `D11 éteinte — isoler` instead of
+// `D11 éteinte — isoler`. The Pydantic schema decodes new protocols at
+// the boundary; this client-side helper covers protocols that were
+// persisted before that fix landed and are now replayed onto the WS.
+const _UNICODE_ESCAPE_RE = /\\u([0-9a-fA-F]{4})/g;
+function decodeEscapes(value) {
+  if (typeof value !== "string" || value.indexOf("\\u") < 0) return value;
+  return value.replace(_UNICODE_ESCAPE_RE, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16))
+  );
+}
+function cleanStep(s) {
+  if (!s || typeof s !== "object") return s;
+  return {
+    ...s,
+    instruction: decodeEscapes(s.instruction),
+    rationale: decodeEscapes(s.rationale),
+  };
+}
+
 const subscribers = new Set();
 
 function notify() { subscribers.forEach((cb) => cb(state.proto)); }
@@ -40,16 +61,16 @@ export function applyEvent(ev) {
     case "protocol_proposed":
       state.proto = {
         protocol_id: ev.protocol_id,
-        title: ev.title,
-        rationale: ev.rationale,
-        steps: ev.steps || [],
+        title: decodeEscapes(ev.title),
+        rationale: decodeEscapes(ev.rationale),
+        steps: (ev.steps || []).map(cleanStep),
         current_step_id: ev.current_step_id,
         history: [],
       };
       break;
     case "protocol_updated":
       if (!state.proto || state.proto.protocol_id !== ev.protocol_id) break;
-      state.proto.steps = ev.steps || state.proto.steps;
+      state.proto.steps = ev.steps ? ev.steps.map(cleanStep) : state.proto.steps;
       state.proto.current_step_id = ev.current_step_id;
       if (Array.isArray(ev.history_tail)) {
         state.proto.history = state.proto.history.concat(ev.history_tail);
