@@ -976,9 +976,9 @@ function updateCursorBadge(badge) {
   const el = badge.querySelector('.brd-cursor');
   if (!el) return;
   if (cursorMils) {
-    el.textContent = `x: ${cursorMils.x.toFixed(0)}  y: ${cursorMils.y.toFixed(0)}`;
+    el.textContent = t('brd.cursor.xy', { x: cursorMils.x.toFixed(0), y: cursorMils.y.toFixed(0) });
   } else {
-    el.textContent = '—';
+    el.textContent = t('brd.cursor.empty');
   }
 }
 
@@ -1041,9 +1041,9 @@ function updateInspector() {
   const wMm = (wMils * 0.0254).toFixed(1);
   const hMm = (hMils * 0.0254).toFixed(1);
 
-  const layerLabel = part.layer === LAYER_TOP ? 'TOP' : (part.layer === LAYER_BOTTOM ? 'BOTTOM' : 'BOTH');
-  const rot = part.rotation_deg != null ? `${Math.round(part.rotation_deg)}°` : '—';
-  const smdLabel = part.is_smd ? 'SMD' : 'THT';
+  const layerLabel = part.layer === LAYER_TOP ? t('brd.inspector.layer_top') : (part.layer === LAYER_BOTTOM ? t('brd.inspector.layer_bottom') : t('brd.inspector.layer_both'));
+  const rot = part.rotation_deg != null ? t('brd.inspector.rotation', { deg: `${Math.round(part.rotation_deg)}°` }) : t('brd.inspector.rotation_dash');
+  const smdLabel = part.is_smd ? t('brd.inspector.smd') : t('brd.inspector.tht');
   const pinCount = (part.pin_refs || []).length;
   const selectedNetName = state.user.selectedPinIdx != null
     ? (state.board.pins[state.user.selectedPinIdx]?.net || null)
@@ -1064,33 +1064,38 @@ function updateInspector() {
   el.innerHTML = `
     <header class="brd-ins-head">
       <div class="brd-ins-ref">${escapeHtml(part.refdes)}</div>
-      <button class="brd-ins-close" title="Fermer">
+      <button class="brd-ins-close" title="${t('brd.inspector.close')}">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6l-12 12"/></svg>
       </button>
     </header>
     <div class="brd-ins-scroll">
       <div class="brd-ins-body">
-        <div class="brd-ins-value">${escapeHtml(part.value || '—')}</div>
-        <div class="brd-ins-footprint">${escapeHtml(part.footprint || '—')}</div>
+        <div class="brd-ins-value">${escapeHtml(part.value || t('brd.inspector.value_dash'))}</div>
+        <div class="brd-ins-footprint">${escapeHtml(part.footprint || t('brd.inspector.footprint_dash'))}</div>
         <div class="brd-ins-meta">
           <span>${layerLabel}</span>
-          <span>rot ${rot}</span>
+          <span>${rot}</span>
           <span>${smdLabel}</span>
         </div>
-        <div class="brd-ins-size">${wMm} × ${hMm} mm · ${pinCount} pin${pinCount > 1 ? 's' : ''}</div>
+        <div class="brd-ins-size">${pinCount > 1
+          ? t('brd.inspector.size', { w: wMm, h: hMm, n: pinCount })
+          : t('brd.inspector.size_one', { w: wMm, h: hMm, n: pinCount })}</div>
       </div>
       ${netsSorted.length > 0 ? `
-        <div class="brd-ins-section-label">Nets du composant (${netsSorted.length})</div>
+        <div class="brd-ins-section-label">${t('brd.inspector.nets_section', { n: netsSorted.length })}</div>
         <ul class="brd-ins-netlist">${netList}</ul>
       ` : ''}
       ${linkedSorted.length > 0 ? `
-        <div class="brd-ins-section-label">Composants liés (${linkedSorted.length})</div>
+        <div class="brd-ins-section-label">${t('brd.inspector.linked_section', { n: linkedSorted.length })}</div>
         <ul class="brd-ins-linklist">${
           linkedSorted.map(([ref, netSet]) => {
             const count = netSet.size;
+            const linkLabel = count > 1
+              ? t('brd.inspector.link_count', { n: count })
+              : t('brd.inspector.link_count_one', { n: count });
             return `<li class="brd-ins-link" data-refdes="${escapeHtml(ref)}">
               <span class="brd-ins-link-ref">${escapeHtml(ref)}</span>
-              <span class="brd-ins-link-count">${count} net${count > 1 ? 's' : ''}</span>
+              <span class="brd-ins-link-count">${linkLabel}</span>
             </li>`;
           }).join('')
         }</ul>
@@ -1145,10 +1150,12 @@ function updateNetReadout(toolbar) {
   const pin = state.board.pins[state.user.selectedPinIdx];
   const net = pin && pin.net;
   if (!net) {
-    el.textContent = `${pin.part_refdes}.${pin.index} · no-net`;
+    el.textContent = t('brd.net.no_net_pin', { refdes: pin.part_refdes, pin: pin.index });
   } else {
     const count = state.pinsByNet?.get(net)?.length || 1;
-    el.textContent = `${net} · ${count} pins`;
+    el.textContent = count > 1
+      ? t('brd.net.with_count', { net, n: count })
+      : t('brd.net.with_count_one', { net, n: count });
   }
   el.style.display = '';
 }
@@ -1297,21 +1304,21 @@ function renderSkeleton(root) {
     <div class="brd-loader-card">
       <div class="brd-loader-head">
         <div class="brd-loader-spinner" aria-hidden="true"></div>
-        <div class="brd-loader-status">Chargement de la carte</div>
+        <div class="brd-loader-status">${t('brd.loader.status')}</div>
       </div>
       <ul class="brd-loader-rows">
-        <li><span class="brd-loader-label">board_id</span><span class="brd-loader-bar"></span></li>
-        <li><span class="brd-loader-label">format</span><span class="brd-loader-bar brd-loader-bar-short"></span></li>
-        <li><span class="brd-loader-label">composants</span><span class="brd-loader-bar"></span></li>
-        <li><span class="brd-loader-label">pins</span><span class="brd-loader-bar brd-loader-bar-short"></span></li>
-        <li><span class="brd-loader-label">nets</span><span class="brd-loader-bar"></span></li>
+        <li><span class="brd-loader-label">${t('brd.loader.row.board_id')}</span><span class="brd-loader-bar"></span></li>
+        <li><span class="brd-loader-label">${t('brd.loader.row.format')}</span><span class="brd-loader-bar brd-loader-bar-short"></span></li>
+        <li><span class="brd-loader-label">${t('brd.loader.row.components')}</span><span class="brd-loader-bar"></span></li>
+        <li><span class="brd-loader-label">${t('brd.loader.row.pins')}</span><span class="brd-loader-bar brd-loader-bar-short"></span></li>
+        <li><span class="brd-loader-label">${t('brd.loader.row.nets')}</span><span class="brd-loader-bar"></span></li>
       </ul>
     </div>`;
 }
 
 function renderError(root, detail) {
-  const code = (detail && detail.detail)  || 'ERREUR';
-  const msg  = (detail && detail.message) || 'Erreur inconnue';
+  const code = (detail && detail.detail)  || t('brd.error.default_code');
+  const msg  = (detail && detail.message) || t('brd.error.default_msg');
   root.innerHTML = `
     <div class="error-card">
       <div class="ec-code">${code}</div>
@@ -1338,20 +1345,20 @@ function mountCanvas(containerEl, board) {
   toolbar.className = 'brd-toolbar';
   toolbar.innerHTML = `
     <div class="brd-seg">
-      <button class="brd-seg-btn active" data-side="top">Top</button>
-      <button class="brd-seg-btn" data-side="bottom">Bottom</button>
+      <button class="brd-seg-btn active" data-side="top" data-i18n="brd.toolbar.side_top">${t('brd.toolbar.side_top')}</button>
+      <button class="brd-seg-btn" data-side="bottom" data-i18n="brd.toolbar.side_bottom">${t('brd.toolbar.side_bottom')}</button>
     </div>
-    <button class="brd-btn" id="brd-annot-btn" title="Afficher / masquer les annotations sérigraphie" aria-pressed="true">
+    <button class="brd-btn" id="brd-annot-btn" data-i18n-attr="title:brd.toolbar.annot_title" title="${t('brd.toolbar.annot_title')}" aria-pressed="true">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="M6 6h12M6 18h12M10 6v12M14 6v12"/>
       </svg>
     </button>
-    <button class="brd-btn" id="brd-fit-btn" title="Ajuster à la vue">
+    <button class="brd-btn" id="brd-fit-btn" data-i18n-attr="title:brd.toolbar.fit_title" title="${t('brd.toolbar.fit_title')}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/>
       </svg>
     </button>
-    <button class="brd-btn" id="brd-mm-btn" title="Minimap relations schematic au clic" aria-pressed="true">
+    <button class="brd-btn" id="brd-mm-btn" data-i18n-attr="title:brd.toolbar.minimap_title" title="${t('brd.toolbar.minimap_title')}" aria-pressed="true">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="5.5" cy="12" r="2.2"/>
         <circle cx="18.5" cy="6" r="2.2"/>
@@ -1368,7 +1375,7 @@ function mountCanvas(containerEl, board) {
   badge.className = 'brd-badge';
   badge.innerHTML = `
     <span class="brd-cursor" style="font-family:var(--mono);font-size:11px;color:var(--text-2)">—</span>
-    <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3)">${partCount} composants · ${pinCount} pins</span>`;
+    <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3)">${t('brd.badge.summary', { parts: partCount, pins: pinCount })}</span>`;
   containerEl.appendChild(badge);
 
   // Inspector — top-right floating glass (below toolbar)
@@ -1452,7 +1459,7 @@ export async function initBoardview(containerEl) {
   let blob;
   try {
     const res = await fetch(BRD_URL);
-    if (!res.ok) throw { detail: 'FETCH_FAILED', message: `HTTP ${res.status} sur ${BRD_URL}` };
+    if (!res.ok) throw { detail: 'FETCH_FAILED', message: t('brd.error.fetch_failed_msg', { status: res.status, url: BRD_URL }) };
     blob = await res.blob();
   } catch (err) {
     renderError(containerEl, err.detail ? err : { detail: 'FETCH_FAILED', message: String(err) });
@@ -1731,4 +1738,29 @@ window.initBoardview = initBoardview;
   for (const ev of pending) {
     try { window.Boardview.apply(ev); } catch (_) { /* ignore bad events */ }
   }
+}
+
+// Re-render dynamic UI strings (toolbar tooltips, badge summary, inspector
+// content, net readout, cursor) on locale switch. The static [data-i18n]
+// nodes are handled by i18n.applyDom; this handles the JS-built innerHTML.
+if (window.i18n && typeof window.i18n.onChange === 'function') {
+  window.i18n.onChange(() => {
+    if (!state.board) return;
+    const containerEl = document.getElementById('brdRoot');
+    if (containerEl && canvas) {
+      // Re-mount canvas to rebuild toolbar / badge / inspector with the new locale.
+      const prevPan = { ...vp };
+      const prevSide = activeSide;
+      mountCanvas(containerEl, state.board);
+      Object.assign(vp, prevPan);
+      activeSide = prevSide;
+      const tb = document.querySelector('.brd-toolbar');
+      if (tb) {
+        updateZoomReadout(tb);
+        updateNetReadout(tb);
+      }
+      updateInspector();
+      requestRedraw();
+    }
+  });
 }

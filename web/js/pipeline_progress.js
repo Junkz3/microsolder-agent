@@ -7,11 +7,14 @@
 // complete on disk, so we skip the drawer and redirect immediately.
 
 const PHASES = [
-  {key: "scout",    label: "Scout",     sub: "Recherche web"},
-  {key: "registry", label: "Registry",  sub: "Vocabulaire canonique"},
-  {key: "writers",  label: "Writers",   sub: "Graphe · Règles · Dictionnaire"},
-  {key: "audit",    label: "Audit",     sub: "QA & cohérence"},
+  {key: "scout",    labelKey: "pipeline.phase.scout.label",    subKey: "pipeline.phase.scout.sub"},
+  {key: "registry", labelKey: "pipeline.phase.registry.label", subKey: "pipeline.phase.registry.sub"},
+  {key: "writers",  labelKey: "pipeline.phase.writers.label",  subKey: "pipeline.phase.writers.sub"},
+  {key: "audit",    labelKey: "pipeline.phase.audit.label",    subKey: "pipeline.phase.audit.sub"},
 ];
+
+function _phaseLabel(key)  { return t(PHASES.find(p => p.key === key)?.labelKey || ""); }
+function _phaseSub(key)    { return t(PHASES.find(p => p.key === key)?.subKey || ""); }
 
 const STATE = {
   ws: null,
@@ -51,10 +54,12 @@ function buildDrawer() {
     <header class="pp-head">
       <span class="pp-dot" aria-hidden="true"></span>
       <div class="pp-title">
-        <span class="lbl">Construction de la mémoire</span>
+        <span class="lbl" data-i18n="pipeline.drawer.header_label">Building memory</span>
         <span class="name" id="ppDeviceLabel">—</span>
       </div>
-      <button class="pp-close" id="ppClose" aria-label="Fermer le panneau de progression" type="button">
+      <button class="pp-close" id="ppClose"
+              data-i18n-attr="aria-label:pipeline.drawer.close_aria"
+              aria-label="Close progress panel" type="button">
         <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </header>
@@ -62,35 +67,40 @@ function buildDrawer() {
       ${PHASES.map((p, i) => `
         <div class="pp-step" data-step="${p.key}" data-idx="${i}">
           <div class="pp-step-mark" aria-hidden="true"></div>
-          <div class="pp-step-lbl">${escHtml(p.label)}</div>
-          <div class="pp-step-sub">${escHtml(p.sub)}</div>
-          <div class="pp-step-time" data-role="time">—</div>
+          <div class="pp-step-lbl" data-i18n="${p.labelKey}">${escHtml(_phaseLabel(p.key))}</div>
+          <div class="pp-step-sub" data-i18n="${p.subKey}" data-role="sub">${escHtml(_phaseSub(p.key))}</div>
+          <div class="pp-step-time" data-role="time">${escHtml(t("pipeline.step.time_placeholder"))}</div>
         </div>`).join("")}
     </div>
     <footer class="pp-foot">
-      <div class="pp-status" id="ppStatus">En attente des premiers événements…</div>
+      <div class="pp-status" id="ppStatus" data-i18n="pipeline.status.waiting">Waiting for first events…</div>
       <button class="pp-cta hidden" id="ppCta" type="button"></button>
     </footer>
   `;
   document.body.appendChild(drawer);
+  if (window.i18n && window.i18n.applyDom) window.i18n.applyDom(drawer);
 
   el("ppClose").addEventListener("click", closeDrawer);
 }
 
 function openDrawer(deviceLabel) {
   buildDrawer();
-  el("ppDeviceLabel").textContent = deviceLabel || "—";
-  el("ppStatus").textContent = "Connexion au pipeline…";
-  el("ppStatus").className = "pp-status";
+  el("ppDeviceLabel").textContent = deviceLabel || t("pipeline.drawer.device_placeholder");
+  setStatusKey("pipeline.status.connecting");
   el("ppCta").classList.add("hidden");
   el("ppCta").textContent = "";
   // Reset step states
   document.querySelectorAll("#pipelineProgressDrawer .pp-step").forEach(s => {
     s.classList.remove("running", "done", "error");
-    s.querySelector('[data-role="time"]').textContent = "—";
+    s.querySelector('[data-role="time"]').textContent = t("pipeline.step.time_placeholder");
     const sub = s.querySelector(".pp-step-sub");
-    const originalSub = PHASES.find(p => p.key === s.dataset.step)?.sub || "";
-    if (sub) sub.textContent = originalSub;
+    if (sub) {
+      const phase = PHASES.find(p => p.key === s.dataset.step);
+      if (phase) {
+        sub.setAttribute("data-i18n", phase.subKey);
+        sub.textContent = _phaseSub(s.dataset.step);
+      }
+    }
   });
   // Remove any lingering error panel
   document.getElementById("ppErrorDetail")?.remove();
@@ -137,11 +147,53 @@ function setStepCounts(phaseKey, counts) {
   sub.textContent = parts.join(" · ");
 }
 
+// setStatus accepts pre-resolved HTML text (for paths that interpolate <b>);
+// setStatusKey accepts an i18n key + params and re-resolves on locale switch.
 function setStatus(text, klass) {
   const s = el("ppStatus");
   if (!s) return;
-  s.textContent = text;
+  s.removeAttribute("data-i18n");
+  delete s.dataset.i18nKey;
+  delete s.dataset.i18nParams;
+  s.dataset.i18nHtml = "1";
+  s.innerHTML = text;
   s.className = "pp-status" + (klass ? " " + klass : "");
+}
+
+function setStatusKey(key, params, klass) {
+  const s = el("ppStatus");
+  if (!s) return;
+  s.dataset.i18nKey = key;
+  s.dataset.i18nParams = params ? JSON.stringify(params) : "";
+  s.dataset.i18nHtml = "1";
+  s.removeAttribute("data-i18n");
+  s.innerHTML = t(key, params);
+  s.className = "pp-status" + (klass ? " " + klass : "");
+}
+
+function _refreshStatusOnLocaleChange() {
+  const s = el("ppStatus");
+  if (!s || !s.dataset.i18nKey) return;
+  let params;
+  try { params = s.dataset.i18nParams ? JSON.parse(s.dataset.i18nParams) : undefined; }
+  catch (_) { params = undefined; }
+  s.innerHTML = t(s.dataset.i18nKey, params);
+}
+
+if (window.i18n && window.i18n.onChange) {
+  window.i18n.onChange(() => {
+    _refreshStatusOnLocaleChange();
+    // Re-translate dynamic step time/sub cells whose text follows a known token.
+    document.querySelectorAll("#pipelineProgressDrawer .pp-step").forEach(s => {
+      const time = s.querySelector('[data-role="time"]');
+      if (!time) return;
+      // Static placeholder → re-localize. "running…" / "failed" cells follow,
+      // but the running state flips when the next event lands so transient
+      // localization drift is tolerable.
+      if (s.classList.contains("running")) time.textContent = t("pipeline.step.in_progress");
+      else if (s.classList.contains("error")) time.textContent = t("pipeline.step.failed");
+    });
+  });
 }
 
 function showCta(label, iconPath, primary, onClick) {
@@ -171,13 +223,13 @@ function handleEvent(ev) {
       break;
 
     case "pipeline_started":
-      setStatus("Pipeline démarré…");
+      setStatusKey("pipeline.status.started");
       break;
 
     case "phase_started":
       setStepState(ev.phase, "running");
-      setStepTime(ev.phase, "en cours…");
-      setStatus(`Phase en cours · <b>${escHtml(ev.phase || "")}</b>`);
+      setStepTime(ev.phase, t("pipeline.step.in_progress"));
+      setStatusKey("pipeline.status.phase_running", { phase: escHtml(ev.phase || "") });
       break;
 
     case "phase_finished":
@@ -191,9 +243,9 @@ function handleEvent(ev) {
       const score = typeof ev.consistency_score === "number"
         ? ev.consistency_score.toFixed(2) : "—";
       const status = ev.status || "APPROVED";
-      setStatus(`Mémoire prête · audit <b>${escHtml(status)}</b> · cohérence <b>${score}</b>`, "ok");
+      setStatusKey("pipeline.status.ready", { status: escHtml(status), score }, "ok");
       showCta(
-        "Voir la Memory Bank",
+        t("pipeline.cta.view_memory_bank"),
         '<path d="M5 12h14M13 6l6 6-6 6"/>',
         true,
         () => redirectToMemoryBank(),
@@ -210,12 +262,12 @@ function handleEvent(ev) {
       if (running) {
         running.classList.remove("running");
         running.classList.add("error");
-        running.querySelector('[data-role="time"]').textContent = "échec";
+        running.querySelector('[data-role="time"]').textContent = t("pipeline.step.failed");
       }
       const status = ev.status || "ERROR";
-      setStatus(`Pipeline en échec · <b>${escHtml(status)}</b>`, "err");
+      setStatusKey("pipeline.status.failed", { status: escHtml(status) }, "err");
       if (ev.error) showErrorDetail(ev.error);
-      showCta("Fermer", "", false, closeDrawer);
+      showCta(t("pipeline.cta.close"), "", false, closeDrawer);
       break;
     }
 
@@ -268,14 +320,14 @@ export function openPipelineProgress(repairResponse) {
     handleEvent(payload);
   });
   ws.addEventListener("error", () => {
-    setStatus("Connexion perdue au flux de progression.", "err");
+    setStatusKey("pipeline.status.lost_connection", null, "err");
   });
   ws.addEventListener("close", () => {
     STATE.ws = null;
     // If the pipeline didn't reach a terminal event before the close, flag it.
     if (!STATE.done && !STATE.failed) {
-      setStatus("Connexion fermée avant la fin du pipeline.", "err");
-      showCta("Fermer", "", false, closeDrawer);
+      setStatusKey("pipeline.status.closed_early", null, "err");
+      showCta(t("pipeline.cta.close"), "", false, closeDrawer);
     }
   });
 }

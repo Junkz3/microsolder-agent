@@ -63,6 +63,8 @@ if (!window.Boardview) {
 
 /* ---------- INIT ---------- */
 (async function bootstrap() {
+  // Wait for i18n dictionaries before any module renders dynamic strings.
+  if (window.i18n && window.i18n.ready) await window.i18n.ready;
   // Stamp the static version once — chrome state is then handled by navigate().
   document.getElementById("appVersion").textContent = APP_VERSION;
   mountMascot(document.getElementById("brandMascot"), { size: "xs", state: "idle" });

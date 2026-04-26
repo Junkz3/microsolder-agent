@@ -1,0 +1,38 @@
+{
+  "aria": {
+    "step_pin": "épingle d'étape",
+    "panel": "protocole de diagnostic",
+    "toggle": "Plier / déplier",
+    "abandon": "Abandonner le protocole"
+  },
+  "title": {
+    "default": "—"
+  },
+  "history": {
+    "summary": "historique"
+  },
+  "toggle": {
+    "collapse": "Plier",
+    "expand": "Déplier"
+  },
+  "step": {
+    "value_placeholder": "valeur",
+    "nominal_placeholder": "nominal {value}",
+    "observation_placeholder": "ce que tu observes…",
+    "yes": "Oui",
+    "no": "Non",
+    "done": "Fait",
+    "validate": "Valider",
+    "skip": "Skip",
+    "skip_prompt": "Pourquoi tu skip ce step ?",
+    "result": {
+      "yes": "oui",
+      "no": "non",
+      "done": "fait",
+      "empty": "—"
+    }
+  },
+  "abandon": {
+    "confirm": "Abandonner le protocole en cours ?"
+  }
+}

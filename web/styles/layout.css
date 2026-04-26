@@ -11,6 +11,10 @@
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .top-btn{background:var(--panel);border:1px solid var(--border);color:var(--text-2);padding:6px 10px;border-radius:6px;font-size:12px;font-family:inherit;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:all .15s}
 .top-btn:hover{color:var(--text);border-color:var(--border-hover);background:var(--panel-2)}
+.lang-switch{display:inline-flex;background:var(--panel);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-family:var(--mono);font-size:11px;letter-spacing:.4px}
+.lang-switch .lang-btn{background:transparent;border:0;color:var(--text-3);padding:5px 9px;cursor:pointer;transition:all .15s}
+.lang-switch .lang-btn:hover{color:var(--text);background:var(--panel-2)}
+.lang-switch .lang-btn[aria-pressed="true"]{color:var(--cyan);background:linear-gradient(135deg,rgba(56,189,248,.14),rgba(56,189,248,.04))}
 
 /* ============ LEFT RAIL ============ */
 .rail{position:fixed;top:48px;bottom:0;left:0;width:52px;background:linear-gradient(180deg,var(--bg-2) 0%,var(--bg-deep) 100%);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:6px;z-index:15}

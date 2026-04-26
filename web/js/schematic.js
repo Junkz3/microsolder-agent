@@ -163,8 +163,8 @@ const SimulationController = {
     if (!chip) {
       chip = document.createElement("button");
       chip.className = "sim-scrubber-toggle";
-      chip.title = "Afficher la timeline";
-      chip.textContent = "▸ Timeline";
+      chip.title = t("schematic.simulator.show_timeline_title");
+      chip.textContent = `▸ ${t("schematic.simulator.show_timeline")}`;
       host.appendChild(chip);
       chip.addEventListener("click", () => this._setVisible(true));
     }
@@ -174,14 +174,14 @@ const SimulationController = {
       el = document.createElement("div");
       el.className = "sim-scrubber";
       el.innerHTML = `
-        <button data-act="rewind" title="Début">⏮</button>
-        <button data-act="step-back" title="Phase précédente">◀</button>
+        <button data-act="rewind" title="${t("schematic.simulator.rewind_title")}">⏮</button>
+        <button data-act="step-back" title="${t("schematic.simulator.step_back_title")}">◀</button>
         <button data-act="play-pause">▶</button>
-        <button data-act="step-fwd" title="Phase suivante">▶</button>
+        <button data-act="step-fwd" title="${t("schematic.simulator.step_fwd_title")}">▶</button>
         <input type="range" min="0" max="0" step="1" value="0" />
         <span class="sim-phase-label">—</span>
         <span class="sim-blocked-overlay" hidden></span>
-        <button data-act="close" class="sim-scrubber-close" title="Masquer la timeline">×</button>
+        <button data-act="close" class="sim-scrubber-close" title="${t("schematic.simulator.close_title")}">×</button>
       `;
       host.appendChild(el);
       el.addEventListener("click", (ev) => {
@@ -228,7 +228,7 @@ const SimulationController = {
     el.querySelector(".sim-phase-label").textContent = label;
     const overlay = el.querySelector(".sim-blocked-overlay");
     if (state?.blocked) {
-      overlay.textContent = `BLOQUÉE — ${state.blocked_reason ?? "cascade"}`;
+      overlay.textContent = t("schematic.simulator.blocked", { reason: state.blocked_reason ?? t("schematic.simulator.blocked_default") });
       overlay.hidden = false;
     } else {
       overlay.hidden = true;
@@ -486,8 +486,8 @@ const SimulationController = {
     panel.className = "sim-hypotheses-panel";
     panel.innerHTML = `
       <div class="sim-hyp-head">
-        <span class="sim-hyp-title">Hypothèses (top ${this.hypotheses.length})</span>
-        <button class="sim-hyp-close" title="Fermer">×</button>
+        <span class="sim-hyp-title">${escHtml(t("schematic.simulator.hypotheses_title", { count: this.hypotheses.length }))}</span>
+        <button class="sim-hyp-close" title="${t("schematic.simulator.hyp_close_title")}">×</button>
       </div>
       <div class="sim-hyp-body"></div>
     `;
@@ -499,13 +499,13 @@ const SimulationController = {
       card.className = "sim-hyp-card";
       const chips = h.kill_refdes.map((r, i) => {
         const m = (h.kill_modes || [])[i] || "dead";
-        const modeLabel = { dead: "mort", anomalous: "anomalous", hot: "chaud", shorted: "shorté" }[m] || m;
-        return `<span class="sim-hyp-chip sim-hyp-chip--${m}">${escHtml(r)} · ${modeLabel}</span>`;
+        const modeLabel = t(`schematic.modes.${m}`) || m;
+        return `<span class="sim-hyp-chip sim-hyp-chip--${m}">${escHtml(r)} · ${escHtml(modeLabel)}</span>`;
       }).join(" + ");
       const contradictions = (h.diff.contradictions || []).map(c => {
         if (Array.isArray(c) && c.length === 3) {
           const [target, observed, predicted] = c;
-          return `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(target)} obs ${escHtml(observed)} → prédit ${escHtml(predicted)}</span>`;
+          return `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(t("schematic.simulator.hyp_predicted", { target, observed, predicted }))}</span>`;
         }
         return `<span class="sim-hyp-tag sim-hyp-tag-fp">${escHtml(c)}</span>`;
       }).join(" ");
@@ -514,11 +514,11 @@ const SimulationController = {
         <div class="sim-hyp-card-head">
           <span class="sim-hyp-rank">#${i + 1}</span>
           <span class="sim-hyp-kills">${chips}</span>
-          <span class="sim-hyp-score">score ${h.score.toFixed(1)}</span>
+          <span class="sim-hyp-score">${escHtml(t("schematic.simulator.hyp_score", { score: h.score.toFixed(1) }))}</span>
         </div>
         <div class="sim-hyp-narr">${escHtml(h.narrative)}</div>
-        ${contradictions ? `<div class="sim-hyp-diff"><span class="k">contredit</span> ${contradictions}</div>` : ""}
-        ${missing ? `<div class="sim-hyp-diff"><span class="k">ne couvre pas</span> ${missing}</div>` : ""}
+        ${contradictions ? `<div class="sim-hyp-diff"><span class="k">${escHtml(t("schematic.simulator.hyp_contradicts"))}</span> ${contradictions}</div>` : ""}
+        ${missing ? `<div class="sim-hyp-diff"><span class="k">${escHtml(t("schematic.simulator.hyp_does_not_cover"))}</span> ${missing}</div>` : ""}
       `;
       card.addEventListener("click", () => {
         // Preview the cascade by injecting this kill set into the simulator.
@@ -602,19 +602,9 @@ const MODE_GLYPH = {
   stuck_off: ICON_BAN,
 };
 
-// Human-readable labels per mode (French UI).
-const MODE_LABEL = {
-  unknown:   "inconnu",
-  alive:     "vivant",
-  dead:      "mort",
-  anomalous: "anomalous",
-  hot:       "chaud",
-  shorted:   "shorté",
-  open:      "ouvert",
-  short:     "court-circuit",
-  stuck_on:  "toujours on",
-  stuck_off: "toujours off",
-};
+// Human-readable labels per mode — resolved through i18n at call time so
+// the picker re-renders correctly on locale switch.
+function modeLabel(m) { return t(`schematic.modes.${m}`) || m; }
 
 // A component "touches a power rail" if any of its pins has a known
 // power role (power_in/out, ground, switch_node, enable_in/out) or a
@@ -1376,7 +1366,7 @@ function renderPowertreeHeads(model) {
     g.append("text")
       .attr("class", "sch-pt-orphan-label")
       .attr("x", 80).attr("y", model._orphanStripY - 8)
-      .text(`SIGNAUX / AUTRES — ${model._orphanCount} composants non attachés à un rail power`);
+      .text(t("schematic.powertree.orphan_strip", { count: model._orphanCount }));
   }
 }
 
@@ -1521,11 +1511,11 @@ function renderRailFocusHeads(model) {
     g.append("text")
       .attr("class", "sch-rf-empty")
       .attr("x", 600).attr("y", 260)
-      .text("← Sélectionne un rail dans la liste");
+      .text(t("schematic.rail_focus.select_hint"));
     g.append("text")
       .attr("class", "sch-rf-empty-hint")
       .attr("x", 600).attr("y", 288)
-      .text("Vue propre — un rail à la fois, zéro spaghetti.");
+      .text(t("schematic.rail_focus.select_sub"));
     return;
   }
 
@@ -1538,15 +1528,15 @@ function renderRailFocusHeads(model) {
   const zoneBot = railY + 210;
 
   const zones = [];
-  if (hasUpstream) zones.push({ x: RF_UPSTREAM_X - 90, w: 180, label: "AMONT" });
-  if (hasSource)   zones.push({ x: RF_SOURCE_X - 90, w: 180, label: "SOURCE" });
-  zones.push({ x: RF_RAIL_X - 80, w: 160, label: "RAIL" });
+  if (hasUpstream) zones.push({ x: RF_UPSTREAM_X - 90, w: 180, label: t("schematic.rail_focus.zone_upstream") });
+  if (hasSource)   zones.push({ x: RF_SOURCE_X - 90, w: 180, label: t("schematic.rail_focus.zone_source") });
+  zones.push({ x: RF_RAIL_X - 80, w: 160, label: t("schematic.rail_focus.zone_rail") });
   if (nC > 0) {
     const nCols = Math.ceil(nC / RF_CONSUMERS_PER_COL);
     zones.push({
       x: RF_CONSUMERS_X - 40,
       w: 80 + nCols * RF_CONSUMER_COL_W,
-      label: "CONSUMERS",
+      label: t("schematic.rail_focus.zone_consumers"),
     });
   }
   for (const z of zones) {
@@ -1576,7 +1566,7 @@ function renderRailFocusHeads(model) {
       .attr("class", "sch-rf-upstream-note")
       .attr("x", RF_SOURCE_X).attr("y", railY + 4)
       .attr("text-anchor", "middle")
-      .text("Alim externe");
+      .text(t("schematic.rail_focus.external_supply"));
   }
 }
 
@@ -1590,7 +1580,7 @@ function renderRailBar(model) {
   if (countEl) countEl.textContent = String(rails.length);
 
   if (rails.length === 0) {
-    listEl.innerHTML = `<div class="muted" style="padding:20px 14px;font-size:11px;text-align:center">Aucun rail dans ce pack.</div>`;
+    listEl.innerHTML = `<div class="muted" style="padding:20px 14px;font-size:11px;text-align:center">${escHtml(t("schematic.railbar.no_rails"))}</div>`;
     return;
   }
 
@@ -1627,7 +1617,7 @@ function renderRailBar(model) {
         : "—";
       const sourceLbl = rail.source_refdes
         ? `<span class="sch-rail-source">${escHtml(rail.source_refdes)}</span>`
-        : `<span class="sch-rail-source external">externe</span>`;
+        : `<span class="sch-rail-source external">${escHtml(t("schematic.railbar.external_supply"))}</span>`;
       const phaseBadge = rail.phase != null
         ? `<span class="sch-rail-phase">Φ${rail.phase}</span>`
         : "";
@@ -2022,10 +2012,13 @@ function renderGridHeads(model) {
     head.append("rect")
       .attr("class", "sch-phase-head")
       .attr("x", -80).attr("y", -16).attr("width", 160).attr("height", 32).attr("rx", 8);
-    const label = p == null ? "Pré-boot" : `Φ${p}`;
+    const label = p == null ? t("schematic.boot.phase_pre_boot") : `Φ${p}`;
     head.append("text").attr("class", "sch-phase-label").attr("y", -1).text(label);
     const count = model.nodes.filter(n => (n.phase ?? null) === p).length;
-    head.append("text").attr("class", "sch-phase-sub").attr("y", 12).text(`${count} nœud${count > 1 ? "s" : ""}`);
+    const nodeLbl = count === 1
+      ? t("schematic.boot.phase_count_one", { n: count })
+      : t("schematic.boot.phase_count_many", { n: count });
+    head.append("text").attr("class", "sch-phase-sub").attr("y", 12).text(nodeLbl);
   });
 }
 
@@ -2182,11 +2175,11 @@ function renderBootTimeline(model) {
   wrap.innerHTML = "";
   const phases = model.boot || [];
   if (phases.length === 0) {
-    wrap.innerHTML = `<div class="sch-boot-empty">Pas de boot_sequence dans le pack.</div>`;
+    wrap.innerHTML = `<div class="sch-boot-empty">${escHtml(t("schematic.boot.empty"))}</div>`;
     return;
   }
 
-  // Source badge — "Vérifié Opus" (cyan) vs "Déduit topologique" (amber).
+  // Source badge — verified Opus (cyan) vs topology-deduced (amber).
   const headBar = document.createElement("div");
   headBar.className = "sch-boot-headbar";
   const isAnalyzed = model.bootSource === "analyzer";
@@ -2194,11 +2187,11 @@ function renderBootTimeline(model) {
   const conf = model.analyzerMeta?.global_confidence;
   headBar.innerHTML = `
     <span class="sch-boot-src ${isAnalyzed ? 'analyzer' : 'compiler'}">
-      ${isAnalyzed ? `${ICON_CHECK} Vérifié Opus` : `${ICON_DIAMOND} Déduit topologique`}
+      ${isAnalyzed ? `${ICON_CHECK} ${escHtml(t("schematic.boot.verified_opus"))}` : `${ICON_DIAMOND} ${escHtml(t("schematic.boot.deduced_topology"))}`}
     </span>
-    ${isAnalyzed && seq ? `<span class="sch-boot-seq">séquenceur: <span class="mono">${escHtml(seq)}</span></span>` : ''}
-    ${isAnalyzed && conf != null ? `<span class="sch-boot-conf">confiance: <span class="mono">${conf.toFixed(2)}</span></span>` : ''}
-    ${!isAnalyzed ? `<button class="sch-reanalyze" id="schReanalyzeBtn" title="Lancer l'analyse Opus (~$0.25, ~15s)">↻ Analyser avec Opus</button>` : ''}
+    ${isAnalyzed && seq ? `<span class="sch-boot-seq">${escHtml(t("schematic.boot.sequencer"))} <span class="mono">${escHtml(seq)}</span></span>` : ''}
+    ${isAnalyzed && conf != null ? `<span class="sch-boot-conf">${escHtml(t("schematic.boot.confidence"))} <span class="mono">${conf.toFixed(2)}</span></span>` : ''}
+    ${!isAnalyzed ? `<button class="sch-reanalyze" id="schReanalyzeBtn" title="${escHtml(t("schematic.boot.reanalyze_title"))}">↻ ${escHtml(t("schematic.boot.reanalyze"))}</button>` : ''}
   `;
   wrap.appendChild(headBar);
 
@@ -2242,25 +2235,25 @@ function renderBootTimeline(model) {
     col.innerHTML = `
       <div class="sch-boot-head">
         <span class="sch-boot-phase">Φ${p.index}</span>
-        <span class="sch-boot-name">${escHtml(p.name || `Phase ${p.index}`)}</span>
+        <span class="sch-boot-name">${escHtml(p.name || t("schematic.boot.phase_default_name", { n: p.index }))}</span>
         ${kindBadge}
         ${confBadge}
       </div>
       ${top ? `<div class="sch-boot-spof crit-${critLevel}">
         <span class="sch-boot-spof-icon">${critLevel === 'hi' ? ICON_WARNING : critLevel === 'mid' ? ICON_DOT_FILLED : "·"}</span>
-        <span class="sch-boot-spof-label">SPOF</span>
+        <span class="sch-boot-spof-label">${escHtml(t("schematic.boot.spof_label"))}</span>
         <span class="mono clickable sch-boot-spof-ref" data-refdes="${escHtml(top.refdes || top.label)}">${escHtml(top.refdes || top.label)}</span>
         <span class="sch-boot-spof-pct">${phaseMaxPct}%</span>
       </div>` : ''}
       <div class="sch-boot-line">
-        <span class="sch-boot-line-label">R</span>
+        <span class="sch-boot-line-label">${escHtml(t("schematic.boot.rails_label"))}</span>
         ${(p.rails_stable || []).slice(0, 8).map(r => `<span class="mono chip emerald" data-rail="${escHtml(r)}">${escHtml(r)}</span>`).join("")}
-        ${(p.rails_stable || []).length > 8 ? `<span class="sch-boot-more">+${p.rails_stable.length - 8}</span>` : ""}
+        ${(p.rails_stable || []).length > 8 ? `<span class="sch-boot-more">${escHtml(t("schematic.boot.more", { n: p.rails_stable.length - 8 }))}</span>` : ""}
       </div>
       <div class="sch-boot-line">
-        <span class="sch-boot-line-label">C</span>
+        <span class="sch-boot-line-label">${escHtml(t("schematic.boot.components_label"))}</span>
         ${(p.components_entering || []).slice(0, 6).map(c => `<span class="mono chip cyan" data-refdes="${escHtml(c)}">${escHtml(c)}</span>`).join("")}
-        ${(p.components_entering || []).length > 6 ? `<span class="sch-boot-more">+${p.components_entering.length - 6}</span>` : ""}
+        ${(p.components_entering || []).length > 6 ? `<span class="sch-boot-more">${escHtml(t("schematic.boot.more", { n: p.components_entering.length - 6 }))}</span>` : ""}
       </div>
     `;
     col.addEventListener("click", () => highlightPhase(model, p.index));
@@ -2273,7 +2266,7 @@ function renderBootTimeline(model) {
     ev.stopPropagation();
     const btn = ev.currentTarget;
     btn.disabled = true;
-    btn.textContent = "↻ Analyse en cours…";
+    btn.textContent = `↻ ${t("schematic.boot.reanalyzing")}`;
     try {
       const res = await fetch(`/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic/analyze-boot`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2288,10 +2281,10 @@ function renderBootTimeline(model) {
           return;
         }
       }
-      btn.textContent = "↻ Timeout — réessaye";
+      btn.textContent = `↻ ${t("schematic.boot.reanalyze_timeout")}`;
       btn.disabled = false;
     } catch (err) {
-      btn.textContent = `Échec: ${err.message}`;
+      btn.textContent = t("schematic.boot.reanalyze_failed", { error: err.message });
       btn.disabled = false;
     }
   });
@@ -2334,39 +2327,41 @@ function highlightPhase(model, phaseIdx) {
   // Update inspector to describe the phase.
   const insp = el("schInspector");
   insp.classList.add("open");
-  el("schInspType").textContent = "PHASE";
+  el("schInspType").textContent = t("schematic.inspector.type_phase");
   el("schInspType").className = "sch-type-badge phase";
   el("schInspTitle").textContent = `Φ${phase.index}`;
   el("schInspSub").textContent = phase.name || "";
+  // Local alias to avoid shadowing the global `t` in the trigger map below.
+  const tx = window.t;
   el("schInspBody").innerHTML = `
     <section class="sch-insp-section">
-      <h3>Rails stabilisés (${(phase.rails_stable || []).length})</h3>
+      <h3>${escHtml(tx("schematic.inspector.phase_rails_stable", { count: (phase.rails_stable || []).length }))}</h3>
       <div class="sch-chips">
-        ${(phase.rails_stable || []).map(r => `<span class="mono chip emerald">${escHtml(r)}</span>`).join("") || "<span class='muted'>Aucun</span>"}
+        ${(phase.rails_stable || []).map(r => `<span class="mono chip emerald">${escHtml(r)}</span>`).join("") || `<span class='muted'>${escHtml(tx("schematic.inspector.none"))}</span>`}
       </div>
     </section>
     <section class="sch-insp-section">
-      <h3>Composants qui entrent (${(phase.components_entering || []).length})</h3>
+      <h3>${escHtml(tx("schematic.inspector.phase_components_entering", { count: (phase.components_entering || []).length }))}</h3>
       <div class="sch-chips">
-        ${(phase.components_entering || []).map(c => `<span class="mono chip cyan">${escHtml(c)}</span>`).join("") || "<span class='muted'>Aucun</span>"}
+        ${(phase.components_entering || []).map(c => `<span class="mono chip cyan">${escHtml(c)}</span>`).join("") || `<span class='muted'>${escHtml(tx("schematic.inspector.none"))}</span>`}
       </div>
     </section>
     ${phase.triggers_next && phase.triggers_next.length ? `
     <section class="sch-insp-section">
-      <h3>Déclencheurs de la phase suivante</h3>
-      ${phase.triggers_next.map(t => {
-        if (typeof t === "string") {
-          return `<div><span class="mono chip amber">${escHtml(t)}</span></div>`;
+      <h3>${escHtml(tx("schematic.inspector.phase_triggers_next"))}</h3>
+      ${phase.triggers_next.map(trig => {
+        if (typeof trig === "string") {
+          return `<div><span class="mono chip amber">${escHtml(trig)}</span></div>`;
         }
         // Analyzer shape: {net_label, from_refdes, rationale}
-        const driver = t.from_refdes ? ` ← <span class="mono">${escHtml(t.from_refdes)}</span>` : "";
-        const rationale = t.rationale ? `<div class="muted" style="margin-top:4px;font-size:11px">${escHtml(t.rationale)}</div>` : "";
-        return `<div style="margin-bottom:8px"><span class="mono chip amber">${escHtml(t.net_label)}</span>${driver}${rationale}</div>`;
+        const driver = trig.from_refdes ? ` ← <span class="mono">${escHtml(trig.from_refdes)}</span>` : "";
+        const rationale = trig.rationale ? `<div class="muted" style="margin-top:4px;font-size:11px">${escHtml(trig.rationale)}</div>` : "";
+        return `<div style="margin-bottom:8px"><span class="mono chip amber">${escHtml(trig.net_label)}</span>${driver}${rationale}</div>`;
       }).join("")}
     </section>` : ""}
     ${phase.evidence && phase.evidence.length ? `
     <section class="sch-insp-section">
-      <h3>Évidences (Opus)</h3>
+      <h3>${escHtml(tx("schematic.inspector.phase_evidence"))}</h3>
       <ul class="sch-evidence">
         ${phase.evidence.map(ev => `<li>${escHtml(ev)}</li>`).join("")}
       </ul>
@@ -2422,13 +2417,15 @@ function updateInspector(node) {
 
   const critBlock = node.blastRadius != null ? `
       <section class="sch-insp-section sch-criticality ${node.isSpof ? 'spof' : ''}">
-        <h3>${node.isSpof ? `${ICON_WARNING} Single-Point-Of-Failure` : 'Criticité (blast radius)'}</h3>
+        <h3>${node.isSpof ? `${ICON_WARNING} ${escHtml(t("schematic.inspector.spof"))}` : escHtml(t("schematic.inspector.criticality"))}</h3>
         <div class="sch-crit-row">
           <div class="sch-crit-bar">
             <div class="sch-crit-fill" style="width:${(node.criticality * 100).toFixed(0)}%"></div>
           </div>
           <div class="sch-crit-val">
-            <strong>${node.blastRadius}</strong> dépendants · <strong>${node.impactPct}%</strong> du board
+            ${escHtml(t("schematic.inspector.criticality_summary", { count: node.blastRadius, pct: node.impactPct }))
+              .replace(escHtml(String(node.blastRadius)), `<strong>${node.blastRadius}</strong>`)
+              .replace(escHtml(`${node.impactPct}%`), `<strong>${node.impactPct}%</strong>`)}
           </div>
         </div>
       </section>` : "";
@@ -2439,13 +2436,13 @@ function updateInspector(node) {
   const netMeta = node.kind === "rail" ? classified[node.label] : null;
   const domainBlock = netMeta ? `
       <section class="sch-insp-section sch-domain">
-        <h3>Domaine · ${escHtml(netMeta.domain || "misc")}</h3>
+        <h3>${escHtml(t("schematic.inspector.domain_title", { domain: netMeta.domain || "misc" }))}</h3>
         ${netMeta.description ? `<div class="sch-domain-desc">${escHtml(netMeta.description)}</div>` : ""}
-        ${netMeta.voltage_level ? `<div class="sch-domain-meta"><span class="k">Niveau</span> <span class="mono">${escHtml(netMeta.voltage_level)}</span></div>` : ""}
+        ${netMeta.voltage_level ? `<div class="sch-domain-meta"><span class="k">${escHtml(t("schematic.inspector.domain_level"))}</span> <span class="mono">${escHtml(netMeta.voltage_level)}</span></div>` : ""}
       </section>` : "";
 
   if (node.kind === "rail") {
-    typeBadge.textContent = "RAIL";
+    typeBadge.textContent = t("schematic.inspector.type_rail");
     typeBadge.className = "sch-type-badge rail";
     title.textContent = node.label;
     sub.textContent = (node.voltage_nominal != null ? `${node.voltage_nominal} V` : "—") + " · " + (node.source_type || "—");
@@ -2457,27 +2454,27 @@ function updateInspector(node) {
       ${critBlock}
       ${domainBlock}
       <section class="sch-insp-section">
-        <h3>Alimentation</h3>
+        <h3>${escHtml(t("schematic.inspector.supply"))}</h3>
         <div class="sch-meta-grid">
-          <dt>Producer</dt><dd>${node.source_refdes ? `<span class="mono chip cyan clickable" data-id="comp:${escHtml(node.source_refdes)}">${escHtml(node.source_refdes)}</span>` : "<span class='muted'>externe</span>"}</dd>
-          <dt>Type</dt><dd>${escHtml(node.source_type || "—")}</dd>
-          <dt>Enable</dt><dd>${node.enable_net ? `<span class="mono">${escHtml(node.enable_net)}</span>` : "—"}</dd>
-          <dt>Boot</dt><dd>${node.phase ? `<span class="mono chip amber">Φ${node.phase}</span>` : "—"}</dd>
+          <dt>${escHtml(t("schematic.inspector.supply_producer"))}</dt><dd>${node.source_refdes ? `<span class="mono chip cyan clickable" data-id="comp:${escHtml(node.source_refdes)}">${escHtml(node.source_refdes)}</span>` : `<span class='muted'>${escHtml(t("schematic.inspector.supply_external"))}</span>`}</dd>
+          <dt>${escHtml(t("schematic.inspector.supply_type"))}</dt><dd>${escHtml(node.source_type || "—")}</dd>
+          <dt>${escHtml(t("schematic.inspector.supply_enable"))}</dt><dd>${node.enable_net ? `<span class="mono">${escHtml(node.enable_net)}</span>` : "—"}</dd>
+          <dt>${escHtml(t("schematic.inspector.supply_boot"))}</dt><dd>${node.phase ? `<span class="mono chip amber">Φ${node.phase}</span>` : "—"}</dd>
         </div>
       </section>
       <section class="sch-insp-section">
-        <h3>Consumers (${node.consumers.length})</h3>
-        ${node.consumers.length === 0 ? "<div class='muted'>Aucun.</div>" : `
+        <h3>${escHtml(t("schematic.inspector.consumers", { count: node.consumers.length }))}</h3>
+        ${node.consumers.length === 0 ? `<div class='muted'>${escHtml(t("schematic.inspector.consumers_none"))}</div>` : `
           <div class="sch-chips">${node.consumers.map(c => `<span class="mono chip cyan clickable" data-id="comp:${escHtml(c)}">${escHtml(c)}</span>`).join("")}</div>`}
       </section>
       <section class="sch-insp-section">
-        <h3>Décuplage (${node.decoupling.length})</h3>
-        ${node.decoupling.length === 0 ? "<div class='muted'>Aucun.</div>" : `
+        <h3>${escHtml(t("schematic.inspector.decoupling", { count: node.decoupling.length }))}</h3>
+        ${node.decoupling.length === 0 ? `<div class='muted'>${escHtml(t("schematic.inspector.decoupling_none"))}</div>` : `
           <div class="sch-chips">${node.decoupling.map(c => `<span class="mono chip violet clickable" data-id="comp:${escHtml(c)}">${escHtml(c)}</span>`).join("")}</div>`}
       </section>
       <section class="sch-insp-section">
-        <h3>${ICON_BOLT} Cascade si ce rail tombe (${casDead.length} dépendants)</h3>
-        ${casDead.length === 0 ? "<div class='muted'>Aucun downstream.</div>" : `
+        <h3>${ICON_BOLT} ${escHtml(t("schematic.inspector.cascade_rail", { count: casDead.length }))}</h3>
+        ${casDead.length === 0 ? `<div class='muted'>${escHtml(t("schematic.inspector.cascade_rail_none"))}</div>` : `
           <div class="sch-chips">${casDead.slice(0, 40).map(id => {
             const n = STATE.model.nodeById.get(id);
             const label = n.kind === "rail" ? n.label : n.refdes;
@@ -2503,34 +2500,34 @@ function updateInspector(node) {
     body.innerHTML = `
       ${critBlock}
       <section class="sch-insp-section">
-        <h3>Métadonnées</h3>
+        <h3>${escHtml(t("schematic.inspector.metadata"))}</h3>
         <div class="sch-meta-grid">
-          <dt>Rôle</dt><dd><span class="sch-role-badge role-${node.role}">${escHtml(node.role)}</span></dd>
-          <dt>Type</dt><dd>${escHtml(node.type || "—")}</dd>
-          <dt>Pages</dt><dd>${node.pages && node.pages.length ? `p. ${node.pages.join(", ")}` : "—"}</dd>
-          <dt>Populé</dt><dd>${node.populated ? "oui" : "<span class='warn'>NOSTUFF</span>"}</dd>
-          <dt>MPN</dt><dd>${node.value?.mpn ? `<span class="mono">${escHtml(node.value.mpn)}</span>` : "—"}</dd>
-          <dt>Boot</dt><dd>${node.phase ? `<span class="mono chip amber">Φ${node.phase}</span>` : "—"}</dd>
+          <dt>${escHtml(t("schematic.inspector.meta_role"))}</dt><dd><span class="sch-role-badge role-${node.role}">${escHtml(node.role)}</span></dd>
+          <dt>${escHtml(t("schematic.inspector.meta_type"))}</dt><dd>${escHtml(node.type || "—")}</dd>
+          <dt>${escHtml(t("schematic.inspector.meta_pages"))}</dt><dd>${node.pages && node.pages.length ? escHtml(t("schematic.inspector.meta_pages_value", { pages: node.pages.join(", ") })) : "—"}</dd>
+          <dt>${escHtml(t("schematic.inspector.meta_populated"))}</dt><dd>${node.populated ? escHtml(t("schematic.inspector.meta_populated_yes")) : `<span class='warn'>${escHtml(t("schematic.inspector.meta_populated_no"))}</span>`}</dd>
+          <dt>${escHtml(t("schematic.inspector.meta_mpn"))}</dt><dd>${node.value?.mpn ? `<span class="mono">${escHtml(node.value.mpn)}</span>` : "—"}</dd>
+          <dt>${escHtml(t("schematic.inspector.meta_boot"))}</dt><dd>${node.phase ? `<span class="mono chip amber">Φ${node.phase}</span>` : "—"}</dd>
         </div>
       </section>
       ${producesRails.length ? `
       <section class="sch-insp-section">
-        <h3>Produit (${producesRails.length})</h3>
+        <h3>${escHtml(t("schematic.inspector.produces", { count: producesRails.length }))}</h3>
         <div class="sch-chips">${producesRails.map(r => `<span class="mono chip emerald clickable" data-id="rail:${escHtml(r)}">${escHtml(r)}</span>`).join("")}</div>
       </section>` : ""}
       ${consumesRails.length ? `
       <section class="sch-insp-section">
-        <h3>Consomme (${consumesRails.length})</h3>
+        <h3>${escHtml(t("schematic.inspector.consumes", { count: consumesRails.length }))}</h3>
         <div class="sch-chips">${consumesRails.map(r => `<span class="mono chip emerald clickable" data-id="rail:${escHtml(r)}">${escHtml(r)}</span>`).join("")}</div>
       </section>` : ""}
       ${decouplesRails.length ? `
       <section class="sch-insp-section">
-        <h3>Décuple</h3>
+        <h3>${escHtml(t("schematic.inspector.decouples"))}</h3>
         <div class="sch-chips">${decouplesRails.map(r => `<span class="mono chip violet clickable" data-id="rail:${escHtml(r)}">${escHtml(r)}</span>`).join("")}</div>
       </section>` : ""}
       <section class="sch-insp-section">
-        <h3>${ICON_BOLT} Cascade si ${node.refdes} meurt (${casDead.length} dépendants)</h3>
-        ${casDead.length === 0 ? "<div class='muted'>Aucun downstream identifié.</div>" : `
+        <h3>${ICON_BOLT} ${escHtml(t("schematic.inspector.cascade_comp", { refdes: node.refdes, count: casDead.length }))}</h3>
+        ${casDead.length === 0 ? `<div class='muted'>${escHtml(t("schematic.inspector.cascade_comp_none"))}</div>` : `
           <div class="sch-chips">${casDead.slice(0, 40).map(id => {
             const n = STATE.model.nodeById.get(id);
             const label = n.kind === "rail" ? n.label : n.refdes;
@@ -2540,15 +2537,15 @@ function updateInspector(node) {
       </section>
       ${node.pinsAll && node.pinsAll.length ? `
       <section class="sch-insp-section">
-        <h3>Pins (${node.pinsAll.length})</h3>
+        <h3>${escHtml(t("schematic.inspector.pins", { count: node.pinsAll.length }))}</h3>
         <table class="sch-pin-table">
-          <thead><tr><th>#</th><th>Name</th><th>Role</th><th>Net</th></tr></thead>
+          <thead><tr><th>${escHtml(t("schematic.inspector.pin_col_number"))}</th><th>${escHtml(t("schematic.inspector.pin_col_name"))}</th><th>${escHtml(t("schematic.inspector.pin_col_role"))}</th><th>${escHtml(t("schematic.inspector.pin_col_net"))}</th></tr></thead>
           <tbody>
           ${node.pinsAll.map(p => `
             <tr>
               <td class="mono">${escHtml(p.number)}</td>
               <td class="mono">${escHtml(p.name || "—")}</td>
-              <td class="mono pin-role">${escHtml(p.role || "unknown")}</td>
+              <td class="mono pin-role">${escHtml(p.role || t("schematic.inspector.pin_unknown_role"))}</td>
               <td class="mono">${p.net_label ? `<span class="chip emerald">${escHtml(p.net_label)}</span>` : "—"}</td>
             </tr>`).join("")}
           </tbody>
@@ -2565,7 +2562,7 @@ function updateInspector(node) {
     // for components, or "rail" for rails. Falls back to "ic" for pre-Phase-4 graphs.
     const pickerKind = obsKind === "rail" ? "rail" : (node.compKind || "ic");
     const modeList = MODE_SETS[pickerKind] || MODE_SETS.ic;
-    const modesForKind = modeList.map(m => [m, `${MODE_GLYPH[m] || ""} ${MODE_LABEL[m] || m}`]);
+    const modesForKind = modeList.map(m => [m, `${MODE_GLYPH[m] || ""} ${modeLabel(m)}`]);
 
     const stateMap = obsKind === "rail"
       ? SimulationController.observations.state_rails
@@ -2590,7 +2587,7 @@ function updateInspector(node) {
       });
       picker.appendChild(btn);
     }
-    row.innerHTML = `<span class="sim-obs-label">Observation</span>`;
+    row.innerHTML = `<span class="sim-obs-label">${escHtml(t("schematic.inspector.observation"))}</span>`;
     row.appendChild(picker);
     body.appendChild(row);
 
@@ -2607,15 +2604,15 @@ function updateInspector(node) {
     const inferredNominal = obsKind === "rail" ? inferRailNominalV(obsKey) : null;
     const nominalForDisplay = existingMetric?.nominal ?? inferredNominal;
     metricRow.innerHTML = `
-      <span class="sim-obs-label">Mesuré</span>
+      <span class="sim-obs-label">${escHtml(t("schematic.inspector.measured"))}</span>
       <input type="number" class="sim-metric-input" step="0.01" value="${existingMetric?.measured ?? ""}">
       <select class="sim-metric-unit">
         ${["V", "mV", "A", "°C", "Ω", "W"].map(u =>
           `<option value="${u}" ${u === (existingMetric?.unit || unitForKind) ? "selected" : ""}>${u}</option>`
         ).join("")}
       </select>
-      <span class="sim-metric-nominal">${nominalForDisplay != null ? `nominal: ${nominalForDisplay}${existingMetric?.unit || unitForKind}` : ""}</span>
-      <button type="button" class="sim-metric-record">Enregistrer</button>
+      <span class="sim-metric-nominal">${nominalForDisplay != null ? escHtml(t("schematic.inspector.nominal_with_unit", { value: nominalForDisplay, unit: existingMetric?.unit || unitForKind })) : ""}</span>
+      <button type="button" class="sim-metric-record">${escHtml(t("schematic.inspector.record"))}</button>
     `;
     const inputEl = metricRow.querySelector(".sim-metric-input");
     const unitEl = metricRow.querySelector(".sim-metric-unit");
@@ -2664,14 +2661,14 @@ function updateInspector(node) {
     // --- Measurement history (async fetch, replaces on reopen) ---
     const historyBox = document.createElement("div");
     historyBox.className = "sim-measurement-history";
-    historyBox.innerHTML = `<div class="sim-mh-title">Historique — ${obsKey}</div><div class="sim-mh-list"></div>`;
+    historyBox.innerHTML = `<div class="sim-mh-title">${escHtml(t("schematic.inspector.history_title", { target: obsKey }))}</div><div class="sim-mh-list"></div>`;
     body.appendChild(historyBox);
     (async () => {
       const target = `${obsKind === "comp" ? "comp" : "rail"}:${obsKey}`;
       const events = await SimulationController.loadMeasurementHistory(target);
       const listEl = historyBox.querySelector(".sim-mh-list");
       if (!events.length) {
-        listEl.innerHTML = `<div class="sim-mh-empty">Aucune mesure pour cette cible.</div>`;
+        listEl.innerHTML = `<div class="sim-mh-empty">${escHtml(t("schematic.inspector.history_empty"))}</div>`;
         return;
       }
       // Keep the 6 most recent (reverse order).
@@ -2708,13 +2705,15 @@ function updateInspector(node) {
   if (obsCount > 0) {
     const diagBtn = document.createElement("button");
     diagBtn.className = "sim-inspector-action sim-inspector-action--diag";
-    diagBtn.textContent = `Diagnostiquer (${obsCount} observation${obsCount > 1 ? "s" : ""})`;
+    diagBtn.textContent = obsCount === 1
+      ? t("schematic.inspector.diagnose_one", { count: obsCount })
+      : t("schematic.inspector.diagnose_many", { count: obsCount });
     diagBtn.addEventListener("click", () => SimulationController.hypothesize(STATE.slug));
     body.appendChild(diagBtn);
 
     const clearBtn = document.createElement("button");
     clearBtn.className = "sim-inspector-action";
-    clearBtn.textContent = "Réinitialiser observations";
+    clearBtn.textContent = t("schematic.inspector.reset_observations");
     clearBtn.addEventListener("click", () => {
       SimulationController.clearObservations();
       updateInspector(node);
@@ -2732,8 +2731,8 @@ function updateInspector(node) {
     const faultBtn = document.createElement("button");
     faultBtn.className = "sim-inspector-action sim-inspector-action--danger";
     faultBtn.textContent = already
-      ? `Retirer la panne · ${node.refdes}`
-      : `Simuler panne · ${node.refdes}`;
+      ? t("schematic.inspector.remove_fault", { refdes: node.refdes })
+      : t("schematic.inspector.simulate_fault", { refdes: node.refdes });
     faultBtn.addEventListener("click", async () => {
       if (already) {
         SimulationController.killedRefdes = SimulationController.killedRefdes.filter(r => r !== node.refdes);
@@ -2754,7 +2753,9 @@ function updateInspector(node) {
     if (SimulationController.killedRefdes.length > 0) {
       const resetBtn = document.createElement("button");
       resetBtn.className = "sim-inspector-action";
-      resetBtn.textContent = `Réinitialiser la simulation (${SimulationController.killedRefdes.length} panne(s))`;
+      resetBtn.textContent = SimulationController.killedRefdes.length === 1
+        ? t("schematic.inspector.reset_simulation_one", { count: SimulationController.killedRefdes.length })
+        : t("schematic.inspector.reset_simulation_many", { count: SimulationController.killedRefdes.length });
       resetBtn.addEventListener("click", async () => {
         SimulationController.killedRefdes = [];
         await SimulationController.refresh(STATE.slug);
@@ -2855,7 +2856,7 @@ function highlightDomain(model, domain) {
   }
 
   if (matchingNets.size === 0) {
-    el("schFilterStatus").textContent = `${domain} · 0 nets`;
+    el("schFilterStatus").textContent = t("schematic.filter.domain_no_nets", { domain });
     return false;
   }
 
@@ -2872,7 +2873,7 @@ function highlightDomain(model, domain) {
   }
 
   if (matchingComponents.size === 0) {
-    el("schFilterStatus").textContent = `${domain} · 0 matches`;
+    el("schFilterStatus").textContent = t("schematic.filter.domain_no_matches", { domain });
     return true;
   }
 
@@ -2885,7 +2886,7 @@ function highlightDomain(model, domain) {
   d3.selectAll("#schLayerLinks path")
     .classed("active-link", d => matchingComponents.has(d.sourceId) && matchingComponents.has(d.targetId));
 
-  el("schFilterStatus").textContent = `${domain} · ${matchingComponents.size} composants`;
+  el("schFilterStatus").textContent = t("schematic.filter.domain_components", { domain, count: matchingComponents.size });
   return true;
 }
 
@@ -2907,8 +2908,8 @@ function runFilter(q, model) {
   // open the inspector.
   const hit = model.nodes.find(n => (n.refdes || n.label).toUpperCase() === qu)
     || model.nodes.find(n => (n.refdes || n.label).toUpperCase().startsWith(qu));
-  if (!hit) { el("schFilterStatus").textContent = "aucun"; return; }
-  el("schFilterStatus").textContent = `→ ${hit.refdes || hit.label}`;
+  if (!hit) { el("schFilterStatus").textContent = t("schematic.filter.none"); return; }
+  el("schFilterStatus").textContent = t("schematic.filter.hit_arrow", { label: hit.refdes || hit.label });
   // Visual highlight only — surface the node's neighbours like a hover
   // would, but keep the inspector closed.
   d3.select("#schGraph").classed("has-focus", true);
@@ -2964,18 +2965,19 @@ function updateStats(model, graph) {
   if (q.degraded_mode) {
     const reasons = [];
     if (q.confidence_global != null && q.confidence_global < 0.7) {
-      reasons.push(`confidence globale ${q.confidence_global.toFixed(2)} < 0.7`);
+      reasons.push(t("schematic.degraded.reason_confidence", { value: q.confidence_global.toFixed(2) }));
     }
     if (q.orphan_cross_page_refs != null && q.orphan_cross_page_refs > 5) {
-      reasons.push(`${q.orphan_cross_page_refs} orphan cross-page refs > 5`);
+      reasons.push(t("schematic.degraded.reason_orphans", { count: q.orphan_cross_page_refs }));
     }
     if (q.nets_unresolved) {
-      reasons.push(`${q.nets_unresolved} nets non résolus`);
+      reasons.push(t("schematic.degraded.reason_unresolved_nets", { count: q.nets_unresolved }));
     }
-    deg.title = "Mode dégradé actif — la viz est exploitable mais quelques "
-      + "infos du schematic n'ont pas pu être croisées automatiquement "
-      + "entre pages :\n\n• " + reasons.join("\n• ")
-      + `\n\nPages parsées : ${q.pages_parsed ?? "?"}/${q.total_pages ?? "?"}`;
+    deg.title = t("schematic.degraded.title", {
+      reasons: reasons.join("\n• "),
+      parsed: q.pages_parsed ?? "?",
+      total: q.total_pages ?? "?",
+    });
   } else {
     deg.title = "";
   }
@@ -3045,7 +3047,31 @@ function fullRender(graph) {
   });
 }
 
+// Re-render localised content (boot timeline, inspector, simulator, rail bar)
+// when the user flips the language switcher. Static markup with `data-i18n`
+// is handled by `window.i18n.applyDom`; this hook covers the imperative
+// renderers driven by `t()` calls in this module.
+let _i18nWired = false;
+function wireSchematicI18n() {
+  if (_i18nWired) return;
+  if (!window.i18n || typeof window.i18n.onChange !== "function") return;
+  _i18nWired = true;
+  window.i18n.onChange(() => {
+    if (!STATE.graph) return;
+    fullRender(STATE.graph);
+    if (STATE.selectedId) {
+      const n = STATE.model?.nodeById?.get(STATE.selectedId);
+      if (n) updateInspector(n);
+    }
+    SimulationController.render();
+    if (SimulationController.hypotheses && SimulationController.hypotheses.length) {
+      SimulationController._renderHypothesesPanel();
+    }
+  });
+}
+
 export async function loadSchematic() {
+  wireSchematicI18n();
   // Re-read persisted prefs on every section entry — another module (e.g.
   // the boardview minimap) may have flipped layoutMode / selectedRailId
   // between visits, and the module-level STATE init only runs once.
@@ -3062,16 +3088,16 @@ export async function loadSchematic() {
   // (the PDF may exist in board_assets/ even when no pipeline has run).
   wireSurfaceToggle();
   if (!slug) {
-    showEmptyState("Aucune réparation en cours", "Ouvre une réparation depuis le Journal pour charger son graphe électrique.");
+    showEmptyState(t("schematic.empty.no_repair_title"), t("schematic.empty.no_repair_detail"));
     return;
   }
   const res = await fetchSchematic(slug);
   if (res.missing) {
-    showEmptyState("Pas de schematic ingéré", `Aucun graphe électrique compilé pour ${slug}.`,
+    showEmptyState(t("schematic.empty.no_schematic_title"), t("schematic.empty.no_schematic_detail", { slug }),
       `curl -X POST http://localhost:8000/pipeline/ingest-schematic \\\n  -H 'content-type: application/json' \\\n  -d '{"device_slug":"${slug}","pdf_path":"board_assets/${slug}.pdf"}'`);
     return;
   }
-  if (res.error) { showEmptyState("Erreur de chargement", res.error); return; }
+  if (res.error) { showEmptyState(t("schematic.empty.load_error_title"), res.error); return; }
   STATE.graph = res.graph;
   fullRender(res.graph);
   // Trigger the simulator fetch — the endpoint is fast (< 10ms server-side);
@@ -3301,7 +3327,7 @@ function renderPdfPages(data) {
   // up via `calc(var(--sch-pdf-base) * var(--sch-pdf-zoom))`.
   scroll.style.setProperty("--sch-pdf-zoom", String(STATE.pdfZoom));
   const pagePill = document.getElementById("schPdfPagePill");
-  if (pagePill) pagePill.textContent = `Page 1 / ${data.count}`;
+  if (pagePill) pagePill.textContent = t("schematic.pdf.page_pill", { n: 1, count: data.count });
   const frag = document.createDocumentFragment();
   for (const page of data.pages) {
     const fig = document.createElement("figure");
@@ -3310,12 +3336,12 @@ function renderPdfPages(data) {
 
     const chip = document.createElement("div");
     chip.className = "sch-pdf-page-chip";
-    chip.textContent = `Page ${page.n} / ${data.count}`;
+    chip.textContent = t("schematic.pdf.page_chip", { n: page.n, count: data.count });
     fig.appendChild(chip);
 
     const img = document.createElement("img");
     img.loading = "lazy";
-    img.alt = `Schématique page ${page.n}`;
+    img.alt = t("schematic.pdf.img_alt", { n: page.n });
     img.src = page.url;
     // Set the base width once the image has loaded: borne à 1400px pour
     // rester digeste à DPI=150 sur un écran standard, sinon naturalWidth.
@@ -3379,7 +3405,7 @@ function observePdfPages() {
     if (!best) return;
     const n = parseInt(best.target.dataset.page, 10);
     STATE.pdfCurrentPage = n;
-    pill.textContent = `Page ${n} / ${STATE.pdfPages?.count || "?"}`;
+    pill.textContent = t("schematic.pdf.page_pill", { n, count: STATE.pdfPages?.count || "?" });
     pages.forEach(p => p.classList.toggle("current", p === best.target));
   }, { root: scroll, threshold: [0.2, 0.5, 0.8] });
   pages.forEach(p => io.observe(p));
@@ -3487,16 +3513,21 @@ function runPdfSearch(query) {
     const prefix = [...scroll.querySelectorAll(".sch-pdf-anchor")]
       .filter(a => a.dataset.refdes.startsWith(query));
     if (!prefix.length) {
-      if (status) { status.textContent = "aucun"; status.className = "sch-pdf-search-status miss"; }
+      if (status) { status.textContent = t("schematic.pdf.search_none"); status.className = "sch-pdf-search-status miss"; }
       return;
     }
     prefix.forEach(a => a.classList.add("hit"));
-    if (status) { status.textContent = `${prefix.length} (préfixe)`; status.className = "sch-pdf-search-status hit"; }
+    if (status) { status.textContent = t("schematic.pdf.search_prefix", { count: prefix.length }); status.className = "sch-pdf-search-status hit"; }
     scrollToAnchor(prefix[0]);
     return;
   }
   hits.forEach(a => a.classList.add("hit"));
-  if (status) { status.textContent = `${hits.length} match${hits.length > 1 ? "s" : ""}`; status.className = "sch-pdf-search-status hit"; }
+  if (status) {
+    status.textContent = hits.length === 1
+      ? t("schematic.pdf.search_match_one", { count: hits.length })
+      : t("schematic.pdf.search_match_many", { count: hits.length });
+    status.className = "sch-pdf-search-status hit";
+  }
   scrollToAnchor(hits[0]);
 }
 

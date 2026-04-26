@@ -15,12 +15,7 @@ function escHtml(s) {
   }[c]));
 }
 
-const STATUS_LABELS = {
-  mastered:  "Maîtrisées",
-  practiced: "Pratiquées",
-  learning:  "En apprentissage",
-  unlearned: "Non pratiquées",
-};
+const STATUS_KEYS = ["mastered", "practiced", "learning", "unlearned"];
 const VERBOSITIES = ["auto", "concise", "normal", "teaching"];
 const LANGUAGES = ["fr", "en"];
 
@@ -31,6 +26,8 @@ async function ensurePartial() {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`partial ${url} → ${res.status}`);
   mount.innerHTML = await res.text();
+  if (window.i18n?.ready) await window.i18n.ready;
+  window.i18n?.applyDom(mount);
   _partialLoaded = true;
 }
 
@@ -40,32 +37,33 @@ async function fetchJSON(url, init) {
   return res.json();
 }
 
+function currentLocale() {
+  return (window.i18n && window.i18n.locale) || "en";
+}
+
 function fmtYears(n) {
-  if (!n) return "0 an";
-  return `${n} an${n > 1 ? "s" : ""} d'XP`;
+  if (!n) return window.t("profile.head.years_zero");
+  const key = n > 1 ? "profile.head.years_other" : "profile.head.years_one";
+  return window.t(key, { n });
 }
 
 function fmtUpdated(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d)) return "—";
-  return `MAJ ${d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`;
+  const locale = currentLocale() === "fr" ? "fr-FR" : "en-US";
+  const date = d.toLocaleDateString(locale, { day: "numeric", month: "short" });
+  return window.t("profile.head.updated", { date });
 }
 
 const LEVEL_ORDER = ["beginner", "intermediate", "confirmed", "expert"];
-const LEVEL_BLURBS = {
-  beginner:     "Tu débutes. L'agent expliquera chaque étape avant de te demander d'intervenir.",
-  intermediate: "Tu progresses. L'agent allègera les explications et te laissera mener davantage.",
-  confirmed:    "Tu es confirmé. L'agent te confie les décisions et confirme tes hypothèses.",
-  expert:       "Tu es expert. L'agent reste concis et te suit sur les pannes complexes.",
-};
 
 function renderHead() {
   const id = _state.profile.identity;
   const level = _state.derived.level;
   document.getElementById("profAvatar").textContent =
     id.avatar || (id.name?.slice(0, 2)?.toUpperCase() || "—");
-  document.getElementById("profName").textContent = id.name || "Sans nom";
+  document.getElementById("profName").textContent = id.name || window.t("profile.head.no_name");
   const levelEl = document.getElementById("profLevel");
   levelEl.textContent = level.toUpperCase();
   levelEl.dataset.level = level;
@@ -73,7 +71,7 @@ function renderHead() {
   document.getElementById("profYears").textContent = fmtYears(id.years_experience);
   document.getElementById("profSpecs").textContent = id.specialties.length
     ? id.specialties.join(" · ")
-    : "Aucune spécialité";
+    : window.t("profile.head.no_specialty");
   document.getElementById("profUpdated").textContent = fmtUpdated(_state.profile.updated_at);
 }
 
@@ -83,12 +81,14 @@ function renderRibbon() {
   const ribbon = document.getElementById("profRibbon");
   const level = _state.derived.level;
   ribbon.dataset.level = level;
-  document.getElementById("profRibbonTitle").textContent = `Niveau ${level}`;
+  document.getElementById("profRibbonTitle").textContent = window.t("profile.ribbon.title", { level });
   const idx = LEVEL_ORDER.indexOf(level);
   const total = LEVEL_ORDER.length;
   document.getElementById("profRibbonScore").textContent = `${idx + 1} / ${total}`;
+  const blurbKey = `profile.ribbon.blurbs.${level}`;
+  const blurb = window.t(blurbKey);
   document.getElementById("profRibbonBody").textContent =
-    LEVEL_BLURBS[level] || "Le niveau est dérivé du nombre de compétences pratiquées.";
+    blurb !== blurbKey ? blurb : window.t("profile.ribbon.default_blurb");
   ribbon.querySelectorAll(".prof-rung").forEach(rung => {
     const r = rung.dataset.rung;
     const ri = LEVEL_ORDER.indexOf(r);
@@ -110,22 +110,20 @@ function renderStats() {
     if (subEl) subEl.textContent = sub;
     if (barEl) barEl.style.width = `${Math.round((count / total) * 100)}%`;
   };
-  setStat("Mastered",  buckets.mastered.length,  totalSkills,
-    `sur ${totalSkills} compétences cataloguées`);
-  setStat("Practiced", buckets.practiced.length, totalSkills,
-    `sur ${totalSkills} compétences cataloguées`);
-  setStat("Learning",  buckets.learning.length,  totalSkills,
-    `sur ${totalSkills} compétences cataloguées`);
+  const skillsSub = window.t("profile.stats.sub_skills", { total: totalSkills });
+  setStat("Mastered",  buckets.mastered.length,  totalSkills, skillsSub);
+  setStat("Practiced", buckets.practiced.length, totalSkills, skillsSub);
+  setStat("Learning",  buckets.learning.length,  totalSkills, skillsSub);
   // Tools: count of "true" entries vs catalog size.
   const toolsOn = Object.values(_state.profile.tools).filter(Boolean).length;
   const toolsTotal = _state.catalog.tools.length || 1;
-  setStat("Tools", toolsOn, toolsTotal, `sur ${toolsTotal} outils du catalogue`);
+  setStat("Tools", toolsOn, toolsTotal, window.t("profile.stats.sub_tools", { total: toolsTotal }));
 
   // Block-level counts (next to the section h2s).
   const totalEl = document.getElementById("profSkillsTotal");
-  if (totalEl) totalEl.textContent = `${totalSkills} compétences`;
+  if (totalEl) totalEl.textContent = window.t("profile.stats.block_skills_total", { n: totalSkills });
   const toolsTotalEl = document.getElementById("profToolsTotal");
-  if (toolsTotalEl) toolsTotalEl.textContent = `${toolsOn} / ${toolsTotal} actifs`;
+  if (toolsTotalEl) toolsTotalEl.textContent = window.t("profile.stats.block_tools_total", { on: toolsOn, total: toolsTotal });
 }
 
 function renderTools() {
@@ -160,12 +158,12 @@ function renderSkills() {
   const buckets = _state.derived.skills_by_status;
   const bySkillId = new Map(_state.catalog.skills.map(s => [s.id, s]));
 
-  for (const status of ["mastered", "practiced", "learning", "unlearned"]) {
+  for (const status of STATUS_KEYS) {
     const col = document.createElement("div");
     col.className = "profile-skill-col";
     col.dataset.status = status;
     const ids = buckets[status] || [];
-    col.innerHTML = `<h3>${STATUS_LABELS[status]} <span class="profile-skill-col-count">${ids.length}</span></h3>`;
+    col.innerHTML = `<h3>${escHtml(window.t(`profile.status.${status}`))} <span class="profile-skill-col-count">${ids.length}</span></h3>`;
 
     // Unlearned skills are rendered as compact chips (no bar, no count) — the list
     // is long and the user mostly cares about what they HAVE practiced. Other
@@ -228,8 +226,8 @@ function renderPrefs() {
     return g;
   };
 
-  host.appendChild(makeGroup("Verbosité", "verbosity", VERBOSITIES));
-  host.appendChild(makeGroup("Langue", "language", LANGUAGES));
+  host.appendChild(makeGroup(window.t("profile.prefs.verbosity"), "verbosity", VERBOSITIES));
+  host.appendChild(makeGroup(window.t("profile.prefs.language"), "language", LANGUAGES));
 }
 
 async function changePref(key, value) {
@@ -253,7 +251,7 @@ function openDrawer(sid, entry, rec) {
   body.innerHTML = "";
   const evidences = rec?.evidences || [];
   if (!evidences.length) {
-    body.innerHTML = `<p style="color:var(--text-3);font-size:12px">Aucun historique pour cette compétence — elle sera tracée dès que l'agent détectera une utilisation confirmée.</p>`;
+    body.innerHTML = `<p style="color:var(--text-3);font-size:12px">${escHtml(window.t("profile.drawer.no_history"))}</p>`;
     return;
   }
   for (const ev of [...evidences].reverse()) {
@@ -311,7 +309,7 @@ async function submitIdentity(evt) {
     closeIdentityModal();
   } catch (err) {
     console.error("submitIdentity:", err);
-    alert("Impossible d'enregistrer : " + err.message);
+    alert(window.t("profile.modal.save_failed", { error: err.message }));
   }
 }
 
@@ -335,6 +333,18 @@ function wireIdentityModal() {
   document.getElementById("profIdentityForm").addEventListener("submit", submitIdentity);
 }
 
+let _localeHookWired = false;
+
+function rerenderAll() {
+  if (!_state) return;
+  renderHead();
+  renderRibbon();
+  renderStats();
+  renderTools();
+  renderSkills();
+  renderPrefs();
+}
+
 export async function initProfileSection() {
   try {
     await ensurePartial();
@@ -343,12 +353,11 @@ export async function initProfileSection() {
     console.error("initProfileSection:", err);
     return;
   }
-  renderHead();
-  renderRibbon();
-  renderStats();
-  renderTools();
-  renderSkills();
-  renderPrefs();
+  rerenderAll();
   wireDrawerClose();
   wireIdentityModal();
+  if (!_localeHookWired) {
+    window.i18n?.onChange(() => rerenderAll());
+    _localeHookWired = true;
+  }
 }

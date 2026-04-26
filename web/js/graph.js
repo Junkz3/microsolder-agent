@@ -48,8 +48,15 @@ setEmptyState(true);  // show the card synchronously; the fetch may replace it
 const TYPE_COLORS = { component:"oklch(0.82 0.14 210)", symptom:"oklch(0.82 0.16 75)", net:"oklch(0.78 0.15 155)", action:"oklch(0.78 0.14 295)" };
 const TYPE_FILL   = { component:"oklch(0.82 0.14 210 / 0.22)", symptom:"oklch(0.82 0.16 75 / 0.22)", net:"oklch(0.78 0.15 155 / 0.22)", action:"oklch(0.78 0.14 295 / 0.22)" };
 const TYPE_GLOW   = { component:"glow-cyan", symptom:"glow-amber", net:"glow-emerald", action:"glow-violet" };
-const TYPE_LABEL_FR = { component:"Composant", symptom:"Symptôme", net:"Net / Rail", action:"Action" };
-const REL_LABEL_FR  = { causes:"provoque", powers:"alimente", connected_to:"connecté à", resolves:"résout" };
+// Localised labels — resolved through window.t() so they swap on locale change.
+function typeLabel(kind) {
+  const t = window.t || ((k) => k);
+  return t(`graph.type_label.${kind}`);
+}
+function relLabel(rel) {
+  const t = window.t || ((k) => k);
+  return t(`graph.rel_label.${rel}`);
+}
 // Strict L→R diagnostic narrative reading problem-first:
 // symptom → net → component → action. The forceX layout below uses this
 // order to keep nodes drifting toward their column rather than freely.
@@ -74,7 +81,7 @@ const H = () => canvasEl.clientHeight;
 // #counts / #avgConf used to live in a now-removed statusbar — guard so
 // the graph loader doesn't throw on pages without those elements.
 document.getElementById("counts")?.replaceChildren(document.createTextNode(
-  `${DATA.nodes.length} nœuds · ${DATA.edges.length} arêtes`
+  (window.t || ((k) => k))("graph.stats.summary", { n: DATA.nodes.length, e: DATA.edges.length })
 ));
 const avgConfEl = document.getElementById("avgConf");
 if (avgConfEl && DATA.nodes.length > 0) {
@@ -97,9 +104,10 @@ DATA.edges.forEach(e=>{
    and surface only on hover/focus via the existing .active-link class. */
 
 // Fallback when the backend didn't send subsystems (older payload / empty graph).
+const _gT = window.t || ((k) => k);
 const SUBSYSTEMS = (Array.isArray(DATA.subsystems) && DATA.subsystems.length > 0)
   ? DATA.subsystems
-  : [{ key: "unknown", label: "AUTRES", count: DATA.nodes.length }];
+  : [{ key: "unknown", label: _gT("graph.subsystem.fallback_label"), count: DATA.nodes.length }];
 
 // Pad how much space each node claims inside its bubble (d3.pack padding).
 const PACK_PADDING = 4;
@@ -330,11 +338,11 @@ nodeSel
     linkLabelSel.classed("active-label", e => e.source.id === d.id || e.target.id === d.id);
 
     tooltip.classList.add("show");
-    document.getElementById("ttType").textContent = TYPE_LABEL_FR[d.type];
+    document.getElementById("ttType").textContent = typeLabel(d.type);
     document.getElementById("ttLabel").textContent = d.label;
     document.getElementById("ttDesc").textContent  = (d.description||"").length>130 ? d.description.slice(0,130)+"…" : d.description;
     document.getElementById("ttId").textContent    = d.id;
-    document.getElementById("ttConf").textContent  = "conf. " + (d.confidence*100).toFixed(0) + "%";
+    document.getElementById("ttConf").textContent  = (window.t || ((k) => k))("graph.tooltip.conf_pct", { pct: (d.confidence*100).toFixed(0) });
   })
   .on("mousemove", (e) => {
     tooltip.style.left = (e.clientX+14)+"px";
@@ -371,17 +379,18 @@ function selectNode(d){
   linkSel.classed("active-link", e => e.source.id === d.id || e.target.id === d.id);
   linkLabelSel.classed("active-label", e => e.source.id === d.id || e.target.id === d.id);
 
+  const t = window.t || ((k) => k);
   const badge = document.getElementById("inspBadge");
   badge.className = "type-badge " + d.type;
-  document.getElementById("inspBadgeText").textContent = TYPE_LABEL_FR[d.type];
+  document.getElementById("inspBadgeText").textContent = typeLabel(d.type);
   document.getElementById("inspTitle").textContent = d.label;
-  document.getElementById("inspId").textContent = "id: " + d.id;
+  document.getElementById("inspId").textContent = t("graph.inspector.id_label", { id: d.id });
   const pct = Math.round(d.confidence*100);
   document.getElementById("confFill").style.width = pct + "%";
   document.getElementById("confValue").textContent = d.confidence.toFixed(2);
-  let note = "Confiance élevée — corroboré par plusieurs sources.";
-  if (d.confidence<0.6) note = "Confiance faible — source unique ou inférence indirecte.";
-  else if (d.confidence<0.8) note = "Confiance modérée — recoupement partiel.";
+  let note = t("graph.inspector.conf_high");
+  if (d.confidence<0.6) note = t("graph.inspector.conf_low");
+  else if (d.confidence<0.8) note = t("graph.inspector.conf_medium");
   document.getElementById("confNote").textContent = note;
   document.getElementById("inspDesc").textContent = d.description || "—";
 
@@ -396,7 +405,7 @@ function selectNode(d){
 
   // When this node is a collapsed action, surface the list of merged rules.
   if (d.type === "action" && d.meta && Array.isArray(d.meta.rule_ids)) {
-    const dt = document.createElement("dt"); dt.textContent = "rules";
+    const dt = document.createElement("dt"); dt.textContent = t("graph.inspector.rules_field");
     const dd = document.createElement("dd");
     dd.textContent = d.meta.rule_ids.join(", ");
     mg.appendChild(dt); mg.appendChild(dd);
@@ -410,12 +419,14 @@ function selectNode(d){
     const outgoing = e.source.id===d.id;
     const other = outgoing ? e.target : e.source;
     const row = document.createElement("div"); row.className="edge-item";
+    const arrow = outgoing ? t("graph.inspector.edge_outgoing") : t("graph.inspector.edge_incoming");
+    const sub = t("graph.inspector.edge_weight", { label: escHtml(e.label), weight: (e.weight||1).toFixed(2) });
     row.innerHTML = `
-      <span class="rel ${escHtml(e.relation)}">${escHtml(REL_LABEL_FR[e.relation] || e.relation)}</span>
-      <span class="arrow">${outgoing ? "→" : "←"}</span>
+      <span class="rel ${escHtml(e.relation)}">${escHtml(relLabel(e.relation) || e.relation)}</span>
+      <span class="arrow">${arrow}</span>
       <div class="edge-target">
         <div>${escHtml(other.label)}</div>
-        <div class="edge-sub">${escHtml(e.label)} · poids ${(e.weight||1).toFixed(2)}</div>
+        <div class="edge-sub">${sub}</div>
       </div>`;
     row.onclick = () => selectNode(other);
     el.appendChild(row);

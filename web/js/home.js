@@ -94,24 +94,25 @@ function relativeTimeFr(isoString) {
   if (isNaN(then)) return isoString;
   const diffMs = Date.now() - then.getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "à l'instant";
-  if (mins < 60) return `il y a ${mins} min`;
+  if (mins < 1) return t("home.time.now");
+  if (mins < 60) return t("home.time.minutes_ago", { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `il y a ${hours} h`;
+  if (hours < 24) return t("home.time.hours_ago", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days === 1) return "hier";
-  if (days < 7) return `il y a ${days} j`;
-  return then.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+  if (days === 1) return t("home.time.yesterday");
+  if (days < 7) return t("home.time.days_ago", { n: days });
+  const localeTag = (window.i18n && window.i18n.locale === "fr") ? "fr-FR" : "en-US";
+  return then.toLocaleDateString(localeTag, { day: "numeric", month: "short", year: "numeric" });
 }
 
-const STATUS_LABEL = {
-  open: "ouverte",
-  in_progress: "en cours",
-  closed: "clôturée",
-};
+function statusLabel(status) {
+  if (status === "closed") return t("home.status.closed");
+  if (status === "in_progress") return t("home.status.in_progress");
+  return t("home.status.open");
+}
 
 function statusBadgeHTML(status) {
-  const label = STATUS_LABEL[status] || status || "ouverte";
+  const label = statusLabel(status);
   const cls = status === "closed" ? "ok" : (status === "in_progress" ? "warn" : "");
   return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
 }
@@ -146,11 +147,14 @@ function deviceBlockHTML(taxEntry, repairs) {
   const sorted = repairs.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
   const cards = sorted.map(r => repairCardHTML(r, taxEntry)).join("");
   const modelName = taxEntry?.model || deviceName(taxEntry, { includeBrand: false });
+  const repairsLabel = sorted.length > 1
+    ? t("home.list.repairs_many")
+    : t("home.list.repairs_one");
   return `
     <div class="home-model">
       <div class="home-model-head">
         <span class="home-model-name">${escapeHtml(modelName)}</span>
-        <span class="home-model-count mono">${sorted.length} ${sorted.length > 1 ? 'réparations' : 'réparation'}</span>
+        <span class="home-model-count mono">${sorted.length} ${escapeHtml(repairsLabel)}</span>
       </div>
       <div class="home-grid">${cards}</div>
     </div>
@@ -160,7 +164,18 @@ function deviceBlockHTML(taxEntry, repairs) {
 function brandBlockHTML(brandName, devicesMap) {
   const slugs = Array.from(devicesMap.keys()).sort((a, b) => a.localeCompare(b));
   const totalRepairs = slugs.reduce((n, s) => n + devicesMap.get(s).repairs.length, 0);
-  const counter = `${totalRepairs} ${totalRepairs > 1 ? 'réparations' : 'réparation'} · ${slugs.length} ${slugs.length > 1 ? 'devices' : 'device'}`;
+  const repairsLabel = totalRepairs > 1
+    ? t("home.list.repairs_many")
+    : t("home.list.repairs_one");
+  const devicesLabel = slugs.length > 1
+    ? t("home.list.devices_many")
+    : t("home.list.devices_one");
+  const counter = t("home.list.summary", {
+    repairs: totalRepairs,
+    repairsLabel,
+    devices: slugs.length,
+    devicesLabel,
+  });
   const body = slugs
     .map(slug => {
       const { taxEntry, repairs } = devicesMap.get(slug);
@@ -171,7 +186,7 @@ function brandBlockHTML(brandName, devicesMap) {
     <section class="home-brand">
       <header class="home-brand-head">
         <h2 class="home-brand-name">${escapeHtml(brandName)}</h2>
-        <span class="home-brand-count mono">${counter}</span>
+        <span class="home-brand-count mono">${escapeHtml(counter)}</span>
       </header>
       <div class="home-brand-body">${body}</div>
     </section>
@@ -190,11 +205,12 @@ export function renderHome(taxonomy, repairs = []) {
   empty.classList.add("hidden");
 
   const taxIndex = indexTaxonomyBySlug(taxonomy);
+  const uncatLabel = t("home.list.uncategorized");
   // Group repairs by brand → device_slug → list of repairs.
   const byBrand = new Map();  // brand → Map(slug → {taxEntry, repairs})
   for (const r of repairs) {
     const tax = taxIndex.get(r.device_slug) || null;
-    const brand = tax?.brand || "Non catégorisé";
+    const brand = tax?.brand || uncatLabel;
     if (!byBrand.has(brand)) byBrand.set(brand, new Map());
     const devices = byBrand.get(brand);
     if (!devices.has(r.device_slug)) {
@@ -207,8 +223,8 @@ export function renderHome(taxonomy, repairs = []) {
   }
 
   const brandNames = Array.from(byBrand.keys()).sort((a, b) => {
-    if (a === "Non catégorisé") return 1;
-    if (b === "Non catégorisé") return -1;
+    if (a === uncatLabel) return 1;
+    if (b === uncatLabel) return -1;
     return a.localeCompare(b);
   });
   container.innerHTML = brandNames
@@ -310,7 +326,7 @@ function renderDashboardHeader(repair, taxEntry, slug, rid) {
     `${statusBadgeHTML(status)}` +
     `<span class="badge mono">${escapeHtml(rid.slice(0, 8))}</span>` +
     form +
-    `<span class="rd-created">créée ${escapeHtml(created)}</span>`;
+    `<span class="rd-created">${escapeHtml(t("home.dashboard.created_at", { when: created }))}</span>`;
 }
 
 const ICONS = {
@@ -342,16 +358,18 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   // ── INPUT 1 — Schematic PDF ────────────────────────────────────────
   setCardState("rdCardSchematic", pack?.has_schematic_pdf ? "on" : "off");
   setCardField("rdCardSchematicState", pack?.has_schematic_pdf
-    ? (pack.has_electrical_graph ? "compilé" : "compilation")
-    : "à importer");
+    ? (pack.has_electrical_graph
+        ? t("home.dashboard.schematic.state_compiled")
+        : t("home.dashboard.schematic.state_compiling"))
+    : t("home.dashboard.schematic.state_to_import"));
   const schemMetaSuffix = schemVersions.length > 1
-    ? ` · ${schemVersions.length} versions`
+    ? t("home.dashboard.schematic.meta_versions_suffix", { n: schemVersions.length })
     : "";
   setCardField("rdCardSchematicMeta", pack?.has_schematic_pdf
     ? ((pack.has_electrical_graph
-        ? "PDF + electrical_graph — l'agent peut simuler & hypothétiser."
-        : "PDF importé. Compilation en cours.") + schemMetaSuffix)
-    : "Aucun PDF — l'agent travaille à l'aveugle sur le hardware.");
+        ? t("home.dashboard.schematic.meta_compiled")
+        : t("home.dashboard.schematic.meta_imported_compiling")) + schemMetaSuffix)
+    : t("home.dashboard.schematic.meta_missing"));
   toggleEl("rdCardSchematicLoss", !pack?.has_schematic_pdf);
 
   const schemActions = document.getElementById("rdCardSchematicActions");
@@ -359,13 +377,14 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     schemActions.innerHTML = "";
     if (pack?.has_schematic_pdf) {
       schemActions.appendChild(linkButton(`${qs}#schematic`,
-        ICONS.arrowRight + " Ouvrir", "is-primary"));
-      schemActions.appendChild(actionButton(ICONS.upload + " Importer une version", () => {
-        document.getElementById("rdUploadSchematic")?.click();
-      }));
+        ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.schematic.open")), "is-primary"));
+      schemActions.appendChild(actionButton(
+        ICONS.upload + " " + escapeHtml(t("home.dashboard.schematic.import_version")), () => {
+          document.getElementById("rdUploadSchematic")?.click();
+        }));
     } else {
       schemActions.appendChild(actionButton(
-        ICONS.upload + " Importer un PDF", () => {
+        ICONS.upload + " " + escapeHtml(t("home.dashboard.schematic.import_pdf")), () => {
           document.getElementById("rdUploadSchematic")?.click();
         }, "is-warn"));
     }
@@ -374,16 +393,21 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
 
   // ── INPUT 2 — Boardview ─────────────────────────────────────────────
   setCardState("rdCardBoardview", pack?.has_boardview ? "on" : "off");
-  setCardField("rdCardBoardviewState", pack?.has_boardview ? "importé" : "à importer");
+  setCardField("rdCardBoardviewState", pack?.has_boardview
+    ? t("home.dashboard.boardview.state_imported")
+    : t("home.dashboard.boardview.state_to_import"));
   setCardField("rdCardBoardviewFmt", pack?.boardview_format
-    ? `format ${pack.boardview_format}`
-    : ".brd / .kicad_pcb / .fz / .tvw…");
+    ? t("home.dashboard.boardview.fmt_format", { format: pack.boardview_format })
+    : t("home.dashboard.boardview.fmt_default"));
   const bvMetaSuffix = bvVersions.length > 1
-    ? ` · ${bvVersions.length} versions`
+    ? t("home.dashboard.schematic.meta_versions_suffix", { n: bvVersions.length })
     : "";
   setCardField("rdCardBoardviewMeta", pack?.has_boardview
-    ? `12 outils visuels disponibles · format ${pack.boardview_format || "détecté"}${bvMetaSuffix}.`
-    : "L'agent ne peut pas pointer un composant ni mesurer une distance.");
+    ? t("home.dashboard.boardview.meta_imported", {
+        format: pack.boardview_format || t("home.dashboard.boardview.fmt_detected"),
+        suffix: bvMetaSuffix,
+      })
+    : t("home.dashboard.boardview.meta_missing"));
   toggleEl("rdCardBoardviewLoss", !pack?.has_boardview);
 
   const bvActions = document.getElementById("rdCardBoardviewActions");
@@ -391,13 +415,14 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     bvActions.innerHTML = "";
     if (pack?.has_boardview) {
       bvActions.appendChild(linkButton(`${qs}#pcb`,
-        ICONS.arrowRight + " Ouvrir", "is-primary"));
-      bvActions.appendChild(actionButton(ICONS.upload + " Importer une version", () => {
-        document.getElementById("rdUploadBoardview")?.click();
-      }));
+        ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.boardview.open")), "is-primary"));
+      bvActions.appendChild(actionButton(
+        ICONS.upload + " " + escapeHtml(t("home.dashboard.boardview.import_version")), () => {
+          document.getElementById("rdUploadBoardview")?.click();
+        }));
     } else {
       bvActions.appendChild(actionButton(
-        ICONS.upload + " Importer un boardview", () => {
+        ICONS.upload + " " + escapeHtml(t("home.dashboard.boardview.import_boardview")), () => {
           document.getElementById("rdUploadBoardview")?.click();
         }, "is-warn"));
     }
@@ -412,17 +437,20 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   const knowledgeState = packComplete ? "on" : (packPartial ? "building" : "off");
   setCardState("rdCardKnowledge", knowledgeState);
   setCardField("rdCardKnowledgeState",
-    packComplete ? "approuvé" : (packPartial ? "en construction" : "vide"));
+    packComplete ? t("home.dashboard.knowledge.state_approved")
+    : packPartial ? t("home.dashboard.knowledge.state_building")
+    : t("home.dashboard.knowledge.state_empty"));
   setCardField("rdCardKnowledgeMeta",
-    packComplete ? "registry + graph + rules + dictionary + audit. Prêt pour le diag."
-    : packPartial ? "Pipeline en cours — l'agent pourra l'utiliser dès la fin."
-    : "Construit automatiquement quand la réparation démarre.");
+    packComplete ? t("home.dashboard.knowledge.meta_complete")
+    : packPartial ? t("home.dashboard.knowledge.meta_building")
+    : t("home.dashboard.knowledge.meta_off"));
   const knowledgeActions = document.getElementById("rdCardKnowledgeActions");
   if (knowledgeActions) {
     knowledgeActions.innerHTML = "";
     if (packComplete || packPartial) {
       knowledgeActions.appendChild(linkButton(`${qs}#graphe`,
-        ICONS.arrowRight + " Voir le graphe", packComplete ? "is-primary" : ""));
+        ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.knowledge.open_graph")),
+        packComplete ? "is-primary" : ""));
     }
   }
 
@@ -432,19 +460,21 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     : (pack?.has_schematic_pdf ? "building" : "off");
   setCardState("rdCardElectrical", electricalState);
   setCardField("rdCardElectricalState", pack?.has_electrical_graph
-    ? "compilé"
-    : (pack?.has_schematic_pdf ? "compilation" : "indisponible"));
-  setCardField("rdCardElectricalMeta", pack?.has_electrical_graph
-    ? "Nets, rails et boot sequence prêts. mb_schematic_graph + simulator OK."
+    ? t("home.dashboard.electrical.state_compiled")
     : (pack?.has_schematic_pdf
-        ? "Le schematic est importé — la compilation se fait en arrière-plan."
-        : "Importer un schematic PDF débloque ce graphe et le simulateur."));
+        ? t("home.dashboard.electrical.state_compiling")
+        : t("home.dashboard.electrical.state_unavailable")));
+  setCardField("rdCardElectricalMeta", pack?.has_electrical_graph
+    ? t("home.dashboard.electrical.meta_compiled")
+    : (pack?.has_schematic_pdf
+        ? t("home.dashboard.electrical.meta_compiling")
+        : t("home.dashboard.electrical.meta_off")));
   const electricalActions = document.getElementById("rdCardElectricalActions");
   if (electricalActions) {
     electricalActions.innerHTML = "";
     if (pack?.has_electrical_graph) {
       electricalActions.appendChild(linkButton(`${qs}#schematic`,
-        ICONS.arrowRight + " Ouvrir", "is-primary"));
+        ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.electrical.open")), "is-primary"));
     }
   }
 
@@ -452,19 +482,22 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   const memoryState = pack?.has_rules ? "on" : (pack?.has_registry ? "building" : "off");
   setCardState("rdCardMemory", memoryState);
   setCardField("rdCardMemoryState", pack?.has_rules
-    ? "active"
-    : (pack?.has_registry ? "construction" : "vide"));
-  setCardField("rdCardMemoryMeta", pack?.has_rules
-    ? "L'agent peut faire mb_get_component, mb_get_rules_for_symptoms, mb_record_finding."
+    ? t("home.dashboard.memory.state_active")
     : (pack?.has_registry
-        ? "Vocabulaire en place, Clinicien rédige les règles…"
-        : "Sera peuplée par le pipeline. Toujours active dès que les rules existent."));
+        ? t("home.dashboard.memory.state_building")
+        : t("home.dashboard.memory.state_empty")));
+  setCardField("rdCardMemoryMeta", pack?.has_rules
+    ? t("home.dashboard.memory.meta_active")
+    : (pack?.has_registry
+        ? t("home.dashboard.memory.meta_building")
+        : t("home.dashboard.memory.meta_off")));
   const memoryActions = document.getElementById("rdCardMemoryActions");
   if (memoryActions) {
     memoryActions.innerHTML = "";
     if (pack?.has_rules || pack?.has_registry) {
       memoryActions.appendChild(linkButton(`${qs}&view=md#graphe`,
-        ICONS.arrowRight + " Ouvrir", pack?.has_rules ? "is-primary" : ""));
+        ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.memory.open")),
+        pack?.has_rules ? "is-primary" : ""));
     }
   }
 }
@@ -487,35 +520,35 @@ function renderCapabilities(pack) {
   };
   const onCount = Object.values(flags).filter(Boolean).length;
   let level = "minimal";
-  let label = "Capacités IA limitées";
-  let blurb = "Crée la mémoire de ce device et importe schematic + boardview pour débloquer tous les outils.";
+  let label = t("home.dashboard.cap.minimal_label");
+  let blurb = t("home.dashboard.cap.minimal_blurb");
   if (onCount === 4) {
     level = "full";
-    label = "Capacités IA — toutes débloquées";
-    blurb = "Schematic + boardview + mémoire chargés. L'agent dispose de l'ensemble de ses outils visuels et causaux.";
+    label = t("home.dashboard.cap.full_label");
+    blurb = t("home.dashboard.cap.full_blurb");
   } else if (onCount >= 2) {
     level = "partial";
-    label = "Capacités IA — partielles";
-    blurb = "Une partie de la boîte à outils est active. Importe les sources manquantes pour débloquer le reste.";
+    label = t("home.dashboard.cap.partial_label");
+    blurb = t("home.dashboard.cap.partial_blurb");
   } else if (onCount === 1) {
     level = "minimal";
-    label = "Capacités IA — minimales";
-    blurb = "L'agent peut discuter mais ne peut ni montrer ni simuler. Importe schematic + boardview pour le rendre opérationnel.";
+    label = t("home.dashboard.cap.minimal_partial_label");
+    blurb = t("home.dashboard.cap.minimal_partial_blurb");
   } else {
     level = "minimal";
-    label = "Capacités IA — agent à froid";
-    blurb = "Aucune source liée à ce device. Démarre une réparation et importe schematic + boardview.";
+    label = t("home.dashboard.cap.cold_label");
+    blurb = t("home.dashboard.cap.cold_blurb");
   }
   cap.dataset.level = level;
   title.textContent = label;
   body.textContent = blurb;
-  score.textContent = `${onCount} / 4 sources actives`;
+  score.textContent = t("home.dashboard.cap.score", { n: onCount });
 
   const rows = [
-    { key: "schematic", label: "Schematic", on: "simulateur, hypothesize", off: "off" },
-    { key: "boardview", label: "Boardview", on: "12 bv_* tools", off: "off" },
-    { key: "graph",     label: "Graphe",    on: "rules + dictionary",  off: "off" },
-    { key: "memory",    label: "Memory",    on: "mb_* tools",          off: "off" },
+    { key: "schematic", label: t("home.dashboard.cap.row.schematic_label"), on: t("home.dashboard.cap.row.schematic_on"), off: t("home.dashboard.cap.row.off") },
+    { key: "boardview", label: t("home.dashboard.cap.row.boardview_label"), on: t("home.dashboard.cap.row.boardview_on"), off: t("home.dashboard.cap.row.off") },
+    { key: "graph",     label: t("home.dashboard.cap.row.graph_label"),     on: t("home.dashboard.cap.row.graph_on"),     off: t("home.dashboard.cap.row.off") },
+    { key: "memory",    label: t("home.dashboard.cap.row.memory_label"),    on: t("home.dashboard.cap.row.memory_on"),    off: t("home.dashboard.cap.row.off") },
   ];
   list.innerHTML = rows.map(r => {
     const on = flags[r.key];
@@ -544,7 +577,7 @@ function renderVersionList(cardId, kind, versions, slug, rid) {
     return;
   }
   host.innerHTML = `<div class="rd-versions-head">
-    <span class="rd-versions-tag">versions</span>
+    <span class="rd-versions-tag">${escapeHtml(t("home.version.tag"))}</span>
     <span class="rd-versions-count">${versions.length}</span>
   </div>`;
   for (const v of versions) {
@@ -574,7 +607,8 @@ function formatVersionDate(ts) {
   const [, y, mo, d, h, mi] = m;
   const dt = new Date(`${y}-${mo}-${d}T${h}:${mi}:00Z`);
   if (isNaN(dt)) return ts;
-  return dt.toLocaleString("fr-FR", {
+  const localeTag = (window.i18n && window.i18n.locale === "fr") ? "fr-FR" : "en-US";
+  return dt.toLocaleString(localeTag, {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   }).replace(",", " ·");
 }
@@ -606,8 +640,9 @@ function startBuildWatch(slug, rid, etaSeconds, pageCount) {
     const pack = await fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null);
     if (pack?.has_electrical_graph) {
       stopBuildWatch();
-      showToast("ok", "Compilation terminée",
-        "Graphe électrique disponible — la version est cachée.");
+      showToast("ok",
+        t("home.toast.compile_done_title"),
+        t("home.toast.compile_done_sub"));
       await refreshDashboardData(slug, rid);
     }
   }, 8000);
@@ -640,13 +675,20 @@ function renderBuildIndicators(state) {
       card.appendChild(eta);
     }
     const txt = eta.querySelector(".rd-build-text");
-    const pages = state.pageCount ? ` (${state.pageCount} pages)` : "";
     if (state.remaining > 0) {
-      txt.textContent = `Vision pipeline${pages} · ~${formatRemaining(state.remaining)} restantes`;
+      txt.textContent = state.pageCount
+        ? t("home.dashboard.build.vision_pipeline_pages", {
+            n: state.pageCount, remaining: formatRemaining(state.remaining),
+          })
+        : t("home.dashboard.build.vision_pipeline", {
+            remaining: formatRemaining(state.remaining),
+          });
     } else if (state.remaining === 0 && state.pageCount) {
-      txt.textContent = `Vision pipeline${pages} · finalisation…`;
+      txt.textContent = t("home.dashboard.build.vision_pipeline_finalizing_pages", {
+        n: state.pageCount,
+      });
     } else {
-      txt.textContent = "Vision pipeline en cours…";
+      txt.textContent = t("home.dashboard.build.vision_pipeline_running");
     }
   }
 }
@@ -654,9 +696,9 @@ function renderBuildIndicators(state) {
 function formatRemaining(sec) {
   if (sec >= 60) {
     const min = Math.ceil(sec / 60);
-    return `${min} min`;
+    return t("home.dashboard.build.remaining_min", { n: min });
   }
-  return `${sec}s`;
+  return t("home.dashboard.build.remaining_sec", { n: sec });
 }
 
 // Auto-resume: if we land on the dashboard while the schematic PDF exists
@@ -670,8 +712,11 @@ function maybeAutoResumeBuildWatch(slug, rid, pack) {
 }
 
 async function switchSource(slug, rid, kind, version) {
-  const label = kind === "schematic_pdf" ? "schematic" : "boardview";
-  showToast("info", `Activation ${label}…`,
+  const label = kind === "schematic_pdf"
+    ? t("home.toast.kind_schematic")
+    : t("home.toast.kind_boardview");
+  showToast("info",
+    t("home.toast.switch_in_progress", { kind: label }),
     `${version.original_name} · ${fmtBytes(version.size_bytes)}`);
 
   // Pre-flight UX: flip the relevant card to building so the technician
@@ -693,29 +738,42 @@ async function switchSource(slug, rid, kind, version) {
     if (!res.ok) {
       let detail = "";
       try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
-      showToast("warn", "Échec du switch",
-        `${res.status} ${detail || "réessaie"}`);
+      showToast("warn",
+        t("home.toast.switch_failed_title"),
+        t("home.toast.switch_failed_sub", {
+          status: res.status,
+          detail: detail || t("home.toast.switch_failed_retry"),
+        }));
       await refreshDashboardData(slug, rid);
       return;
     }
     const body = await res.json();
     if (body.status === "cached") {
-      showToast("ok", "Version activée (cache)",
-        `${version.original_name} — graphe restauré instantanément.`);
+      showToast("ok",
+        t("home.toast.version_cached_title"),
+        t("home.toast.version_cached_sub", { name: version.original_name }));
     } else if (body.status === "rebuilding") {
       const pages = body.page_count ? ` · ${body.page_count} pages` : "";
       const eta = body.eta_seconds ? ` · ~${formatRemaining(body.eta_seconds)}` : "";
-      showToast("info", "Recompilation en cours",
-        `${version.original_name}${pages}${eta}`);
+      showToast("info",
+        t("home.toast.rebuilding_title"),
+        t("home.toast.rebuilding_sub", {
+          name: version.original_name,
+          pages,
+          eta,
+        }));
       startBuildWatch(slug, rid, body.eta_seconds || 0, body.page_count || null);
     } else {
-      showToast("ok", "Pin mis à jour",
-        `${version.original_name} — effectif au prochain ouverture de session.`);
+      showToast("ok",
+        t("home.toast.pin_updated_title"),
+        t("home.toast.pin_updated_sub", { name: version.original_name }));
     }
     await refreshDashboardData(slug, rid);
   } catch (err) {
     console.error("switchSource failed", err);
-    showToast("warn", "Réseau", "impossible de joindre le backend.");
+    showToast("warn",
+      t("home.toast.network_title"),
+      t("home.toast.network_sub"));
     await refreshDashboardData(slug, rid);
   }
 }
@@ -813,7 +871,11 @@ async function handleUpload(slug, rid, file, kind) {
   const card = document.getElementById(cardId);
   if (card) card.dataset.state = "building";
 
-  showToast("info", `Import ${kind === "schematic_pdf" ? "schematic" : "boardview"} en cours…`,
+  const kindLabel = kind === "schematic_pdf"
+    ? t("home.toast.kind_schematic")
+    : t("home.toast.kind_boardview");
+  showToast("info",
+    t("home.toast.import_in_progress", { kind: kindLabel }),
     `${file.name} · ${fmtBytes(file.size)}`);
 
   const fd = new FormData();
@@ -828,18 +890,25 @@ async function handleUpload(slug, rid, file, kind) {
     if (!res.ok) {
       let detail = "";
       try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
-      showToast("warn", "Échec de l'import",
-        `${res.status} ${detail || "essaie un autre fichier"}`);
+      showToast("warn",
+        t("home.toast.import_failed"),
+        t("home.toast.switch_failed_sub", {
+          status: res.status,
+          detail: detail || t("home.toast.import_failed_retry"),
+        }));
       // Restore previous state on failure.
       await refreshDashboardData(slug, rid);
       return;
     }
-    showToast("ok", "Import terminé",
+    showToast("ok",
+      t("home.toast.import_done"),
       `${file.name} · ${fmtBytes(file.size)}`);
     await refreshDashboardData(slug, rid);
   } catch (err) {
     console.error("upload failed", err);
-    showToast("warn", "Réseau", "impossible de joindre le backend.");
+    showToast("warn",
+      t("home.toast.network_title"),
+      t("home.toast.network_sub"));
     await refreshDashboardData(slug, rid);
   }
 }
@@ -874,7 +943,7 @@ function renderDashboardConvs(conversations, rid) {
   count.textContent = String(conversations.length);
   body.innerHTML = "";
   if (conversations.length === 0) {
-    body.innerHTML = '<div class="rd-block-empty">Aucune conversation — démarre une discussion avec l\'agent.</div>';
+    body.innerHTML = `<div class="rd-block-empty">${escapeHtml(t("home.dashboard.convs.empty"))}</div>`;
   } else {
     for (const c of conversations) {
       const row = document.createElement("button");
@@ -882,13 +951,19 @@ function renderDashboardConvs(conversations, rid) {
       row.className = "rd-conv-row";
       row.dataset.convId = c.id;
       const tier = (c.tier || "fast").toLowerCase();
-      const title = escapeHtml((c.title || `Conversation ${c.id.slice(0, 6)}`).slice(0, 80));
+      const fallbackTitle = t("home.dashboard.convs.untitled", { id: c.id.slice(0, 6) });
+      const title = escapeHtml((c.title || fallbackTitle).slice(0, 80));
       const ago = c.last_turn_at ? relativeTimeFr(c.last_turn_at) : "—";
       const cost = typeof c.cost_usd === "number" ? `$${c.cost_usd.toFixed(3)}` : "—";
+      const meta = t("home.dashboard.convs.turns_meta", {
+        turns: c.turns || 0,
+        cost,
+        ago,
+      });
       row.innerHTML =
         `<span class="rd-conv-tier t-${tier}">${tier.toUpperCase()}</span>` +
         `<span class="rd-conv-title">${title}</span>` +
-        `<span class="rd-conv-meta">${c.turns || 0} turns · ${cost} · ${escapeHtml(ago)}</span>`;
+        `<span class="rd-conv-meta">${escapeHtml(meta)}</span>`;
       row.addEventListener("click", () => {
         openPanel(c.id);  // single connect targeting the right conv
       });
@@ -898,7 +973,7 @@ function renderDashboardConvs(conversations, rid) {
   const newBtn = document.createElement("button");
   newBtn.type = "button";
   newBtn.className = "rd-conv-new";
-  newBtn.textContent = "+ Nouvelle conversation";
+  newBtn.textContent = t("home.dashboard.convs.new");
   newBtn.addEventListener("click", () => {
     openPanel("new");  // single connect; backend lazy-materializes on first message
   });
@@ -911,7 +986,7 @@ function renderDashboardFindings(findings, currentRid) {
   if (!body || !count) return;
   count.textContent = String(findings.length);
   if (findings.length === 0) {
-    body.innerHTML = '<div class="rd-block-empty">Aucun finding pour ce device. L\'agent en enregistre via <code>mb_record_finding</code> quand tu confirmes une panne.</div>';
+    body.innerHTML = `<div class="rd-block-empty">${t("home.dashboard.findings.empty_html")}</div>`;
     return;
   }
   body.innerHTML = "";
@@ -921,7 +996,7 @@ function renderDashboardFindings(findings, currentRid) {
     row.className = "rd-finding-row";
     const isCurrent = f.session_id && f.session_id.startsWith(currentShort);
     const sessionChip = isCurrent
-      ? `<span class="rd-finding-session current">ce repair</span>`
+      ? `<span class="rd-finding-session current">${escapeHtml(t("home.dashboard.findings.session_current"))}</span>`
       : (f.session_id
           ? `<span class="rd-finding-session">${escapeHtml(f.session_id.slice(0, 8))}</span>`
           : `<span class="rd-finding-session">—</span>`);
@@ -945,13 +1020,16 @@ function renderDashboardTimeline(repair, conversations, findings, pack) {
   if (!body) return;
   const events = [];
   if (repair?.created_at) {
-    events.push({ when: repair.created_at, label: "Session ouverte", kind: "cyan" });
+    events.push({ when: repair.created_at, label: t("home.dashboard.timeline.session_opened"), kind: "cyan" });
   }
   for (const c of conversations) {
     if (c.last_turn_at) {
       events.push({
         when: c.last_turn_at,
-        label: `Activité · ${(c.tier || "fast").toLowerCase()} · ${c.turns || 0} turns`,
+        label: t("home.dashboard.timeline.activity", {
+          tier: (c.tier || "fast").toLowerCase(),
+          turns: c.turns || 0,
+        }),
         kind: "emerald",
       });
     }
@@ -960,7 +1038,9 @@ function renderDashboardTimeline(repair, conversations, findings, pack) {
     if (f.created_at) {
       events.push({
         when: f.created_at,
-        label: `Finding ${f.refdes || "?"} confirmé`,
+        label: t("home.dashboard.timeline.finding_confirmed", {
+          refdes: f.refdes || "?",
+        }),
         kind: "violet",
       });
     }
@@ -968,7 +1048,7 @@ function renderDashboardTimeline(repair, conversations, findings, pack) {
   if (pack?.audit_verdict) {
     events.push({
       when: repair?.created_at || new Date().toISOString(),
-      label: `Pack audité — ${pack.audit_verdict}`,
+      label: t("home.dashboard.timeline.pack_audited", { verdict: pack.audit_verdict }),
       kind: pack.audit_verdict === "APPROVED" ? "emerald" : "amber",
     });
   }
@@ -983,10 +1063,11 @@ function renderDashboardTimeline(repair, conversations, findings, pack) {
     `</li>`
   )).join("");
   if (events.length > MAX) {
-    body.innerHTML += `<li class="rd-timeline-item"><span class="rd-timeline-node"></span><span class="rd-timeline-label">+${events.length - MAX} plus anciens</span></li>`;
+    const olderLabel = t("home.dashboard.timeline.older", { n: events.length - MAX });
+    body.innerHTML += `<li class="rd-timeline-item"><span class="rd-timeline-node"></span><span class="rd-timeline-label">${escapeHtml(olderLabel)}</span></li>`;
   }
   if (events.length === 0) {
-    body.innerHTML = '<li class="rd-block-empty">Aucune activité.</li>';
+    body.innerHTML = `<li class="rd-block-empty">${escapeHtml(t("home.dashboard.timeline.empty"))}</li>`;
   }
 }
 
@@ -994,7 +1075,7 @@ function renderDashboardPack(pack, slug, rid) {
   const body = document.getElementById("rdPackBody");
   if (!body) return;
   if (!pack) {
-    body.innerHTML = '<div class="rd-block-empty">Aucun pack — la mémoire du device n\'est pas encore construite.</div>';
+    body.innerHTML = `<div class="rd-block-empty">${escapeHtml(t("home.dashboard.pack.empty"))}</div>`;
     return;
   }
   const arts = [
@@ -1006,7 +1087,9 @@ function renderDashboardPack(pack, slug, rid) {
   ];
   const presentCount = arts.filter(a => !!pack[a.key]).length;
   const complete = presentCount === arts.length;
-  const statusLabel = complete ? "APPROUVÉ" : "en construction";
+  const statusLabel = complete
+    ? t("home.dashboard.pack.status_approved")
+    : t("home.dashboard.pack.status_building");
   const statusClass = complete ? "ok" : "warn";
   const rows = arts.map(a => {
     const on = !!pack[a.key];
@@ -1039,7 +1122,7 @@ function wireFixButton(slug, rid) {
   // validation flow fails (agent refuses, MA tool missing, error event).
   const resetBtn = () => {
     btn.disabled = false;
-    btn.innerHTML = ICON_CHECK + " Marquer fix";
+    btn.innerHTML = ICON_CHECK + " " + escapeHtml(t("home.dashboard.fix_btn"));
     btn.classList.remove("is-validated");
     if (btn._fixTimeoutId) { clearTimeout(btn._fixTimeoutId); btn._fixTimeoutId = null; }
   };
@@ -1049,18 +1132,20 @@ function wireFixButton(slug, rid) {
   btn.onclick = () => {
     const ws = window.__diagnosticWS;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      btn.textContent = "Ouvre le chat d'abord";
-      setTimeout(() => { btn.innerHTML = ICON_CHECK + " Marquer fix"; }, 1800);
+      btn.textContent = t("home.dashboard.fix_btn_open_chat");
+      setTimeout(() => {
+        btn.innerHTML = ICON_CHECK + " " + escapeHtml(t("home.dashboard.fix_btn"));
+      }, 1800);
       return;
     }
     ws.send(JSON.stringify({ type: "validation.start", repair_id: rid }));
     btn.disabled = true;
-    btn.textContent = "… Claude valide";
+    btn.textContent = t("home.dashboard.fix_btn_validating");
     // Safety timeout: if the agent never fires simulation.repair_validated
     // (MA tool missing, refusal, error), reset after 25s so the button
     // isn't permanently stuck.
     btn._fixTimeoutId = setTimeout(() => {
-      btn.textContent = "Échec — réessaie";
+      btn.textContent = t("home.dashboard.fix_btn_failed");
       setTimeout(resetBtn, 2200);
     }, 25000);
   };
@@ -1202,8 +1287,9 @@ function highlight(raw, query) {
 function renderComboPanel(query) {
   const results = filterEntries(query);
   const groups = new Map(); // brand → entries[]
+  const uncatLabel = t("home.list.uncategorized");
   for (const { entry } of results) {
-    const key = entry.brand || "Non catégorisé";
+    const key = entry.brand || uncatLabel;
     (groups.get(key) || groups.set(key, []).get(key)).push(entry);
   }
 
@@ -1214,14 +1300,14 @@ function renderComboPanel(query) {
     parts.push(`
       <button type="button" class="combo-option combo-create" data-action="create"
               data-label="${escapeHtml(trimmed)}" role="option">
-        <span class="combo-label">+ Créer « ${escapeHtml(trimmed)} »</span>
-        <span class="combo-meta"><span class="combo-badge">nouveau</span></span>
+        <span class="combo-label">${escapeHtml(t("home.modal.combo.create", { name: trimmed }))}</span>
+        <span class="combo-meta"><span class="combo-badge">${escapeHtml(t("home.modal.combo.create_badge"))}</span></span>
       </button>
     `);
   }
 
   if (groups.size === 0 && !trimmed) {
-    parts.push('<div class="combo-empty">Aucun device connu — tape un nom pour en créer un.</div>');
+    parts.push(`<div class="combo-empty">${escapeHtml(t("home.modal.combo.empty"))}</div>`);
   }
 
   const sortedBrands = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
@@ -1238,8 +1324,11 @@ function renderComboPanel(query) {
       // Inside a brand section the brand is already in the header — show only
       // the model/device, keep the form_factor as a separate mono chip.
       const name = deviceName(e, { includeBrand: false });
+      const auditedBadge = e.complete
+        ? `<span class="combo-badge ok">${escapeHtml(t("home.modal.combo.badge_audited"))}</span>`
+        : `<span class="combo-badge">${escapeHtml(t("home.modal.combo.badge_partial"))}</span>`;
       const badges = [
-        e.complete ? '<span class="combo-badge ok">audité</span>' : '<span class="combo-badge">partiel</span>',
+        auditedBadge,
         e.form_factor ? `<span class="combo-badge">${escapeHtml(e.form_factor)}</span>` : '',
       ].filter(Boolean).join("");
       parts.push(`
@@ -1310,21 +1399,18 @@ function applyNewDeviceSelection(rawText) {
 function applyRebuildStateForEntry(entry) {
   if (entry.complete) {
     newRepairRebuildRow.hidden = false;
-    newRepairHint.textContent =
-      "Pack déjà construit — la session rouvre directement. Coche pour regénérer.";
+    newRepairHint.textContent = t("home.modal.hint_existing_complete");
   } else {
     newRepairRebuildRow.hidden = true;
     newRepairForceRebuild.checked = false;
-    newRepairHint.textContent =
-      "Pack existe mais incomplet — le pipeline va compléter les artefacts manquants.";
+    newRepairHint.textContent = t("home.modal.hint_existing_partial");
   }
 }
 
 function applyRebuildStateForTyped() {
   newRepairRebuildRow.hidden = true;
   newRepairForceRebuild.checked = false;
-  newRepairHint.textContent =
-    "Tape le nom du device (marque + modèle). Le type de board est détecté automatiquement.";
+  newRepairHint.textContent = t("home.modal.hint_typed");
 }
 
 function commitOption(el) {
@@ -1409,8 +1495,8 @@ function setNewRepairBusy(busy) {
   const label = newRepairSubmit.querySelector(".btn-label");
   if (label) {
     label.innerHTML = busy
-      ? '<span class="modal-spinner" aria-hidden="true"></span> Création…'
-      : "Démarrer le diagnostic";
+      ? `<span class="modal-spinner" aria-hidden="true"></span> ${escapeHtml(t("home.modal.submit_busy"))}`
+      : escapeHtml(t("home.modal.submit"));
   }
 }
 
@@ -1427,12 +1513,14 @@ async function submitNewRepair(ev) {
   const symptom      = newRepairSymptom.value.trim();
   const force_rebuild = newRepairForceRebuild.checked;
   if (device_label.length < 2) {
-    setNewRepairError("Le nom du device doit faire au moins 2 caractères.", {title:"Champ incomplet — "});
+    setNewRepairError(t("home.modal.errors.device_too_short"),
+      { title: t("home.modal.errors.device_too_short_title") });
     newRepairDevice.focus();
     return;
   }
   if (symptom.length < 5) {
-    setNewRepairError("Décris le symptôme — 5 caractères minimum.", {title:"Champ incomplet — "});
+    setNewRepairError(t("home.modal.errors.symptom_too_short"),
+      { title: t("home.modal.errors.symptom_too_short_title") });
     newRepairSymptom.focus();
     return;
   }
@@ -1447,7 +1535,10 @@ async function submitNewRepair(ev) {
     if (!res.ok) {
       let detail = "";
       try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
-      setNewRepairError(`Le backend a répondu ${res.status}. ${detail}`.trim(), {title:"Erreur — "});
+      setNewRepairError(
+        t("home.modal.errors.backend_response", { status: res.status, detail }).trim(),
+        { title: t("home.modal.errors.backend_title") },
+      );
       setNewRepairBusy(false);
       return;
     }
@@ -1458,10 +1549,8 @@ async function submitNewRepair(ev) {
     openPipelineProgress(repair);
   } catch (err) {
     console.error("newRepair submit failed", err);
-    setNewRepairError(
-      "Impossible de joindre le serveur. Vérifie que le backend tourne.",
-      {title:"Réseau — "}
-    );
+    setNewRepairError(t("home.modal.errors.network"),
+      { title: t("home.modal.errors.network_title") });
     setNewRepairBusy(false);
   }
 }
@@ -1481,6 +1570,37 @@ function trapNewRepairFocus(ev) {
   }
 }
 
+// Re-render the imperatively-built home surface (repair list + dashboard)
+// when the user toggles language. Only fires when the home section is
+// actually showing — otherwise the next renderHome / renderRepairDashboard
+// call will pick up the new locale naturally.
+async function refreshHomeOnLocaleChange() {
+  const homeSection = document.getElementById("homeSection");
+  if (!homeSection || homeSection.classList.contains("hidden")) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const slug = params.get("device");
+  const rid = params.get("repair");
+
+  if (slug && rid) {
+    // Dashboard mode — re-render the focused session view.
+    try {
+      await renderRepairDashboard({ device: slug, repair: rid });
+    } catch (err) {
+      console.warn("[home] dashboard re-render failed", err);
+    }
+    return;
+  }
+
+  // List mode — re-render the brand > model > card grid.
+  try {
+    const [tax, repairs] = await Promise.all([loadTaxonomy(), loadRepairs()]);
+    renderHome(tax, repairs);
+  } catch (err) {
+    console.warn("[home] list re-render failed", err);
+  }
+}
+
 export function initNewRepairModal() {
   document.getElementById("homeNewBtn").addEventListener("click", openNewRepair);
   document.getElementById("newRepairClose").addEventListener("click", closeNewRepair);
@@ -1490,6 +1610,11 @@ export function initNewRepairModal() {
     if (ev.target === newRepairBackdrop) closeNewRepair();
   });
   initCombo();
+
+  // Re-render the JS-built home surface when the user toggles language.
+  if (window.i18n && typeof window.i18n.onChange === "function") {
+    window.i18n.onChange(() => { refreshHomeOnLocaleChange(); });
+  }
 
   // Registered BEFORE the global ESC/Cmd+K handler, so we can intercept those
   // keys while the modal is open without closing the Inspector or stealing focus.

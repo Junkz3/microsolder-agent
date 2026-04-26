@@ -29,8 +29,10 @@ let lastSelection = null;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// Per-role display metadata — labels in FR for the body section, icons are
-// simple ASCII glyphs so the text stays aligned in the mono column.
+// Per-role display metadata — short uppercase abbreviations (kept stable
+// across locales since they map to standard schematic conventions: VIN,
+// VOUT, EN, RST, FB, CLK, SIG, GND), icons are simple ASCII glyphs so the
+// text stays aligned in the mono column.
 const ROLE_META = {
   power_in:        { label: "VIN",  glyph: "◄" },
   power_out:       { label: "VOUT", glyph: "►" },
@@ -239,7 +241,9 @@ function clearBody() {
 }
 
 function setHeader(kind, ref, sub) {
-  el("bvMinimapKind").textContent = kind;
+  // kind is one of "COMP" / "NET" — translate to the display label.
+  const kindLabel = kind === "NET" ? t('brd.minimap.kind.net') : t('brd.minimap.kind.comp');
+  el("bvMinimapKind").textContent = kindLabel;
   el("bvMinimapRef").textContent = ref || "—";
   el("bvMinimapSub").textContent = sub || "";
   const mm = el("bvMinimap");
@@ -336,8 +340,8 @@ function renderComponent(relations) {
     entries.slice(0, 5).forEach((entry, i) => {
       const ry = cy + (i - (Math.min(N, 5) - 1) / 2) * step;
       const tip = entry.rail?.voltage_nominal != null
-        ? `${entry.label} · ${entry.rail.voltage_nominal} V — ouvrir dans le schematic`
-        : `${entry.label} — ouvrir dans le schematic`;
+        ? t('brd.minimap.tooltip.open_rail_with_voltage', { label: entry.label, volt: entry.rail.voltage_nominal })
+        : t('brd.minimap.tooltip.open_rail', { label: entry.label });
       nodesG.appendChild(hexRail(colX, ry, entry, {
         onClick: () => openRailInSchematic(entry.label),
         tooltip: tip,
@@ -371,7 +375,7 @@ function renderComponent(relations) {
       nodesG.appendChild(hexRail(x, yDec, entry, {
         scale: 0.8, isDecouple: true,
         onClick: () => openRailInSchematic(entry.label),
-        tooltip: `${entry.label} — cap de découplage sur ce rail`,
+        tooltip: t('brd.minimap.tooltip.decouple_cap', { label: entry.label }),
       }));
       linksG.appendChild(mkSvg("path", {
         class: "bv-mm-link bv-mm-link-decouples",
@@ -386,7 +390,7 @@ function renderComponent(relations) {
   if (consumed.length + produced.length + decoupled.length === 0) {
     nodesG.appendChild(mkSvg("text", {
       class: "bv-mm-nodata", x: 180, y: cy + 52,
-    }, "Pas de rôle power identifié"));
+    }, t('brd.minimap.rail.no_power_role')));
   }
 
   // --- Body text: pins by role + rail consumer counts ---
@@ -401,16 +405,19 @@ function renderComponent(relations) {
 
   if (producedRailWithMost >= 3) {
     const spofRow = mkEl("div", { class: "bv-mm-row" });
+    const spofText = producedRailWithMost > 1
+      ? t('brd.minimap.spof', { n: producedRailWithMost })
+      : t('brd.minimap.spof_one', { n: producedRailWithMost });
     spofRow.appendChild(mkEl("span", {
       class: "bv-mm-spof",
-      html: `${ICON_WARNING} alimente ${producedRailWithMost} consumer${producedRailWithMost > 1 ? "s" : ""}`,
+      html: `${ICON_WARNING} ${spofText}`,
     }));
     body.appendChild(spofRow);
   }
 
   // Pins section — one row per role, listing pin#s and their nets.
   const pinSection = mkEl("div", { class: "bv-mm-section" });
-  pinSection.appendChild(mkEl("div", { class: "bv-mm-section-head" }, `Pins (${pinCount(pinsByRole)})`));
+  pinSection.appendChild(mkEl("div", { class: "bv-mm-section-head" }, t('brd.minimap.section.pins', { n: pinCount(pinsByRole) })));
   const renderedRoles = [];
   // Order roles by importance for power-focused diagnosis.
   const roleOrder = [
@@ -435,11 +442,11 @@ function renderComponent(relations) {
   // ("other big consumers on this rail") so the tech knows what else
   // shares the signal. Excludes caps from the peer list (they live in
   // the dedicated decouples section above).
-  if (consumed.length) body.appendChild(renderRailContextSection("Alimenté par", consumed, refdes, data));
-  if (produced.length) body.appendChild(renderRailContextSection("Alimente", produced, refdes, data));
+  if (consumed.length) body.appendChild(renderRailContextSection(t('brd.minimap.section.powered_by'), consumed, refdes, data));
+  if (produced.length) body.appendChild(renderRailContextSection(t('brd.minimap.section.powers'), produced, refdes, data));
   if (decoupled.length) {
     const s = mkEl("div", { class: "bv-mm-section" });
-    s.appendChild(mkEl("div", { class: "bv-mm-section-head" }, `Découple (${decoupled.length})`));
+    s.appendChild(mkEl("div", { class: "bv-mm-section-head" }, t('brd.minimap.section.decouples', { n: decoupled.length })));
     const row = mkEl("div", { class: "bv-mm-row" });
     decoupled.slice(0, 8).forEach(e => {
       const chip = mkEl("span", { class: "bv-mm-chip rail" }, e.label);
@@ -464,14 +471,17 @@ function renderPinRoleRow(role, pins, data, selfRefdes) {
   // For ground, collapse into "GND · 4 pins" to avoid bloat.
   if (role === "ground") {
     const pinNums = pins.map(p => p.number).join(", ");
-    row.appendChild(mkEl("span", { class: "bv-mm-pinnum" }, `${pins.length} pin${pins.length > 1 ? "s" : ""}`));
-    row.appendChild(mkEl("span", { class: "bv-mm-muted" }, `(${pinNums})`));
+    const countLbl = pins.length > 1
+      ? t('brd.minimap.pin.ground_count', { n: pins.length })
+      : t('brd.minimap.pin.ground_count_one', { n: pins.length });
+    row.appendChild(mkEl("span", { class: "bv-mm-pinnum" }, countLbl));
+    row.appendChild(mkEl("span", { class: "bv-mm-muted" }, t('brd.minimap.pin.ground_list', { pins: pinNums })));
     return row;
   }
   // Group pins by net_label so identical nets appear once: "2, 4 → +1V8"
   const byNet = new Map();
   for (const p of pins) {
-    const nl = p.net_label || "(no-net)";
+    const nl = p.net_label || t('brd.minimap.pin.no_net');
     if (!byNet.has(nl)) byNet.set(nl, []);
     byNet.get(nl).push(p.number);
   }
@@ -496,7 +506,7 @@ function renderPinRoleRow(role, pins, data, selfRefdes) {
     const selfCount = netConnects.filter(tok => tok.startsWith(selfRefdes + ".")).length;
     const peerCount = Math.max(0, netConnects.length - selfCount);
     if (peerCount > 0) {
-      row.appendChild(mkEl("span", { class: "bv-mm-muted" }, `(${peerCount} autres)`));
+      row.appendChild(mkEl("span", { class: "bv-mm-muted" }, t('brd.minimap.section.more_others', { n: peerCount })));
     }
   });
   return row;
@@ -504,6 +514,7 @@ function renderPinRoleRow(role, pins, data, selfRefdes) {
 
 function renderRailContextSection(title, railEntries, selfRef, data) {
   const section = mkEl("div", { class: "bv-mm-section" });
+  // Suffix " (N)" stays language-agnostic — composes with the localized title.
   section.appendChild(mkEl("div", { class: "bv-mm-section-head" }, `${title} (${railEntries.length})`));
   railEntries.forEach(entry => {
     const row = mkEl("div", { class: "bv-mm-row" });
@@ -515,19 +526,23 @@ function renderRailContextSection(title, railEntries, selfRef, data) {
     const peers = (entry.rail.consumers || []).filter(r => r !== selfRef);
     const source = entry.rail.source_refdes;
     if (source && source !== selfRef) {
-      const srcChip = mkEl("span", { class: "bv-mm-chip comp producer" }, `src: ${source}`);
+      const srcChip = mkEl("span", { class: "bv-mm-chip comp producer" }, t('brd.minimap.rail.source', { refdes: source }));
       row.appendChild(srcChip);
     }
     const shownPeers = peers.slice(0, 5);
     shownPeers.forEach(r => {
       const comp = (data.components || {})[r];
       const cchip = mkEl("span", { class: "bv-mm-chip comp" }, r);
-      if (comp?.type) cchip.title = `${r} · ${comp.type}${comp.value?.mpn ? " · " + comp.value.mpn : ""}`;
+      if (comp?.type) {
+        cchip.title = comp.value?.mpn
+          ? t('brd.minimap.tooltip.comp_type_mpn', { refdes: r, type: comp.type, mpn: comp.value.mpn })
+          : t('brd.minimap.tooltip.comp_type', { refdes: r, type: comp.type });
+      }
       row.appendChild(cchip);
     });
-    if (peers.length > 5) row.appendChild(mkEl("span", { class: "bv-mm-more" }, `+${peers.length - 5}`));
+    if (peers.length > 5) row.appendChild(mkEl("span", { class: "bv-mm-more" }, t('brd.minimap.section.more', { n: peers.length - 5 })));
     if (peers.length === 0 && !source) {
-      row.appendChild(mkEl("span", { class: "bv-mm-muted" }, "aucun pair listé"));
+      row.appendChild(mkEl("span", { class: "bv-mm-muted" }, t('brd.minimap.rail.no_peers')));
     }
     section.appendChild(row);
   });
@@ -541,11 +556,13 @@ function renderRailContextSection(title, railEntries, selfRef, data) {
 function renderNet(relations) {
   const { netLabel, classification, members, clickedPinRef, data } = relations;
   const subBits = [];
-  if (classification.kind === "rail" && classification.voltage != null) subBits.push(`${classification.voltage} V`);
-  if (classification.kind === "rail") subBits.push("rail");
-  else if (classification.kind === "gnd") subBits.push("ground");
-  else subBits.push("signal");
-  subBits.push(`${members.length} pin${members.length > 1 ? "s" : ""}`);
+  if (classification.kind === "rail" && classification.voltage != null) subBits.push(t('brd.minimap.subhead.voltage', { volt: classification.voltage }));
+  if (classification.kind === "rail") subBits.push(t('brd.minimap.subhead.rail'));
+  else if (classification.kind === "gnd") subBits.push(t('brd.minimap.subhead.ground'));
+  else subBits.push(t('brd.minimap.subhead.signal'));
+  subBits.push(members.length > 1
+    ? t('brd.minimap.subhead.pins_count', { n: members.length })
+    : t('brd.minimap.subhead.pin_count', { n: members.length }));
   setHeader("NET", netLabel, subBits.join(" · "));
   prepareRender();
 
@@ -559,7 +576,7 @@ function renderNet(relations) {
     scale: 1.15,
     isDecouple: classification.kind === "gnd",
     onClick: classification.kind === "rail" ? () => openRailInSchematic(netLabel) : null,
-    tooltip: classification.kind === "rail" ? "Ouvrir dans le schematic en focus rail" : null,
+    tooltip: classification.kind === "rail" ? t('brd.minimap.tooltip.open_rail_focus') : null,
   });
   nodesG.appendChild(netNode);
 
@@ -597,7 +614,9 @@ function renderNet(relations) {
     const g = mkSvg("g", {
       class: `bv-mm-node ${m.self ? "kind-self" : isProd ? "kind-producer" : "kind-comp"} clickable`,
     });
-    g.appendChild(mkSvg("title", {}, `${m.refdes}.${m.pinNum} · ${m.pinName || m.role}${m.type ? " · " + m.type : ""}`));
+    g.appendChild(mkSvg("title", {}, m.type
+      ? t('brd.minimap.tooltip.pin_role_type_full', { refdes: m.refdes, pin: m.pinNum, role: m.pinName || m.role, type: m.type })
+      : t('brd.minimap.tooltip.pin_role_type', { refdes: m.refdes, pin: m.pinNum, role: m.pinName || m.role })));
     const w = 44, h = 18;
     g.appendChild(mkSvg("rect", {
       x: clamped - w/2, y: my - h/2, width: w, height: h, rx: 3,
@@ -627,7 +646,7 @@ function renderNet(relations) {
   if (members.length > visible.length) {
     nodesG.appendChild(mkSvg("text", {
       class: "bv-mm-more", x: 180, y: 178, "text-anchor": "middle",
-    }, `+${members.length - visible.length} autres pins sur ${netLabel}`));
+    }, t('brd.minimap.rail.more_pins_on_net', { n: members.length - visible.length, net: netLabel })));
   }
 
   // --- Body: grouped list by role ---
@@ -636,12 +655,12 @@ function renderNet(relations) {
   // SPOF / rail context banner
   if (classification.kind === "rail") {
     const ctx = mkEl("div", { class: "bv-mm-row" });
-    ctx.appendChild(mkEl("span", { class: "bv-mm-pinlabel" }, "Rail"));
-    const chip = mkEl("span", { class: "bv-mm-chip rail" }, "Ouvrir dans le schematic");
+    ctx.appendChild(mkEl("span", { class: "bv-mm-pinlabel" }, t('brd.minimap.rail.label')));
+    const chip = mkEl("span", { class: "bv-mm-chip rail" }, t('brd.minimap.rail.open_in_schematic'));
     chip.addEventListener("click", () => openRailInSchematic(netLabel));
     ctx.appendChild(chip);
     if (classification.source) {
-      const src = mkEl("span", { class: "bv-mm-chip comp producer" }, `src: ${classification.source}`);
+      const src = mkEl("span", { class: "bv-mm-chip comp producer" }, t('brd.minimap.rail.source', { refdes: classification.source }));
       ctx.appendChild(src);
     }
     body.appendChild(ctx);
@@ -688,14 +707,25 @@ function renderNetRoleRow(role, members, data) {
     const type = e.type || "";
     const isCap = type === "capacitor";
     const cls = e.self ? "self" : (role === "power_out" || role === "switch_node") ? "producer" : "";
+    const pinList = e.pins.join(", ");
+    let chipTitle;
+    if (e.pins.length > 1) {
+      chipTitle = type
+        ? t('brd.minimap.tooltip.pins_of_ref', { refdes: e.refdes, type, pins: pinList })
+        : t('brd.minimap.tooltip.pins_of_ref_no_type', { refdes: e.refdes, pins: pinList });
+    } else {
+      chipTitle = type
+        ? t('brd.minimap.tooltip.pin_of_ref', { refdes: e.refdes, type, pins: pinList })
+        : t('brd.minimap.tooltip.pin_of_ref_no_type', { refdes: e.refdes, pins: pinList });
+    }
     const chip = mkEl("span", {
       class: `bv-mm-chip ${isCap ? "cap" : "comp"} ${cls}`,
-      title: `${e.refdes}${type ? " · " + type : ""} — pin${e.pins.length > 1 ? "s" : ""} ${e.pins.join(", ")}`,
+      title: chipTitle,
     }, e.pins.length === 1 ? `${e.refdes}.${e.pins[0]}` : `${e.refdes}·${e.pins.length}`);
     row.appendChild(chip);
   });
   if (byRef.size > entries.length) {
-    row.appendChild(mkEl("span", { class: "bv-mm-more" }, `+${byRef.size - entries.length}`));
+    row.appendChild(mkEl("span", { class: "bv-mm-more" }, t('brd.minimap.section.more', { n: byRef.size - entries.length })));
   }
   section.appendChild(row);
   return section;
@@ -724,15 +754,15 @@ async function handleSelection(detail) {
   showMinimap();
 
   const slug = getSlug();
-  if (!slug) { renderEmpty("COMP", refdes, "Pas de device dans l'URL."); return; }
+  if (!slug) { renderEmpty("COMP", refdes, t('brd.minimap.no_device')); return; }
   // Skeleton while loading.
-  setHeader("COMP", refdes, "chargement…");
+  setHeader("COMP", refdes, t('brd.minimap.loading_short'));
   clearSvg(); clearBody();
   const svg = el("bvMinimapSvg"); if (svg) svg.style.display = "none";
-  const empty = el("bvMinimapEmpty"); if (empty) { empty.style.display = "block"; empty.textContent = "Chargement…"; }
+  const empty = el("bvMinimapEmpty"); if (empty) { empty.style.display = "block"; empty.textContent = t('brd.minimap.loading'); }
 
   const data = await loadSchematic(slug);
-  if (!data) { renderEmpty("COMP", refdes, "Pas de schematic ingéré pour ce device."); return; }
+  if (!data) { renderEmpty("COMP", refdes, t('brd.minimap.no_schematic')); return; }
 
   // Pin-click path — the user clicked on a specific pin of the component.
   // Show the NET of that pin with all its other members.
@@ -748,7 +778,7 @@ async function handleSelection(detail) {
   }
 
   const relations = relationsForComponent(data, refdes);
-  if (!relations) { renderEmpty("COMP", refdes, `Inconnu dans le schematic : ${refdes}`); return; }
+  if (!relations) { renderEmpty("COMP", refdes, t('brd.minimap.unknown_in_schematic', { refdes })); return; }
   renderComponent(relations);
 }
 
@@ -761,3 +791,11 @@ window.addEventListener("bv:minimap-toggle", (ev) => {
   if (!enabled) { hideMinimap(); return; }
   if (lastSelection?.refdes) handleSelection(lastSelection);
 });
+
+// Re-render the minimap content on locale switch so the dynamic labels
+// (section heads, tooltips, role rows) pick up the new dictionary.
+if (window.i18n && typeof window.i18n.onChange === "function") {
+  window.i18n.onChange(() => {
+    if (enabled && lastSelection?.refdes) handleSelection(lastSelection);
+  });
+}

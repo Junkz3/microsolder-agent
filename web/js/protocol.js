@@ -134,9 +134,9 @@ function formatResult(step) {
   const r = step.result;
   if (!r) return "";
   if (step.type === "numeric") return `${r.value} ${r.unit || step.unit || ""} (${r.outcome})`;
-  if (step.type === "boolean") return `${r.value ? "oui" : "non"} (${r.outcome})`;
-  if (step.type === "observation") return r.value || "—";
-  if (step.type === "ack") return "fait";
+  if (step.type === "boolean") return `${r.value ? t("protocol.step.result.yes") : t("protocol.step.result.no")} (${r.outcome})`;
+  if (step.type === "observation") return r.value || t("protocol.step.result.empty");
+  if (step.type === "ack") return t("protocol.step.result.done");
   return JSON.stringify(r);
 }
 
@@ -170,7 +170,9 @@ export function buildStepForm(step) {
   if (step.type === "numeric") {
     const input = document.createElement("input");
     input.type = "number"; input.step = "any"; input.required = true;
-    input.placeholder = step.nominal != null ? `nominal ${step.nominal}` : "valeur";
+    input.placeholder = step.nominal != null
+      ? t("protocol.step.nominal_placeholder", { value: step.nominal })
+      : t("protocol.step.value_placeholder");
     input.name = "value";
     form.appendChild(input);
     const unit = document.createElement("select");
@@ -184,16 +186,16 @@ export function buildStepForm(step) {
     form.appendChild(unit);
   } else if (step.type === "boolean") {
     const yes = document.createElement("button");
-    yes.type = "button"; yes.textContent = "Oui";
+    yes.type = "button"; yes.textContent = t("protocol.step.yes");
     yes.addEventListener("click", () => submitBoolean(step, true));
     const no = document.createElement("button");
-    no.type = "button"; no.textContent = "Non"; no.classList.add("is-skip");
+    no.type = "button"; no.textContent = t("protocol.step.no"); no.classList.add("is-skip");
     no.addEventListener("click", () => submitBoolean(step, false));
     form.appendChild(yes); form.appendChild(no);
   } else if (step.type === "observation") {
     const ta = document.createElement("textarea");
     ta.name = "observation"; ta.rows = 2; ta.required = true;
-    ta.placeholder = "ce que tu observes…";
+    ta.placeholder = t("protocol.step.observation_placeholder");
     form.appendChild(ta);
   } else if (step.type === "ack") {
     // ack: just a Done button below; submit fires submit event with no value.
@@ -201,13 +203,13 @@ export function buildStepForm(step) {
 
   const submit = document.createElement("button");
   submit.type = "submit";
-  submit.textContent = step.type === "ack" ? "Fait" : "Valider";
+  submit.textContent = step.type === "ack" ? t("protocol.step.done") : t("protocol.step.validate");
   form.appendChild(submit);
 
   const skip = document.createElement("button");
-  skip.type = "button"; skip.className = "is-skip"; skip.textContent = "Skip";
+  skip.type = "button"; skip.className = "is-skip"; skip.textContent = t("protocol.step.skip");
   skip.addEventListener("click", () => {
-    const reason = window.prompt("Pourquoi tu skip ce step ?", "");
+    const reason = window.prompt(t("protocol.step.skip_prompt"), "");
     if (reason !== null) skipStep({ stepId: step.id, reason });
   });
   form.appendChild(skip);
@@ -233,7 +235,7 @@ function renderStepRow(step, isActive) {
 
   const target = document.createElement("div");
   target.className = "protocol-step-target";
-  target.textContent = step.target || step.test_point || "—";
+  target.textContent = step.target || step.test_point || t("protocol.step.result.empty");
   body.appendChild(target);
 
   const instr = document.createElement("p");
@@ -302,14 +304,16 @@ const bindChrome = () => {
     toggle.addEventListener("click", () => {
       const collapsed = root.classList.toggle("is-collapsed");
       toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-      toggle.setAttribute("title", collapsed ? "Déplier" : "Plier");
+      toggle.setAttribute("title", collapsed
+        ? t("protocol.toggle.expand")
+        : t("protocol.toggle.collapse"));
     });
     toggle.dataset.bound = "1";
   }
   const btn = document.getElementById("protocolAbandonBtn");
   if (btn && !btn.dataset.bound) {
     btn.addEventListener("click", () => {
-      if (window.confirm("Abandonner le protocole en cours ?")) abandonProtocol();
+      if (window.confirm(t("protocol.abandon.confirm"))) abandonProtocol();
     });
     btn.dataset.bound = "1";
   }
@@ -317,6 +321,11 @@ const bindChrome = () => {
 
 subscribe(renderQuest);
 subscribe(bindChrome);
+
+// Re-render on locale switch — picks up i18n strings inside dynamically built rows.
+if (window.i18n && window.i18n.onChange) {
+  window.i18n.onChange(() => notify());
+}
 
 function pushBadgesToBoard(proto) {
   if (!window.Boardview || !window.Boardview.setProtocolBadges) return;

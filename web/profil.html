@@ -11,7 +11,7 @@
       <div class="prof-avatar" id="profAvatar">—</div>
       <div class="prof-head-titles">
         <div class="prof-head-tagline">
-          <span class="prof-head-tag">technicien</span>
+          <span class="prof-head-tag" data-i18n="profile.head.tag">technician</span>
           <span class="prof-head-level" id="profLevel">—</span>
         </div>
         <h1 id="profName">—</h1>
@@ -30,7 +30,7 @@
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/>
         </svg>
-        Éditer l'identité
+        <span data-i18n="profile.head.edit_identity">Edit identity</span>
       </button>
     </div>
   </header>
@@ -41,26 +41,26 @@
   <section class="prof-ribbon" id="profRibbon" data-level="loading">
     <div class="prof-ribbon-head">
       <span class="prof-ribbon-pulse"></span>
-      <span class="prof-ribbon-tag">progression</span>
+      <span class="prof-ribbon-tag" data-i18n="profile.ribbon.tag">progression</span>
       <span class="prof-ribbon-title" id="profRibbonTitle">—</span>
       <span class="prof-ribbon-score mono" id="profRibbonScore">—</span>
     </div>
     <ol class="prof-ribbon-track" id="profRibbonTrack">
       <li class="prof-rung" data-rung="beginner">
         <span class="prof-rung-dot"></span>
-        <span class="prof-rung-label">Beginner</span>
+        <span class="prof-rung-label" data-i18n="profile.ribbon.rungs.beginner">Beginner</span>
       </li>
       <li class="prof-rung" data-rung="intermediate">
         <span class="prof-rung-dot"></span>
-        <span class="prof-rung-label">Intermediate</span>
+        <span class="prof-rung-label" data-i18n="profile.ribbon.rungs.intermediate">Intermediate</span>
       </li>
       <li class="prof-rung" data-rung="confirmed">
         <span class="prof-rung-dot"></span>
-        <span class="prof-rung-label">Confirmed</span>
+        <span class="prof-rung-label" data-i18n="profile.ribbon.rungs.confirmed">Confirmed</span>
       </li>
       <li class="prof-rung" data-rung="expert">
         <span class="prof-rung-dot"></span>
-        <span class="prof-rung-label">Expert</span>
+        <span class="prof-rung-label" data-i18n="profile.ribbon.rungs.expert">Expert</span>
       </li>
     </ol>
     <p class="prof-ribbon-body" id="profRibbonBody">—</p>
@@ -78,7 +78,7 @@
             <path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1z"/>
           </svg>
         </span>
-        <span class="prof-stat-tag">maîtrisées</span>
+        <span class="prof-stat-tag" data-i18n="profile.stats.tag_mastered">mastered</span>
       </header>
       <div class="prof-stat-value mono" id="profStatMastered">—</div>
       <div class="prof-stat-sub" id="profStatMasteredSub">—</div>
@@ -93,7 +93,7 @@
             <path d="M5 12l5 5L20 7"/>
           </svg>
         </span>
-        <span class="prof-stat-tag">pratiquées</span>
+        <span class="prof-stat-tag" data-i18n="profile.stats.tag_practiced">practiced</span>
       </header>
       <div class="prof-stat-value mono" id="profStatPracticed">—</div>
       <div class="prof-stat-sub" id="profStatPracticedSub">—</div>
@@ -109,7 +109,7 @@
             <path d="M12 7v5l3 2"/>
           </svg>
         </span>
-        <span class="prof-stat-tag">apprentissage</span>
+        <span class="prof-stat-tag" data-i18n="profile.stats.tag_learning">learning</span>
       </header>
       <div class="prof-stat-value mono" id="profStatLearning">—</div>
       <div class="prof-stat-sub" id="profStatLearningSub">—</div>
@@ -125,7 +125,7 @@
             <path d="M9.5 11l-6 6 1.5 1.5 6-6"/>
           </svg>
         </span>
-        <span class="prof-stat-tag">outillage</span>
+        <span class="prof-stat-tag" data-i18n="profile.stats.tag_tools">tooling</span>
       </header>
       <div class="prof-stat-value mono" id="profStatTools">—</div>
       <div class="prof-stat-sub" id="profStatToolsSub">—</div>
@@ -139,8 +139,8 @@
        cards, a left-rail accent per status). -->
   <section class="prof-block prof-block--skills">
     <header class="prof-block-head">
-      <span class="prof-block-tag">compétences</span>
-      <h2>Profil opérationnel</h2>
+      <span class="prof-block-tag" data-i18n="profile.blocks.skills_tag">skills</span>
+      <h2 data-i18n="profile.blocks.skills_heading">Operational profile</h2>
       <span class="prof-block-count" id="profSkillsTotal">—</span>
     </header>
     <div class="profile-skills" id="profSkills"></div>
@@ -150,8 +150,8 @@
        chip, inactive = muted. Each tool drives which skills are unlocked. -->
   <section class="prof-block prof-block--tools">
     <header class="prof-block-head">
-      <span class="prof-block-tag">outillage</span>
-      <h2>Atelier déclaré</h2>
+      <span class="prof-block-tag" data-i18n="profile.blocks.tools_tag">tooling</span>
+      <h2 data-i18n="profile.blocks.tools_heading">Declared workshop</h2>
       <span class="prof-block-count" id="profToolsTotal">—</span>
     </header>
     <div class="profile-tools" id="profTools"></div>
@@ -160,8 +160,8 @@
   <!-- Preferences — diagnostic verbosity + language. -->
   <section class="prof-block prof-block--prefs">
     <header class="prof-block-head">
-      <span class="prof-block-tag">préférences diag</span>
-      <h2>Posture de l'agent</h2>
+      <span class="prof-block-tag" data-i18n="profile.blocks.prefs_tag">diag preferences</span>
+      <h2 data-i18n="profile.blocks.prefs_heading">Agent posture</h2>
     </header>
     <div class="profile-prefs" id="profPrefs"></div>
   </section>
@@ -171,7 +171,7 @@
 <aside class="profile-drawer hidden" id="profDrawer">
   <header class="profile-drawer-head">
     <h3 id="profDrawerTitle">—</h3>
-    <button class="btn-icon" id="profDrawerClose" aria-label="Fermer">
+    <button class="btn-icon" id="profDrawerClose" data-i18n-attr="aria-label:profile.drawer.close" aria-label="Close">
       <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
     </button>
   </header>
@@ -186,33 +186,33 @@
 <div class="modal-backdrop" id="profIdentityBackdrop" data-dismiss>
   <div class="modal" role="dialog" aria-labelledby="profIdentityTitle">
     <header class="modal-head">
-      <div class="type-row">Profil technicien</div>
-      <h2 id="profIdentityTitle">Éditer ton identité</h2>
-      <button type="button" class="modal-close btn-icon" data-dismiss aria-label="Fermer">
+      <div class="type-row" data-i18n="profile.modal.kicker">Technician profile</div>
+      <h2 id="profIdentityTitle" data-i18n="profile.modal.title">Edit your identity</h2>
+      <button type="button" class="modal-close btn-icon" data-dismiss data-i18n-attr="aria-label:profile.modal.close" aria-label="Close">
         <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
       </button>
     </header>
     <form id="profIdentityForm" class="modal-body">
       <label class="modal-field">
-        <span class="modal-label">Nom</span>
+        <span class="modal-label" data-i18n="profile.modal.field_name">Name</span>
         <input class="modal-input" name="name" type="text" maxlength="40"/>
       </label>
       <label class="modal-field">
-        <span class="modal-label">Avatar (2 lettres ou emoji)</span>
+        <span class="modal-label" data-i18n="profile.modal.field_avatar">Avatar (2 letters or emoji)</span>
         <input class="modal-input" name="avatar" type="text" maxlength="2"/>
       </label>
       <label class="modal-field">
-        <span class="modal-label">Années d'expérience</span>
+        <span class="modal-label" data-i18n="profile.modal.field_years">Years of experience</span>
         <input class="modal-input" name="years_experience" type="number" min="0" max="80"/>
       </label>
       <label class="modal-field">
-        <span class="modal-label">Spécialités (séparées par virgule)</span>
-        <input class="modal-input" name="specialties" type="text" placeholder="apple, consoles, laptops"/>
+        <span class="modal-label" data-i18n="profile.modal.field_specialties">Specialties (comma-separated)</span>
+        <input class="modal-input" name="specialties" type="text" data-i18n-attr="placeholder:profile.modal.specialties_placeholder" placeholder="apple, consoles, laptops"/>
       </label>
       <label class="modal-field">
-        <span class="modal-label">Forcer le niveau (optionnel)</span>
+        <span class="modal-label" data-i18n="profile.modal.field_level">Force level (optional)</span>
         <select class="modal-input" name="level_override">
-          <option value="">(dérivé automatiquement)</option>
+          <option value="" data-i18n="profile.modal.level_auto">(auto-derived)</option>
           <option value="beginner">beginner</option>
           <option value="intermediate">intermediate</option>
           <option value="confirmed">confirmed</option>
@@ -220,8 +220,8 @@
         </select>
       </label>
       <footer class="modal-foot" style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px">
-        <button type="button" class="btn" data-dismiss>Annuler</button>
-        <button type="submit" class="btn primary">Enregistrer</button>
+        <button type="button" class="btn" data-dismiss data-i18n="profile.modal.cancel">Cancel</button>
+        <button type="submit" class="btn primary" data-i18n="profile.modal.save">Save</button>
       </footer>
     </form>
   </div>

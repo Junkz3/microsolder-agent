@@ -58,7 +58,10 @@ async function loadAndRenderSidebar() {
     return tb - ta;
   });
 
-  if (count) count.textContent = `${repairs.length} repair${repairs.length > 1 ? "s" : ""}`;
+  if (count) {
+    const key = repairs.length > 1 ? "landing.sidebar.count_many" : "landing.sidebar.count_one";
+    count.textContent = window.t ? window.t(key, { n: repairs.length }) : `${repairs.length} repairs`;
+  }
 
   list.innerHTML = "";
   for (const r of repairs) {
@@ -94,8 +97,8 @@ async function loadAndRenderSidebar() {
     const del = document.createElement("button");
     del.type = "button";
     del.className = "landing-sidebar-delete";
-    del.setAttribute("aria-label", "Supprimer cette réparation");
-    del.title = "Supprimer";
+    del.setAttribute("aria-label", window.t ? window.t("landing.sidebar.delete_aria") : "Delete this repair");
+    del.title = window.t ? window.t("landing.sidebar.delete_title") : "Delete";
     del.textContent = "×";
     del.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -110,9 +113,8 @@ async function loadAndRenderSidebar() {
 }
 
 async function onDeleteRepairClick(repairId, itemEl, btnEl) {
-  const ok = window.confirm(
-    "Supprimer cette réparation ? La conversation et les notes de l'agent seront effacées définitivement."
-  );
+  const t = window.t || ((k) => k);
+  const ok = window.confirm(t("landing.delete.confirm"));
   if (!ok) return;
 
   btnEl.disabled = true;
@@ -126,7 +128,7 @@ async function onDeleteRepairClick(repairId, itemEl, btnEl) {
     }
   } catch (err) {
     console.error("[landing] delete failed", err);
-    setStatus(`Échec de la suppression : ${err.message || err}`, STATUS_ERROR);
+    setStatus(t("landing.status.error_delete", { error: err.message || err }), STATUS_ERROR);
     btnEl.disabled = false;
     return;
   }
@@ -136,9 +138,12 @@ async function onDeleteRepairClick(repairId, itemEl, btnEl) {
   const count = document.getElementById("landingSidebarCount");
   const remaining = list ? list.children.length : 0;
   if (count) {
-    count.textContent = remaining > 0
-      ? `${remaining} repair${remaining > 1 ? "s" : ""}`
-      : "";
+    if (remaining > 0) {
+      const key = remaining > 1 ? "landing.sidebar.count_many" : "landing.sidebar.count_one";
+      count.textContent = t(key, { n: remaining });
+    } else {
+      count.textContent = "";
+    }
   }
   if (remaining === 0) {
     const sidebar = document.getElementById("landingSidebar");
@@ -202,9 +207,10 @@ function startEtaTicker() {
   const eta = document.getElementById("landingTimelineEta");
   if (!eta) return;
   if (window.__landingEtaTimer) clearInterval(window.__landingEtaTimer);
+  const t = window.t || ((k) => k);
   const tick = () => {
     const elapsed = Math.max(0, (Date.now() - pipelineStartedAt) / 1000);
-    eta.textContent = `Écoulé · ${elapsed.toFixed(0)}s`;
+    eta.textContent = t("landing.timeline.elapsed", { n: elapsed.toFixed(0) });
   };
   tick();
   window.__landingEtaTimer = setInterval(tick, 250);
@@ -256,23 +262,24 @@ function resetTimeline() {
 async function onSubmit(ev) {
   ev.preventDefault();
   if (isSubmitting) return;
+  const t = window.t || ((k) => k);
   const deviceEl = document.getElementById("landingDevice");
   const symptomEl = document.getElementById("landingSymptom");
   const device = (deviceEl?.value || "").trim();
   const symptom = (symptomEl?.value || "").trim();
 
   if (device.length < 2) {
-    setStatus("Précise l'appareil — au moins quelques mots.", STATUS_ERROR);
+    setStatus(t("landing.status.validation_device"), STATUS_ERROR);
     deviceEl?.focus();
     return;
   }
   if (symptom.length < 5) {
-    setStatus("Décris un peu plus le symptôme.", STATUS_ERROR);
+    setStatus(t("landing.status.validation_symptom"), STATUS_ERROR);
     symptomEl?.focus();
     return;
   }
 
-  setStatus("J'enregistre ta réparation et je vérifie si je connais déjà cet appareil…", STATUS_LOADING);
+  setStatus(t("landing.status.checking"), STATUS_LOADING);
   setSubmitting(true);
   setLandingMascot("thinking");
   resetTimeline();
@@ -290,7 +297,7 @@ async function onSubmit(ev) {
     const repair = await res.json();
     const rid = repair.repair_id;
     const slug = repair.device_slug;
-    if (!rid || !slug) throw new Error("réponse invalide du serveur");
+    if (!rid || !slug) throw new Error(t("landing.status.error_invalid_response"));
 
     // Three response shapes, three UX flows.
     // Branch 2 — symptom already covered by a known rule: no LLM work,
@@ -298,16 +305,24 @@ async function onSubmit(ev) {
     if (!repair.pipeline_started) {
       if (repair.matched_rule_id) {
         setStatus(
-          `Je connais déjà ce cas (${repair.matched_rule_id}). J'ouvre le diagnostic…`,
+          t("landing.status.rule_match", { rule_id: repair.matched_rule_id }),
           STATUS_NEUTRAL,
         );
       } else {
         setStatus(
-          `Je connais déjà ${repair.device_label}. J'ouvre le diagnostic…`,
+          t("landing.status.device_known", { device: repair.device_label }),
           STATUS_NEUTRAL,
         );
       }
-      goToWorkspace(rid, slug);
+      // Pack on disk → play an accelerated fake-timeline (~15–17s) so the
+      // tech sees the cache hit as a fast pipeline run, then navigate.
+      // setStatus message above stays as the lead-in; setTimelineTitle
+      // takes over once showTimeline() inside the helper fires.
+      playCachedPipelineTimeline(slug, rid, repair.device_label || slug)
+        .catch((err) => {
+          console.warn("[landing] cached timeline failed, falling back to direct nav", err);
+          goToWorkspace(rid, slug);
+        });
       return;
     }
 
@@ -316,24 +331,24 @@ async function onSubmit(ev) {
     // full 5-phase pipeline layout.
     if (repair.pipeline_kind === "expand") {
       setStatus(
-        `Je connais ${repair.device_label}. J'ajoute ton symptôme spécifique (~3 min).`,
+        t("landing.status.expand", { device: repair.device_label }),
         STATUS_NEUTRAL,
       );
       showTimeline();
-      setTimelineTitle(`Enrichissement ciblé · ${repair.device_label}`);
+      setTimelineTitle(t("landing.timeline.title_expand", { device: repair.device_label }));
       setExpandMode();
       subscribeToProgress(slug, rid);
       return;
     }
 
     // Branch 1 — full pipeline on a fresh device (~5-10 min).
-    setStatus("Nouveau pour moi — je construis la fiche en arrière-plan. Tu peux regarder.", STATUS_NEUTRAL);
+    setStatus(t("landing.status.build_new"), STATUS_NEUTRAL);
     showTimeline();
-    setTimelineTitle(`Construction de la fiche · ${repair.device_label}`);
+    setTimelineTitle(t("landing.timeline.title_build", { device: repair.device_label }));
     subscribeToProgress(slug, rid);
   } catch (err) {
     console.error("[landing] submit failed", err);
-    setStatus(`Échec de la création : ${err.message || err}`, STATUS_ERROR);
+    setStatus(t("landing.status.error_create", { error: err.message || err }), STATUS_ERROR);
     setLandingMascot("error");
     setSubmitting(false);
   }
@@ -357,7 +372,7 @@ function subscribeToProgress(slug, repairId) {
 
   progressWs.addEventListener("error", (ev) => {
     console.warn("[landing] progress WS error", ev);
-    setStatus("Connexion au pipeline interrompue. Recharge la page si rien ne bouge.", STATUS_ERROR);
+    setStatus((window.t || ((k) => k))("landing.status.ws_lost"), STATUS_ERROR);
   });
 
   progressWs.addEventListener("close", () => {
@@ -366,11 +381,12 @@ function subscribeToProgress(slug, repairId) {
 }
 
 function handleProgressEvent(ev, slug, repairId) {
+  const t = window.t || ((k) => k);
   switch (ev.type) {
     case "subscribed":
       break;
     case "pipeline_started":
-      setStatus(`Pipeline démarré sur ${ev.device_label || ev.device_slug || slug}.`, STATUS_LOADING);
+      setStatus(t("landing.status.pipeline_started", { device: ev.device_label || ev.device_slug || slug }), STATUS_LOADING);
       break;
     case "phase_started": {
       const phase = ev.phase;
@@ -394,8 +410,8 @@ function handleProgressEvent(ev, slug, repairId) {
       break;
     }
     case "pipeline_finished": {
-      setTimelineTitle(`Fiche prête · ${ev.status || ""}`);
-      setStatus("C'est prêt. J'ouvre le diagnostic…", STATUS_NEUTRAL);
+      setTimelineTitle(t("landing.timeline.title_ready", { status: ev.status || "" }));
+      setStatus(t("landing.status.ready"), STATUS_NEUTRAL);
       stopEtaTicker();
       setLandingMascot("success");
       // 2500 ms grace gives the audit phase narration (Haiku ~800-1600 ms)
@@ -404,8 +420,8 @@ function handleProgressEvent(ev, slug, repairId) {
       break;
     }
     case "pipeline_failed": {
-      setTimelineTitle("Pipeline échoué");
-      setStatus(`Erreur : ${ev.error || ev.status || "inconnue"}.`, STATUS_ERROR);
+      setTimelineTitle(t("landing.timeline.title_failed"));
+      setStatus(t("landing.status.error_pipeline", { error: ev.error || ev.status || t("landing.status.error_unknown") }), STATUS_ERROR);
       const running = document.querySelector(".landing-phase.is-running");
       if (running) {
         running.classList.remove("is-running");
@@ -427,18 +443,23 @@ function setExpandMode() {
   // Clinicien and doesn't traverse Mapper / Writers / Auditor. Showing
   // 5 pending dots that never advance (because phase events carry
   // phase: "expand" which isn't in PHASE_ORDER) looks broken.
+  const t = window.t || ((k) => k);
   const tl = document.getElementById("landingTimeline");
   if (!tl) return;
   tl.classList.add("landing-timeline-expand");
   const phases = tl.querySelectorAll(".landing-phase");
   phases.forEach((el, i) => {
     if (i === 0) {
-      // Repurpose the first row as the single "expand" marker.
+      // Repurpose the first row as the single "expand" marker. Drop the
+      // [data-i18n] hook so applyDom() doesn't restore the old "scout" label.
       el.dataset.phase = "expand";
       el.classList.remove("is-done", "is-failed");
       el.classList.add("is-running");
       const label = el.querySelector(".landing-phase-label");
-      if (label) label.textContent = "Recherche ciblée sur ton symptôme";
+      if (label) {
+        label.removeAttribute("data-i18n");
+        label.textContent = t("landing.timeline.phase_expand");
+      }
       const narr = el.querySelector(".landing-phase-narration");
       if (narr) narr.textContent = "";
     } else {
@@ -448,6 +469,40 @@ function setExpandMode() {
   });
 }
 
+
+function _sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Plays a fake 5-phase pipeline timeline at ~3s per phase, then the
+// mascot success state, then navigates to the workspace. Used when the
+// backend signals `pipeline_started: false` (pack already on disk) so
+// the technician sees the cache hit as a fast pipeline run instead of
+// an instant flash. ~15s total + 1.5s success grace = ~16–17s.
+async function playCachedPipelineTimeline(slug, repairId, deviceLabel) {
+  showTimeline();
+  setTimelineTitle(`Chargement de la fiche · ${deviceLabel}`);
+  setLandingMascot("working");
+
+  // PHASE_ORDER includes "mapper" which the live pipeline marks hidden
+  // until a phase event arrives. For a cache hit we want to show all
+  // phases marching past, so unhide it first.
+  const mapperRow = document.querySelector('.landing-phase[data-phase="mapper"]');
+  if (mapperRow) mapperRow.hidden = false;
+
+  const PER_PHASE_MS = 3000;
+  for (const phase of PHASE_ORDER) {
+    setPhaseState(phase, "running");
+    await _sleep(PER_PHASE_MS * 0.7);
+    setPhaseState(phase, "done");
+    await _sleep(PER_PHASE_MS * 0.3);
+  }
+
+  setLandingMascot("success");
+  setTimelineTitle(t("landing.timeline.title_ready", { status: deviceLabel }));
+  await _sleep(1500);
+  goToWorkspace(repairId, slug);
+}
 
 function goToWorkspace(repairId, slug) {
   // Land the tech on the graph view (loads graph + memory bank + opens
@@ -490,7 +545,14 @@ function onChipClick(ev) {
   const dev = document.getElementById("landingDevice");
   const sym = document.getElementById("landingSymptom");
   if (dev && btn.dataset.device) dev.value = btn.dataset.device;
-  if (sym && btn.dataset.symptom) sym.value = btn.dataset.symptom;
+  if (sym) {
+    // Prefer the i18n key if present so the chip's symptom matches the active
+    // locale; fall back to the literal data-symptom attribute.
+    const key = btn.dataset.symptomKey;
+    const fallback = btn.dataset.symptom || "";
+    if (key && window.t) sym.value = window.t(key);
+    else if (fallback) sym.value = fallback;
+  }
   sym?.focus();
 }
 

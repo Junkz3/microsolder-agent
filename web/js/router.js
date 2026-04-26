@@ -6,12 +6,15 @@ export const APP_VERSION = "v0.5.0";
 
 export const SECTIONS = ["home", "pcb", "schematic", "graphe", "profile"];
 
+// SECTION_META holds i18n keys instead of literal strings — resolved at
+// render time inside updateChrome(). On locale switch, refreshChrome() is
+// re-invoked through the i18n.onChange hook below.
 const SECTION_META = {
-  home:          {crumb: "Journal des réparations", mode: {tag: "JOURNAL",  sub: "Réparations",            color: "cyan"}},
-  pcb:           {crumb: "Boardview",                mode: {tag: "OUTIL",    sub: "Boardview",              color: "cyan"}},
-  schematic:     {crumb: "Schematic",                mode: {tag: "OUTIL",    sub: "Graphe électrique",      color: "emerald"}},
-  graphe:        {crumb: "Mémoire",                  mode: {tag: "ATTENTE",  sub: "Aucune mémoire chargée", color: "amber"}},
-  profile:       {crumb: "Profil",                   mode: {tag: "PROFIL",   sub: "Technicien",             color: "cyan"}},
+  home:          {crumbKey: "router.section.home",      mode: {tagKey: "router.mode.journal_tag", subKey: "router.mode.journal_repairs",   color: "cyan"}},
+  pcb:           {crumbKey: "router.section.pcb",       mode: {tagKey: "router.mode.tool_tag",    subKey: "router.mode.tool_boardview",    color: "cyan"}},
+  schematic:     {crumbKey: "router.section.schematic", mode: {tagKey: "router.mode.tool_tag",    subKey: "router.mode.tool_schematic",    color: "emerald"}},
+  graphe:        {crumbKey: "router.section.graphe",    mode: {tagKey: "router.mode.wait_tag",    subKey: "router.mode.wait_no_memory",    color: "amber"}},
+  profile:       {crumbKey: "router.section.profile",   mode: {tagKey: "router.mode.profile_tag", subKey: "router.mode.profile_sub",       color: "cyan"}},
 };
 
 export function prettifySlug(slug) {
@@ -110,31 +113,32 @@ function packMissingFiles(pack) {
 }
 
 function updateChrome(section, deviceSlug, pack) {
+  const t = (window.t || ((k) => k));
   let meta = SECTION_META[section] || SECTION_META.home;
   // Home's mode-pill reflects whether a session is active. Without a session,
-  // it reads "JOURNAL · Réparations" (the SECTION_META default). With a session,
-  // it reads "JOURNAL · Session" to signal we're on the dashboard, not the list.
+  // it reads the journal/repairs default. With a session, it reads "Session"
+  // to signal we're on the dashboard, not the list.
   const activeSession = currentSession();
   if (section === "home" && activeSession) {
-    meta = { ...meta, mode: { ...meta.mode, sub: "Session" } };
+    meta = { ...meta, mode: { ...meta.mode, subKey: "router.mode.journal_session" } };
   }
 
   // Mode pill — static per-section, overridden on Graphe by pack state.
   let mode = meta.mode;
   if (section === "graphe") {
     if (!deviceSlug) {
-      mode = {tag: "ATTENTE", sub: "Aucune réparation en cours", color: "amber"};
+      mode = {tagKey: "router.mode.wait_tag", subKey: "router.mode.wait_no_repair", color: "amber"};
     } else if (isPackComplete(pack)) {
-      mode = {tag: "MÉMOIRE", sub: "Graphe de connaissances", color: "cyan"};
+      mode = {tagKey: "router.mode.memory_tag", subKey: "router.mode.memory_graph", color: "cyan"};
     } else if (pack) {
-      mode = {tag: "CONSTRUCTION", sub: "Mémoire en cours", color: "amber"};
+      mode = {tagKey: "router.mode.build_tag", subKey: "router.mode.build_in_progress", color: "amber"};
     } else {
-      mode = {tag: "ATTENTE", sub: "Mémoire non construite", color: "amber"};
+      mode = {tagKey: "router.mode.wait_tag", subKey: "router.mode.wait_unbuilt", color: "amber"};
     }
   }
   const pill = document.getElementById("modePill");
   pill.className = `mode-pill ${mode.color}`;
-  document.getElementById("modePillText").textContent = `${mode.tag} · ${mode.sub}`;
+  document.getElementById("modePillText").textContent = `${t(mode.tagKey)} · ${t(mode.subKey)}`;
 
   // Repair metadata for the active session — drives the symptom in the
   // breadcrumb and the start date in the session-pill. Synchronous read;
@@ -178,7 +182,7 @@ function updateChrome(section, deviceSlug, pack) {
   } else if (deviceSlug) {
     crumbs.push(prettifySlug(deviceSlug));
   }
-  crumbs.push(meta.crumb);
+  crumbs.push(t(meta.crumbKey));
   renderCrumbs(crumbs);
 
   // Async upgrade — fetch repair meta on miss, re-render the chrome once
@@ -199,9 +203,9 @@ function updateChrome(section, deviceSlug, pack) {
   const deviceEl = document.getElementById("metaDevice");
   const statusEl = document.getElementById("metaStatus");
   if (!deviceSlug) {
-    deviceEl.innerHTML = `<span style="color:var(--text-3)">Aucune réparation en cours</span>`;
+    deviceEl.innerHTML = `<span style="color:var(--text-3)">${t("router.metabar.no_repair")}</span>`;
     statusEl.className = "warn info";
-    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>Ouvre une réparation depuis le Journal pour voir son graphe.`;
+    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>${t("router.metabar.open_repair_to_view_graph")}`;
     return;
   }
 
@@ -209,14 +213,14 @@ function updateChrome(section, deviceSlug, pack) {
 
   if (!pack) {
     statusEl.className = "warn";
-    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>Aucune mémoire pour ce device — crée une réparation pour la construire.`;
+    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>${t("router.metabar.no_memory_for_device")}`;
   } else if (isPackComplete(pack)) {
     statusEl.className = "warn ok";
-    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>Mémoire chargée · audit APPROUVÉ`;
+    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>${t("router.metabar.memory_loaded_approved")}`;
   } else {
     const missing = packMissingFiles(pack);
     statusEl.className = "warn";
-    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Mémoire en construction — manque ${missing.join(", ")}`;
+    statusEl.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${t("router.metabar.memory_building_missing", { missing: missing.join(", ") })}`;
   }
 }
 
@@ -289,6 +293,13 @@ export function navigate(section) {
 
 export function wireRouter() {
   window.addEventListener("hashchange", () => navigate(currentSection()));
+  // Re-render the topbar chrome (mode pill, breadcrumbs, metabar status text)
+  // when the user toggles EN/FR. The DOM-level [data-i18n] elements are
+  // refreshed by i18n.applyDom; chrome content that is built imperatively
+  // from current section + pack state must be redrawn here.
+  if (window.i18n && typeof window.i18n.onChange === "function") {
+    window.i18n.onChange(() => refreshChrome(currentSection()));
+  }
   document.querySelectorAll(".rail-btn[data-section]").forEach(btn => {
     btn.addEventListener("click", () => {
       window.location.hash = "#" + btn.dataset.section;

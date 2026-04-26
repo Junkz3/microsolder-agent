@@ -29,8 +29,10 @@ function _ensureRoot() {
   _root.hidden = true;
   _root.innerHTML = `
     <header class="camera-preview-head" id="cameraPreviewHead">
-      <span class="camera-preview-title">Caméra · <span id="cameraPreviewLabel">—</span></span>
-      <button class="camera-preview-close" type="button" aria-label="Fermer la preview">
+      <span class="camera-preview-title"><span data-i18n="camera.preview.title_prefix">Camera</span> · <span id="cameraPreviewLabel">—</span></span>
+      <button class="camera-preview-close" type="button"
+              data-i18n-attr="aria-label:camera.preview.close_aria"
+              aria-label="Close preview">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M6 6l12 12M18 6L6 18"/>
@@ -41,6 +43,7 @@ function _ensureRoot() {
            autoplay muted playsinline></video>
   `;
   document.body.appendChild(_root);
+  if (window.i18n && window.i18n.applyDom) window.i18n.applyDom(_root);
 
   _video = _root.querySelector('#cameraPreviewVideo');
   _root.querySelector('.camera-preview-close')
@@ -116,7 +119,7 @@ export async function openPreview(deviceId, label) {
   }
   _root.hidden = false;
   const labelEl = _root.querySelector('#cameraPreviewLabel');
-  if (labelEl) labelEl.textContent = label || 'caméra';
+  if (labelEl) labelEl.textContent = label || t('camera.preview.label_fallback');
   try { localStorage.setItem(OPEN_KEY, '1'); } catch (_) { /* ignore */ }
   return true;
 }
@@ -158,7 +161,7 @@ export async function updatePreviewDevice(deviceId, label) {
   }
   if (deviceId === _currentDeviceId) {
     const labelEl = _root.querySelector('#cameraPreviewLabel');
-    if (labelEl) labelEl.textContent = label || 'caméra';
+    if (labelEl) labelEl.textContent = label || t('camera.preview.label_fallback');
     return;
   }
   await openPreview(deviceId, label);  // openPreview swaps internally

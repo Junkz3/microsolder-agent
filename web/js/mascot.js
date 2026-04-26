@@ -33,8 +33,20 @@ export function mountMascot(target, opts = {}) {
 
   const clone = tpl.content.firstElementChild.cloneNode(true);
   clone.classList.add("mascot", `mascot-${size}`, `is-${state}`);
+  // Accessibility — the template ships no role/label so we set one here.
+  // Re-applied on locale change via the onChange hook below.
+  clone.setAttribute("role", "img");
+  clone.setAttribute("aria-label", t("mascot.aria.label"));
   target.replaceChildren(clone);
   return clone;
+}
+
+if (window.i18n && window.i18n.onChange) {
+  window.i18n.onChange(() => {
+    document.querySelectorAll("svg.mascot[role='img']").forEach((svg) => {
+      svg.setAttribute("aria-label", t("mascot.aria.label"));
+    });
+  });
 }
 
 /**

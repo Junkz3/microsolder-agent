@@ -14,6 +14,11 @@ const STATE = {
 
 function el(id) { return document.getElementById(id); }
 
+// Local shortcut that always falls back to the key when i18n hasn't booted.
+function tr(key, params) {
+  return (window.t ? window.t(key, params) : key);
+}
+
 function fmt(value, fallback = "—") {
   if (value === null || value === undefined) return fallback;
   if (typeof value === "string" && value.trim() === "") return fallback;
@@ -64,7 +69,7 @@ function renderPackPicker() {
   if (STATE.packs.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "— aucun pack —";
+    opt.textContent = tr("memory_bank.picker.empty_option");
     sel.appendChild(opt);
     sel.disabled = true;
     return;
@@ -90,24 +95,25 @@ function renderVerdict() {
   let verdictHtml;
   if (!v) {
     verdictHtml = `
-      <span class="mb-verdict none" title="Aucun audit n'a encore été écrit pour ce pack.">
-        <span class="dot"></span>AUDIT · non exécuté
+      <span class="mb-verdict none" title="${escHtml(tr("memory_bank.verdict.none_title"))}">
+        <span class="dot"></span>${escHtml(tr("memory_bank.verdict.none_label"))}
       </span>
-      <span class="mb-score">cohérence <b>—</b></span>`;
+      <span class="mb-score">${escHtml(tr("memory_bank.verdict.consistency"))} <b>—</b></span>`;
   } else {
     const cls = v.overall_status === "APPROVED"       ? "approved"
               : v.overall_status === "NEEDS_REVISION" ? "needs-revision"
               : v.overall_status === "REJECTED"       ? "rejected"
               : "none";
-    const label = v.overall_status === "APPROVED"       ? "AUDIT · approuvé"
-                : v.overall_status === "NEEDS_REVISION" ? "AUDIT · révision"
-                : v.overall_status === "REJECTED"       ? "AUDIT · rejeté"
-                : "AUDIT · inconnu";
+    const labelKey = v.overall_status === "APPROVED"       ? "memory_bank.verdict.approved_label"
+                   : v.overall_status === "NEEDS_REVISION" ? "memory_bank.verdict.needs_revision_label"
+                   : v.overall_status === "REJECTED"       ? "memory_bank.verdict.rejected_label"
+                   :                                         "memory_bank.verdict.unknown_label";
+    const label = tr(labelKey);
     const score = (typeof v.consistency_score === "number")
       ? v.consistency_score.toFixed(2) : "—";
     verdictHtml = `
       <span class="mb-verdict ${cls}"><span class="dot"></span>${escHtml(label)}</span>
-      <span class="mb-score">cohérence <b>${score}</b></span>`;
+      <span class="mb-score">${escHtml(tr("memory_bank.verdict.consistency"))} <b>${score}</b></span>`;
   }
 
   // Counts from the pack contents.
@@ -117,12 +123,12 @@ function renderVerdict() {
   const dict = pack.dictionary || {};
   const counts = `
     <span class="mb-counts">
-      <span class="count"><b>${(reg.components || []).length}</b> composants</span>
-      <span class="count"><b>${(reg.signals || []).length}</b> signaux</span>
-      <span class="count"><b>${(kg.nodes || []).length}</b> nœuds</span>
-      <span class="count"><b>${(kg.edges || []).length}</b> arêtes</span>
-      <span class="count"><b>${(rules.rules || []).length}</b> règles</span>
-      <span class="count"><b>${(dict.entries || []).length}</b> fiches</span>
+      <span class="count"><b>${(reg.components || []).length}</b> ${escHtml(tr("memory_bank.counts.components"))}</span>
+      <span class="count"><b>${(reg.signals || []).length}</b> ${escHtml(tr("memory_bank.counts.signals"))}</span>
+      <span class="count"><b>${(kg.nodes || []).length}</b> ${escHtml(tr("memory_bank.counts.nodes"))}</span>
+      <span class="count"><b>${(kg.edges || []).length}</b> ${escHtml(tr("memory_bank.counts.edges"))}</span>
+      <span class="count"><b>${(rules.rules || []).length}</b> ${escHtml(tr("memory_bank.counts.rules"))}</span>
+      <span class="count"><b>${(dict.entries || []).length}</b> ${escHtml(tr("memory_bank.counts.sheets"))}</span>
     </span>`;
   row.innerHTML = verdictHtml + counts;
 }
@@ -130,7 +136,7 @@ function renderVerdict() {
 function renderDeviceLabel() {
   const h1 = el("mbDeviceLabel");
   if (!STATE.pack) {
-    h1.textContent = "Memory Bank";
+    h1.textContent = tr("memory_bank.title");
     return;
   }
   // Prefer a clean `{brand} {model}` from taxonomy; append the form_factor as
@@ -142,7 +148,7 @@ function renderDeviceLabel() {
     ? nameParts.join(" ")
     : (STATE.pack.device_label || STATE.currentSlug);
   const form = tax.form_factor ? ` <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);letter-spacing:.3px;text-transform:uppercase;margin-left:8px;padding:1px 7px;border:1px solid var(--border-soft);border-radius:10px">${escHtml(tax.form_factor)}</span>` : "";
-  h1.innerHTML = `Memory Bank <span class="sub" style="color:var(--text-3);font-weight:400;font-size:14px;margin-left:10px">· ${escHtml(deviceName)}</span>${form}`;
+  h1.innerHTML = tr("memory_bank.title_with_device", { device: escHtml(deviceName), form });
 }
 
 /* ---------- blocks rendering ---------- */
@@ -150,16 +156,16 @@ function renderDeviceLabel() {
 function renderRegistry(registry) {
   const body = el("mbBlockRegistry");
   if (!registry) {
-    body.innerHTML = `<div class="mb-missing">registry.json absent — pipeline non exécuté.</div>`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.registry.missing"))}</div>`;
     return;
   }
   const comps = registry.components || [];
   const sigs  = registry.signals    || [];
   body.innerHTML = `
-    <h3 style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-3);font-family:var(--mono);font-weight:500">Composants (${comps.length})</h3>
-    ${comps.length === 0 ? '<div class="mb-missing">Aucun composant.</div>' : `
+    <h3 style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-3);font-family:var(--mono);font-weight:500">${escHtml(tr("memory_bank.registry.components_heading", { n: comps.length }))}</h3>
+    ${comps.length === 0 ? `<div class="mb-missing">${escHtml(tr("memory_bank.registry.no_components"))}</div>` : `
       <table class="mb-table" data-kind="registry-components">
-        <thead><tr><th>Refdes</th><th>Type</th><th>Alias</th><th>Description</th></tr></thead>
+        <thead><tr><th>${escHtml(tr("memory_bank.registry.th_refdes"))}</th><th>${escHtml(tr("memory_bank.registry.th_type"))}</th><th>${escHtml(tr("memory_bank.registry.th_aliases"))}</th><th>${escHtml(tr("memory_bank.registry.th_description"))}</th></tr></thead>
         <tbody>
           ${comps.map(c => `
             <tr data-search="${escHtml([c.canonical_name, c.logical_alias, ...(c.aliases || []), c.description, c.kind].filter(Boolean).join(" ").toLowerCase())}">
@@ -170,10 +176,10 @@ function renderRegistry(registry) {
             </tr>`).join("")}
         </tbody>
       </table>`}
-    <h3 style="margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-3);font-family:var(--mono);font-weight:500">Signaux (${sigs.length})</h3>
-    ${sigs.length === 0 ? '<div class="mb-missing">Aucun signal.</div>' : `
+    <h3 style="margin:16px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-3);font-family:var(--mono);font-weight:500">${escHtml(tr("memory_bank.registry.signals_heading", { n: sigs.length }))}</h3>
+    ${sigs.length === 0 ? `<div class="mb-missing">${escHtml(tr("memory_bank.registry.no_signals"))}</div>` : `
       <table class="mb-table" data-kind="registry-signals">
-        <thead><tr><th>Nom canonique</th><th>Type</th><th>Alias</th><th>Tension nominale</th></tr></thead>
+        <thead><tr><th>${escHtml(tr("memory_bank.registry.th_canonical"))}</th><th>${escHtml(tr("memory_bank.registry.th_type"))}</th><th>${escHtml(tr("memory_bank.registry.th_aliases"))}</th><th>${escHtml(tr("memory_bank.registry.th_nominal_voltage"))}</th></tr></thead>
         <tbody>
           ${sigs.map(s => `
             <tr data-search="${escHtml([s.canonical_name, ...(s.aliases || []), s.kind].filter(Boolean).join(" ").toLowerCase())}">
@@ -185,13 +191,13 @@ function renderRegistry(registry) {
         </tbody>
       </table>`}
   `;
-  el("mbBlockRegistryCount").innerHTML = `<b>${comps.length}</b> composants · <b>${sigs.length}</b> signaux`;
+  el("mbBlockRegistryCount").innerHTML = tr("memory_bank.counts.registry_count", { c: comps.length, s: sigs.length });
 }
 
 function renderKnowledgeGraph(kg) {
   const body = el("mbBlockGraph");
   if (!kg) {
-    body.innerHTML = `<div class="mb-missing">knowledge_graph.json absent.</div>`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.graph.missing"))}</div>`;
     return;
   }
   const nodes = kg.nodes || [];
@@ -201,12 +207,12 @@ function renderKnowledgeGraph(kg) {
 
   body.innerHTML = `
     <div class="mb-graph-stats">
-      <div class="mb-stat sym"><span class="label">Symptômes</span><span class="value">${byKind.symptom}</span></div>
-      <div class="mb-stat cmp"><span class="label">Composants</span><span class="value">${byKind.component}</span></div>
-      <div class="mb-stat net"><span class="label">Nets</span><span class="value">${byKind.net}</span></div>
-      <div class="mb-stat edge"><span class="label">Arêtes</span><span class="value">${edges.length}</span></div>
+      <div class="mb-stat sym"><span class="label">${escHtml(tr("memory_bank.graph.stat_symptoms"))}</span><span class="value">${byKind.symptom}</span></div>
+      <div class="mb-stat cmp"><span class="label">${escHtml(tr("memory_bank.graph.stat_components"))}</span><span class="value">${byKind.component}</span></div>
+      <div class="mb-stat net"><span class="label">${escHtml(tr("memory_bank.graph.stat_nets"))}</span><span class="value">${byKind.net}</span></div>
+      <div class="mb-stat edge"><span class="label">${escHtml(tr("memory_bank.graph.stat_edges"))}</span><span class="value">${edges.length}</span></div>
     </div>
-    ${edges.length === 0 ? '<div class="mb-missing">Aucune arête dans le graphe.</div>' : `
+    ${edges.length === 0 ? `<div class="mb-missing">${escHtml(tr("memory_bank.graph.no_edges"))}</div>` : `
       <div class="mb-edges">
         ${edges.map(e => `
           <div class="mb-edge-row" data-search="${escHtml([e.source_id, e.target_id, e.relation].filter(Boolean).join(" ").toLowerCase())}">
@@ -216,19 +222,19 @@ function renderKnowledgeGraph(kg) {
           </div>`).join("")}
       </div>`}
   `;
-  el("mbBlockGraphCount").innerHTML = `<b>${nodes.length}</b> nœuds · <b>${edges.length}</b> arêtes`;
+  el("mbBlockGraphCount").innerHTML = tr("memory_bank.counts.graph_count", { n: nodes.length, e: edges.length });
 }
 
 function renderRules(rules) {
   const body = el("mbBlockRules");
   if (!rules) {
-    body.innerHTML = `<div class="mb-missing">rules.json absent.</div>`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.rules.missing"))}</div>`;
     return;
   }
   const items = rules.rules || [];
   if (items.length === 0) {
-    body.innerHTML = `<div class="mb-missing">Aucune règle de diagnostic.</div>`;
-    el("mbBlockRulesCount").innerHTML = `<b>0</b> règles`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.rules.none"))}</div>`;
+    el("mbBlockRulesCount").innerHTML = tr("memory_bank.counts.rules_count_zero");
     return;
   }
   body.innerHTML = items.map((r, i) => {
@@ -240,7 +246,7 @@ function renderRules(rules) {
     ].filter(Boolean).join(" ").toLowerCase();
     const headSym = (r.symptoms && r.symptoms.length > 0)
       ? `<b>${escHtml(r.symptoms[0])}</b>${r.symptoms.length > 1 ? ` <span style="color:var(--text-3)">+${r.symptoms.length - 1}</span>` : ""}`
-      : '<span style="color:var(--text-3)">(aucun symptôme)</span>';
+      : `<span style="color:var(--text-3)">${escHtml(tr("memory_bank.rules.no_symptom"))}</span>`;
     const conf = typeof r.confidence === "number" ? r.confidence.toFixed(2) : "—";
     return `
       <div class="mb-rule" data-rule-idx="${i}" data-search="${escHtml(searchText)}">
@@ -248,17 +254,17 @@ function renderRules(rules) {
           <span class="caret"></span>
           <span class="mb-rule-id">${escHtml(r.id || `rule-${i}`)}</span>
           <span class="mb-rule-sym">${headSym}</span>
-          <span class="mb-rule-conf">conf ${conf}</span>
+          <span class="mb-rule-conf">${escHtml(tr("memory_bank.rules.conf_label", { value: conf }))}</span>
         </div>
         <div class="mb-rule-body">
           <div class="mb-rule-section">
-            <h4>Symptômes</h4>
+            <h4>${escHtml(tr("memory_bank.rules.h_symptoms"))}</h4>
             <div class="mb-rule-symptoms">
               ${(r.symptoms || []).map(s => `<span class="sym">${escHtml(s)}</span>`).join("") || '<span class="muted">—</span>'}
             </div>
           </div>
           <div class="mb-rule-section">
-            <h4>Causes probables</h4>
+            <h4>${escHtml(tr("memory_bank.rules.h_likely_causes"))}</h4>
             ${(r.likely_causes || []).length === 0 ? '<span class="muted">—</span>' :
               (r.likely_causes || []).map(c => {
                 const p = typeof c.probability === "number" ? c.probability : 0;
@@ -272,17 +278,17 @@ function renderRules(rules) {
               }).join("")}
           </div>
           <div class="mb-rule-section">
-            <h4>Étapes de diagnostic</h4>
+            <h4>${escHtml(tr("memory_bank.rules.h_diagnostic_steps"))}</h4>
             ${(r.diagnostic_steps || []).length === 0 ? '<span class="muted">—</span>' :
               (r.diagnostic_steps || []).map(s => `
                 <div class="mb-step">
                   <span class="act">${escHtml(s.action)}</span>
-                  ${s.expected ? `<span class="exp">attendu ${escHtml(s.expected)}</span>` : ""}
+                  ${s.expected ? `<span class="exp">${escHtml(tr("memory_bank.rules.expected", { value: s.expected }))}</span>` : ""}
                 </div>`).join("")}
           </div>
           ${(r.sources || []).length > 0 ? `
             <div class="mb-rule-section">
-              <h4>Sources</h4>
+              <h4>${escHtml(tr("memory_bank.rules.h_sources"))}</h4>
               <div class="mb-rule-sources">
                 ${(r.sources || []).map(s => `<span class="src">${escHtml(s)}</span>`).join("")}
               </div>
@@ -297,24 +303,24 @@ function renderRules(rules) {
       h.parentElement.classList.toggle("open");
     });
   });
-  el("mbBlockRulesCount").innerHTML = `<b>${items.length}</b> règles`;
+  el("mbBlockRulesCount").innerHTML = tr("memory_bank.counts.rules_count", { n: items.length });
 }
 
 function renderDictionary(dict) {
   const body = el("mbBlockDictionary");
   if (!dict) {
-    body.innerHTML = `<div class="mb-missing">dictionary.json absent.</div>`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.dictionary.missing"))}</div>`;
     return;
   }
   const entries = dict.entries || [];
   if (entries.length === 0) {
-    body.innerHTML = `<div class="mb-missing">Aucune fiche composant.</div>`;
-    el("mbBlockDictionaryCount").innerHTML = `<b>0</b> fiches`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.dictionary.none"))}</div>`;
+    el("mbBlockDictionaryCount").innerHTML = tr("memory_bank.counts.sheets_count_zero");
     return;
   }
   body.innerHTML = `
     <table class="mb-table" data-kind="dictionary">
-      <thead><tr><th>Refdes</th><th>Rôle</th><th>Boîtier</th><th>Modes de défaillance</th><th>Notes</th></tr></thead>
+      <thead><tr><th>${escHtml(tr("memory_bank.dictionary.th_refdes"))}</th><th>${escHtml(tr("memory_bank.dictionary.th_role"))}</th><th>${escHtml(tr("memory_bank.dictionary.th_package"))}</th><th>${escHtml(tr("memory_bank.dictionary.th_failure_modes"))}</th><th>${escHtml(tr("memory_bank.dictionary.th_notes"))}</th></tr></thead>
       <tbody>
         ${entries.map(e => {
           const modes = e.typical_failure_modes || [];
@@ -332,7 +338,7 @@ function renderDictionary(dict) {
         }).join("")}
       </tbody>
     </table>`;
-  el("mbBlockDictionaryCount").innerHTML = `<b>${entries.length}</b> fiches`;
+  el("mbBlockDictionaryCount").innerHTML = tr("memory_bank.counts.sheets_count", { n: entries.length });
 }
 
 function renderAudit(verdict) {
@@ -340,7 +346,7 @@ function renderAudit(verdict) {
   const body  = el("mbBlockAudit");
   if (!verdict) {
     block.style.display = "";
-    body.innerHTML = `<div class="mb-missing">audit_verdict.json absent — le pipeline n'a pas encore audité ce pack.</div>`;
+    body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.audit.missing"))}</div>`;
     el("mbBlockAuditCount").innerHTML = `<b>—</b>`;
     return;
   }
@@ -352,29 +358,29 @@ function renderAudit(verdict) {
   const brief  = verdict.revision_brief || "";
 
   const headline = status === "APPROVED"
-    ? "Audit approuvé — le pack est cohérent avec le registre."
+    ? tr("memory_bank.audit.headline_approved")
     : status === "NEEDS_REVISION"
-      ? "Audit demande une révision — dérive détectée, corrections attendues."
+      ? tr("memory_bank.audit.headline_needs_revision")
       : status === "REJECTED"
-        ? "Audit rejeté — pack incohérent, non exploitable en l'état."
-        : "Statut d'audit inconnu.";
+        ? tr("memory_bank.audit.headline_rejected")
+        : tr("memory_bank.audit.headline_unknown");
 
   body.innerHTML = `
     <div class="mb-audit-summary">
       <div class="headline">${escHtml(headline)}</div>
-      <div class="mb-score" style="margin-left:auto">cohérence <b>${score}</b></div>
+      <div class="mb-score" style="margin-left:auto">${escHtml(tr("memory_bank.verdict.consistency"))} <b>${score}</b></div>
     </div>
     ${brief ? `<div class="mb-audit-brief">${escHtml(brief)}</div>` : ""}
     ${files.length > 0 ? `
       <div class="mb-drift">
-        <h4>Fichiers à réécrire</h4>
+        <h4>${escHtml(tr("memory_bank.audit.files_to_rewrite"))}</h4>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${files.map(f => `<span class="mb-alias" style="color:var(--amber);background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.3)">${escHtml(f)}</span>`).join("")}
         </div>
       </div>` : ""}
     ${drift.length > 0 ? `
       <div class="mb-drift">
-        <h4>Dérives détectées (${drift.length})</h4>
+        <h4>${escHtml(tr("memory_bank.audit.drift_heading", { n: drift.length }))}</h4>
         ${drift.map(d => `
           <div class="mb-drift-item">
             <span class="file">${escHtml(d.file)}</span>
@@ -407,7 +413,7 @@ function showEmptyState(message) {
   el("mbBody").style.display = "none";
   const empty = el("mbEmpty");
   empty.classList.remove("hidden");
-  empty.querySelector("p").textContent = message || "Aucun pack de connaissances n'est disponible. Lance le pipeline pour en générer un.";
+  empty.querySelector("p").textContent = message || tr("memory_bank.empty.body_default");
 }
 
 function hideEmptyState() {
@@ -464,7 +470,7 @@ export async function loadMemoryBank() {
     hideEmptyState();
     STATE.pack = await fetchFullPack(STATE.currentSlug);
     if (!STATE.pack) {
-      showEmptyState(`Impossible de charger le pack « ${STATE.currentSlug} ».`);
+      showEmptyState(tr("memory_bank.empty.load_failed", { slug: STATE.currentSlug }));
       return;
     }
     renderPack();
@@ -474,6 +480,14 @@ export async function loadMemoryBank() {
 }
 
 export function initMemoryBank() {
+  // Re-render the imperatively-built table cells (headers, counts, missing
+  // banners) when the locale toggles. The DOM-level [data-i18n] hooks in
+  // index.html are refreshed by i18n.applyDom; this hook handles the rest.
+  if (window.i18n && typeof window.i18n.onChange === "function") {
+    window.i18n.onChange(() => {
+      if (STATE.pack) renderPack();
+    });
+  }
   const sel = el("mbPackSelect");
   if (sel) {
     sel.addEventListener("change", async () => {
@@ -482,7 +496,7 @@ export function initMemoryBank() {
       STATE.currentSlug = slug;
       STATE.pack = await fetchFullPack(slug);
       if (!STATE.pack) {
-        showEmptyState(`Impossible de charger le pack « ${slug} ».`);
+        showEmptyState(tr("memory_bank.empty.load_failed", { slug }));
         return;
       }
       hideEmptyState();

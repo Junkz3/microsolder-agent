@@ -30,9 +30,11 @@ function _devicesById(id) {
 }
 
 function _labelFor(id) {
-  if (!id) return '— aucune —';
+  if (!id) return t('camera.picker.none');
   const d = _devicesById(id);
-  return d ? (d.label || `Caméra ${id.slice(0, 6)}…`) : '— aucune —';
+  return d
+    ? (d.label || t('camera.picker.device_fallback', { id: id.slice(0, 6) }))
+    : t('camera.picker.none');
 }
 
 function _renderChipLabel() {
@@ -48,7 +50,7 @@ function _renderPopover() {
   noneBtn.type = 'button';
   noneBtn.setAttribute('role', 'menuitem');
   noneBtn.dataset.deviceId = '';
-  noneBtn.textContent = '— aucune —';
+  noneBtn.textContent = t('camera.picker.none');
   if (!_selectedDeviceId) noneBtn.classList.add('on');
   popover.appendChild(noneBtn);
   _cachedDevices.forEach((d) => {
@@ -56,7 +58,7 @@ function _renderPopover() {
     btn.type = 'button';
     btn.setAttribute('role', 'menuitem');
     btn.dataset.deviceId = d.deviceId;
-    btn.textContent = d.label || `Caméra ${d.deviceId.slice(0, 6)}…`;
+    btn.textContent = d.label || t('camera.picker.device_fallback', { id: d.deviceId.slice(0, 6) });
     if (d.deviceId === _selectedDeviceId) btn.classList.add('on');
     popover.appendChild(btn);
   });
@@ -89,6 +91,9 @@ export async function initCameraPicker(onChange) {
   await refreshDevices();
   if (navigator.mediaDevices.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+  }
+  if (window.i18n && window.i18n.onChange) {
+    window.i18n.onChange(() => { _renderChipLabel(); _renderPopover(); });
   }
 
   // Restore previous selection if still present.

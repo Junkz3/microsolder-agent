@@ -104,42 +104,47 @@ const ICON_MEM =
   '<path d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"/>' +
   '<path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>';
 
-// French paraphrase + family icon for each known tool name. Each entry
+// Localized paraphrase + family icon for each known tool name. Each entry
 // is a function receiving the tool input object and returning
 // {icon, phraseHTML}. phraseHTML may embed a <span class="refdes"> or
 // <span class="net"> for typographic emphasis on the target; all user
-// input is passed through escapeHTML before interpolation.
+// input is passed through escapeHTML before interpolation. Strings come
+// from i18n via window.t() so they re-render on locale switch.
 const TOOL_PHRASES = {
   // --- MB (memory bank — perception / reading) ---
   mb_get_component: (i) => ({
     icon: ICON_MB,
-    phraseHTML: `Consultation de <span class="refdes">${escapeHTML(i?.refdes || "?")}</span>`,
+    phraseHTML: t('chat.tool.mb_get_component', { refdes: escapeHTML(i?.refdes || "?") }),
   }),
   mb_get_rules_for_symptoms: (i) => {
     const syms = Array.isArray(i?.symptoms) ? i.symptoms.join(", ") : (i?.symptoms || "");
     return {
       icon: ICON_MB,
-      phraseHTML: `Lecture des règles pour « ${escapeHTML(syms)} »`,
+      phraseHTML: t('chat.tool.mb_get_rules_for_symptoms', { symptoms: escapeHTML(syms) }),
     };
   },
   mb_list_findings: (i) => ({
     icon: ICON_MB,
-    phraseHTML: `Revue des findings${i?.device ? ` pour <span class="refdes">${escapeHTML(i.device)}</span>` : ""}`,
+    phraseHTML: i?.device
+      ? t('chat.tool.mb_list_findings_for', { device: escapeHTML(i.device) })
+      : t('chat.tool.mb_list_findings'),
   }),
   mb_record_finding: () => ({
     icon: ICON_MB,
-    phraseHTML: `Enregistrement d'un finding`,
+    phraseHTML: t('chat.tool.mb_record_finding'),
   }),
   mb_expand_knowledge: (i) => {
     const scope = [i?.component, i?.symptom].filter(Boolean).join(" / ");
     return {
       icon: ICON_MB,
-      phraseHTML: `Extension du pack${scope ? ` — ${escapeHTML(scope)}` : ""}`,
+      phraseHTML: scope
+        ? t('chat.tool.mb_expand_knowledge_scope', { scope: escapeHTML(scope) })
+        : t('chat.tool.mb_expand_knowledge'),
     };
   },
   mb_schematic_graph: () => ({
     icon: ICON_MB,
-    phraseHTML: `Lecture du graphe schématique`,
+    phraseHTML: t('chat.tool.mb_schematic_graph'),
   }),
 
   // --- BV (boardview — action) ---
@@ -147,61 +152,74 @@ const TOOL_PHRASES = {
     const r = Array.isArray(i?.refdes) ? i.refdes.join(", ") : (i?.refdes || "?");
     return {
       icon: ICON_BV,
-      phraseHTML: `Mise en évidence de <span class="refdes">${escapeHTML(r)}</span>`,
+      phraseHTML: t('chat.tool.bv_highlight', { refdes: escapeHTML(r) }),
     };
   },
   bv_focus: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Focus sur <span class="refdes">${escapeHTML(i?.refdes || "?")}</span>`,
+    phraseHTML: t('chat.tool.bv_focus', { refdes: escapeHTML(i?.refdes || "?") }),
   }),
-  bv_reset_view: () => ({ icon: ICON_BV, phraseHTML: `Réinitialisation de la vue` }),
+  bv_reset_view: () => ({ icon: ICON_BV, phraseHTML: t('chat.tool.bv_reset_view') }),
   bv_highlight_net: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Highlight du net <span class="net">${escapeHTML(i?.net || "?")}</span>`,
+    phraseHTML: t('chat.tool.bv_highlight_net', { net: escapeHTML(i?.net || "?") }),
   }),
-  bv_flip: () => ({ icon: ICON_BV, phraseHTML: `Retournement du board` }),
+  bv_flip: () => ({ icon: ICON_BV, phraseHTML: t('chat.tool.bv_flip') }),
   bv_annotate: (i) => {
-    const tgt = i?.refdes ? `près de <span class="refdes">${escapeHTML(i.refdes)}</span>` :
-                (Number.isFinite(i?.x) && Number.isFinite(i?.y) ? `en (${i.x}, ${i.y})` : "");
-    return { icon: ICON_BV, phraseHTML: `Annotation ${tgt}` };
+    let phraseHTML;
+    if (i?.refdes) {
+      phraseHTML = t('chat.tool.bv_annotate_near', { refdes: escapeHTML(i.refdes) });
+    } else if (Number.isFinite(i?.x) && Number.isFinite(i?.y)) {
+      phraseHTML = t('chat.tool.bv_annotate_at', { x: i.x, y: i.y });
+    } else {
+      phraseHTML = t('chat.tool.bv_annotate_blank');
+    }
+    return { icon: ICON_BV, phraseHTML };
   },
   bv_filter_by_type: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Filtrage par type — ${escapeHTML(i?.prefix || "?")}`,
+    phraseHTML: t('chat.tool.bv_filter_by_type', { prefix: escapeHTML(i?.prefix || "?") }),
   }),
   bv_draw_arrow: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Flèche de <span class="refdes">${escapeHTML(i?.from_refdes || "?")}</span> ` +
-                `vers <span class="refdes">${escapeHTML(i?.to_refdes || "?")}</span>`,
+    phraseHTML: t('chat.tool.bv_draw_arrow', {
+      from: escapeHTML(i?.from_refdes || "?"),
+      to: escapeHTML(i?.to_refdes || "?"),
+    }),
   }),
   bv_measure: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Mesure entre <span class="refdes">${escapeHTML(i?.refdes_a || "?")}</span> ` +
-                `et <span class="refdes">${escapeHTML(i?.refdes_b || "?")}</span>`,
+    phraseHTML: t('chat.tool.bv_measure', {
+      a: escapeHTML(i?.refdes_a || "?"),
+      b: escapeHTML(i?.refdes_b || "?"),
+    }),
   }),
   bv_show_pin: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Pin ${escapeHTML(String(i?.pin ?? "?"))} de <span class="refdes">${escapeHTML(i?.refdes || "?")}</span>`,
+    phraseHTML: t('chat.tool.bv_show_pin', {
+      pin: escapeHTML(String(i?.pin ?? "?")),
+      refdes: escapeHTML(i?.refdes || "?"),
+    }),
   }),
-  bv_dim_unrelated: () => ({ icon: ICON_BV, phraseHTML: `Atténuation des éléments non liés` }),
+  bv_dim_unrelated: () => ({ icon: ICON_BV, phraseHTML: t('chat.tool.bv_dim_unrelated') }),
   bv_layer_visibility: (i) => ({
     icon: ICON_BV,
-    phraseHTML: `Visibilité de la couche ${escapeHTML(i?.layer || "?")}`,
+    phraseHTML: t('chat.tool.bv_layer_visibility', { layer: escapeHTML(i?.layer || "?") }),
   }),
   bv_scene: (i) => {
     const parts = [];
     const hl = Array.isArray(i?.highlights) ? i.highlights.length : 0;
     const an = Array.isArray(i?.annotations) ? i.annotations.length : 0;
     const ar = Array.isArray(i?.arrows) ? i.arrows.length : 0;
-    if (hl) parts.push(`${hl} highlight${hl > 1 ? "s" : ""}`);
-    if (an) parts.push(`${an} annotation${an > 1 ? "s" : ""}`);
-    if (ar) parts.push(`${ar} flèche${ar > 1 ? "s" : ""}`);
-    if (i?.focus?.refdes) parts.push(`focus <span class="refdes">${escapeHTML(i.focus.refdes)}</span>`);
-    if (i?.dim_unrelated) parts.push("dim");
-    if (i?.reset) parts.unshift("reset");
+    if (hl) parts.push(t(hl > 1 ? 'chat.tool.scene_highlight_many' : 'chat.tool.scene_highlight_one', { n: hl }));
+    if (an) parts.push(t(an > 1 ? 'chat.tool.scene_annotation_many' : 'chat.tool.scene_annotation_one', { n: an }));
+    if (ar) parts.push(t(ar > 1 ? 'chat.tool.scene_arrow_many' : 'chat.tool.scene_arrow_one', { n: ar }));
+    if (i?.focus?.refdes) parts.push(t('chat.tool.scene_focus', { refdes: escapeHTML(i.focus.refdes) }));
+    if (i?.dim_unrelated) parts.push(t('chat.tool.scene_dim'));
+    if (i?.reset) parts.unshift(t('chat.tool.scene_reset'));
     return {
       icon: ICON_BV,
-      phraseHTML: `Scène — ${parts.join(", ") || "vide"}`,
+      phraseHTML: parts.length ? t('chat.tool.bv_scene', { parts: parts.join(", ") }) : t('chat.tool.bv_scene_empty'),
     };
   },
 };
@@ -225,44 +243,47 @@ function memPathChip(p) {
   return `<code class="mem-path">${escapeHTML(memPath(p))}</code>`;
 }
 
-// French paraphrase + ICON_MEM for each MA-native filesystem tool. Same
+// Localized paraphrase + ICON_MEM for each MA-native filesystem tool. Same
 // shape contract as TOOL_PHRASES — receives the tool input object and
 // returns {icon, phraseHTML}.
 const MEMORY_TOOL_PHRASES = {
   read: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `Lecture mémoire — ${memPathChip(i?.file_path || i?.path)}`,
+    phraseHTML: t('chat.memtool.read', { path: memPathChip(i?.file_path || i?.path) }),
   }),
   write: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `Écriture mémoire — ${memPathChip(i?.file_path || i?.path)}`,
+    phraseHTML: t('chat.memtool.write', { path: memPathChip(i?.file_path || i?.path) }),
   }),
   edit: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `Édition mémoire — ${memPathChip(i?.file_path || i?.path)}`,
+    phraseHTML: t('chat.memtool.edit', { path: memPathChip(i?.file_path || i?.path) }),
   }),
   view: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `Vue mémoire — ${memPathChip(i?.file_path || i?.path)}`,
+    phraseHTML: t('chat.memtool.view', { path: memPathChip(i?.file_path || i?.path) }),
   }),
-  grep: (i) => {
-    const where = i?.path ? ` dans ${memPathChip(i.path)}` : "";
-    return {
-      icon: ICON_MEM,
-      phraseHTML: `grep <code class="mem-path">${escapeHTML(String(i?.pattern || ""))}</code>${where}`,
-    };
-  },
+  grep: (i) => ({
+    icon: ICON_MEM,
+    phraseHTML: i?.path
+      ? t('chat.memtool.grep_in', { pattern: escapeHTML(String(i?.pattern || "")), path: memPathChip(i.path) })
+      : t('chat.memtool.grep', { pattern: escapeHTML(String(i?.pattern || "")) }),
+  }),
   glob: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `glob <code class="mem-path">${escapeHTML(String(i?.pattern || ""))}</code>`,
+    phraseHTML: t('chat.memtool.glob', { pattern: escapeHTML(String(i?.pattern || "")) }),
   }),
   list: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `Listing mémoire${i?.path ? ` — ${memPathChip(i.path)}` : ""}`,
+    phraseHTML: i?.path
+      ? t('chat.memtool.list_at', { path: memPathChip(i.path) })
+      : t('chat.memtool.list'),
   }),
   ls: (i) => ({
     icon: ICON_MEM,
-    phraseHTML: `Listing mémoire${i?.path ? ` — ${memPathChip(i.path)}` : ""}`,
+    phraseHTML: i?.path
+      ? t('chat.memtool.list_at', { path: memPathChip(i.path) })
+      : t('chat.memtool.list'),
   }),
 };
 
@@ -288,7 +309,7 @@ function updateCostTotal() {
     return;
   }
   el2.style.display = "";
-  const deltaPart = lastTurnCostUsd > 0 ? ` · +${fmtUsd(lastTurnCostUsd)} dernier` : "";
+  const deltaPart = lastTurnCostUsd > 0 ? ` · +${fmtUsd(lastTurnCostUsd)} last` : "";
   el2.textContent = `${fmtUsd(sessionCostUsd)} · ${sessionTurns} turn${sessionTurns > 1 ? "s" : ""}${deltaPart}`;
   el2.classList.toggle("hot", sessionCostUsd >= 0.50 || lastTurnCostUsd >= 0.10);
 }
@@ -313,11 +334,12 @@ function logRow(cls, innerHTML) {
 }
 
 function logMessage(role, text, isReplay = false) {
-  const roleLabel = role === "user" ? "Toi" : "Agent";
+  const roleLabel = role === "user" ? t('chat.roles.user') : t('chat.roles.agent');
   const cls = `msg ${role}${isReplay ? " replay" : ""}`;
+  const replaySuffix = isReplay ? t('chat.roles.replay_suffix') : "";
   logRow(
     cls,
-    `<span class="role">${roleLabel}${isReplay ? " · replay" : ""}</span>${escapeHTML(text)}`,
+    `<span class="role">${escapeHTML(roleLabel)}${escapeHTML(replaySuffix)}</span>${escapeHTML(text)}`,
   );
 }
 
@@ -330,8 +352,8 @@ function renderContextLost(payload) {
   const oldId = payload?.old_session_id || "";
   const newId = payload?.new_session_id || "";
   const reason = payload?.reason === "ma_events_empty"
-    ? "Session précédente archivée par le backend Managed Agents (events.list vide), et aucun backup JSONL local disponible."
-    : "La session précédente n'a pas pu être restaurée et aucun résumé n'a pu être généré.";
+    ? t('chat.context_lost.reason_ma_empty')
+    : t('chat.context_lost.reason_generic');
   // `preserved` summarises what survived on disk independently of MA.
   // The backend already pushed these facts to the fresh agent (intro
   // block on resumed=False, synthetic user.message on resumed=True).
@@ -342,26 +364,31 @@ function renderContextLost(payload) {
   const proto = preserved.protocol;
   const outcome = !!preserved.outcome;
   const preservedItems = [];
-  if (mCount > 0) preservedItems.push(`${mCount} mesure${mCount > 1 ? "s" : ""}`);
-  if (proto) {
-    const p = `protocole « ${escapeHTML(proto.title || "")} » (${proto.completed || 0}/${proto.total || 0})`;
-    preservedItems.push(p);
+  if (mCount > 0) {
+    preservedItems.push(t(mCount > 1 ? 'chat.context_lost.preserved_measurements_many' : 'chat.context_lost.preserved_measurements_one', { n: mCount }));
   }
-  if (outcome) preservedItems.push("outcome final");
+  if (proto) {
+    preservedItems.push(t('chat.context_lost.preserved_protocol', {
+      title: escapeHTML(proto.title || ""),
+      completed: proto.completed || 0,
+      total: proto.total || 0,
+    }));
+  }
+  if (outcome) preservedItems.push(t('chat.context_lost.preserved_outcome'));
   const preservedHTML = preservedItems.length
-    ? `<p class="preserved"><strong>Récupéré du disque et réinjecté à l'agent</strong> : ${preservedItems.join(" · ")}.</p>`
-    : `<p class="preserved muted">Aucun artefact persistant trouvé pour ce repair (pas de mesures, pas de protocole, pas d'outcome).</p>`;
+    ? `<p class="preserved"><strong>${escapeHTML(t('chat.context_lost.preserved_label'))}</strong> : ${preservedItems.join(" · ")}.</p>`
+    : `<p class="preserved muted">${escapeHTML(t('chat.context_lost.preserved_none'))}</p>`;
   logRow(
     "context-lost",
     `<header>
        <span class="icon-dot"></span>
-       <span class="title">Historique de turns perdu</span>
+       <span class="title">${escapeHTML(t('chat.context_lost.title'))}</span>
      </header>
      <div class="body">
        <p>${escapeHTML(reason)}</p>
-       <p>Le device, le symptôme et ton profil sont automatiquement réinjectés ci-dessous — l'agent saura sur quoi tu travailles.</p>
+       <p>${escapeHTML(t('chat.context_lost.context_reinject'))}</p>
        ${preservedHTML}
-       <p>Ce qui reste perdu : le <strong>fil conversationnel</strong> (raisonnement de l'agent, hypothèses émises, échanges libres). Si tu as discuté de pistes ou pris des décisions hors-protocole, redonne-les en une ligne pour qu'il s'aligne.</p>
+       <p>${t('chat.context_lost.lost_explainer')}</p>
        ${oldId ? `<p class="meta">old=<code>${escapeHTML(oldId)}</code> · new=<code>${escapeHTML(newId)}</code></p>` : ""}
      </div>`,
   );
@@ -384,8 +411,8 @@ function renderResumeSummary(payload) {
     "resume-summary",
     `<header>
        <span class="icon-dot"></span>
-       <span class="title">Reprise de session</span>
-       <span class="meta">résumé Haiku · ${tokIn}→${tokOut} tok</span>
+       <span class="title">${escapeHTML(t('chat.resume.title'))}</span>
+       <span class="meta">${escapeHTML(t('chat.resume.meta_summary', { tok_in: tokIn, tok_out: tokOut }))}</span>
      </header>
      <div class="body">${bodyHTML}</div>`,
   );
@@ -451,14 +478,15 @@ function closeTurn() {
   currentTurn = null;
 }
 
-function ensurePendingNode(turn, label = "l'agent réfléchit") {
+function ensurePendingNode(turn, label) {
   const rail = turn.querySelector(".turn-rail");
   if (!rail || rail.querySelector(".step.pending")) return;
+  const finalLabel = label != null ? label : t('chat.pending.thinking');
   const step = document.createElement("div");
   step.className = "step pending";
   step.innerHTML =
     `<span class="node"></span>` +
-    `<span class="step-phrase">${escapeHTML(label)}` +
+    `<span class="step-phrase">${escapeHTML(finalLabel)}` +
     `<span class="pending-dots"><span>.</span><span>.</span><span>.</span></span>` +
     `</span>`;
   rail.appendChild(step);
@@ -490,7 +518,7 @@ function addExpandToStep(step, payloadObj) {
   btn.type = "button";
   btn.className = "step-expand";
   btn.setAttribute("aria-expanded", "false");
-  btn.title = "Voir le payload";
+  btn.title = t('chat.step.expand_title');
   btn.innerHTML =
     '<svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" ' +
     'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
@@ -502,7 +530,7 @@ function addExpandToStep(step, payloadObj) {
   const hasResult = payloadObj && typeof payloadObj === "object" && "result" in payloadObj;
   const body = hasResult
     ? JSON.stringify(payloadObj, null, 2)
-    : JSON.stringify(payloadObj, null, 2) + "\n\n— result non rendu par le runtime";
+    : JSON.stringify(payloadObj, null, 2) + "\n\n" + t('chat.step.no_result');
   pre.textContent = body;
   step.appendChild(pre);
 
@@ -724,16 +752,16 @@ function appendImageBubble(role, srcUrl, captionText) {
   if (!log) return;
   const row = document.createElement("div");
   row.className = `msg ${role} msg-image`;
-  const roleLabel = role === "user" ? "Toi" : "Agent";
+  const roleLabel = role === "user" ? t('chat.roles.user') : t('chat.roles.agent');
   const img = document.createElement("img");
   img.src = srcUrl;
-  img.alt = captionText || "macro";
+  img.alt = captionText || t('chat.image_bubble.alt');
   img.className = "llm-bubble-img";
   img.addEventListener("click", () => openImageModal(srcUrl, captionText));
   const cap = document.createElement("div");
   cap.className = "llm-bubble-caption";
   cap.textContent = captionText || "";
-  row.innerHTML = `<span class="role">${roleLabel}</span>`;
+  row.innerHTML = `<span class="role">${escapeHTML(roleLabel)}</span>`;
   row.appendChild(img);
   if (captionText) row.appendChild(cap);
   log.appendChild(row);
@@ -760,20 +788,20 @@ function openImageModal(srcUrl, captionText) {
 async function handleMacroUpload(file) {
   if (!file) return;
   if (file.size > MAX_UPLOAD_BYTES) {
-    logSys(`photo trop grosse (${(file.size / 1024 / 1024).toFixed(1)}MB > 5MB)`, true);
+    logSys(t('chat.upload.too_large', { size: (file.size / 1024 / 1024).toFixed(1) }), true);
     return;
   }
   if (!["image/png", "image/jpeg"].includes(file.type)) {
-    logSys(`format non supporté : ${file.type} · PNG ou JPEG seulement`, true);
+    logSys(t('chat.upload.unsupported', { mime: file.type }), true);
     return;
   }
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    logSys("impossible d'uploader : socket non ouvert", true);
+    logSys(t('chat.upload.socket_closed'), true);
     return;
   }
   // Optimistic local render — blob URL stays valid for the page lifetime.
   const url = URL.createObjectURL(file);
-  appendImageBubble("user", url, "Photo macro envoyée par le tech.");
+  appendImageBubble("user", url, t('chat.image_bubble.macro_caption'));
   try {
     const base64 = await blobToBase64(file);
     ws.send(JSON.stringify({
@@ -783,7 +811,7 @@ async function handleMacroUpload(file) {
       filename: file.name || "macro.jpg",
     }));
   } catch (err) {
-    logSys(`upload échoué : ${err.message || err}`, true);
+    logSys(t('chat.upload.failed', { error: err.message || err }), true);
   }
 }
 
@@ -793,7 +821,7 @@ async function handleCaptureRequest(payload) {
   if (!deviceId) {
     // Tool exposed but no camera selected — surface to the tech and let
     // the backend's is_error response close the loop on the agent side.
-    logSys("agent demande une capture mais aucune caméra sélectionnée", true);
+    logSys(t('chat.capture.no_camera'), true);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: "client.capture_response",
@@ -802,7 +830,7 @@ async function handleCaptureRequest(payload) {
     }
     return;
   }
-  logSys(`capture demandée par l'agent · ${reason || "sans raison"}`);
+  logSys(t('chat.capture.requested', { reason: reason || t('chat.capture.no_reason') }));
   try {
     const blob = await captureFrame({
       deviceId, mime: "image/jpeg", quality: 0.92,
@@ -811,7 +839,7 @@ async function handleCaptureRequest(payload) {
     const base64 = await blobToBase64(blob);
     // Optimistic render so the tech sees what the agent received.
     const url = URL.createObjectURL(blob);
-    appendImageBubble("user", url, `Capture · ${selectedCameraLabel()}`);
+    appendImageBubble("user", url, t('chat.image_bubble.capture_caption', { label: selectedCameraLabel() }));
     ws.send(JSON.stringify({
       type: "client.capture_response",
       request_id,
@@ -821,7 +849,7 @@ async function handleCaptureRequest(payload) {
     }));
   } catch (err) {
     console.error("captureFrame failed", err);
-    logSys(`capture échouée : ${err.message || err}`, true);
+    logSys(t('chat.capture.failed', { error: err.message || err }), true);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: "client.capture_response",
@@ -844,7 +872,7 @@ window.LLM.sendCapabilities = sendCapabilities;
 // the tech can keep typing right after without reconnecting.
 function interruptAgent() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  logSys("interruption envoyée · l'agent s'arrête");
+  logSys(t('chat.session.interrupt_sent'));
   try {
     ws.send(JSON.stringify({ type: "interrupt" }));
   } catch (err) {
@@ -859,7 +887,9 @@ function connect() {
     return;
   }
   const repairId = currentRepairId();
-  el("llmDevice").textContent = repairId ? `${slug} · ${repairId.slice(0, 8)}` : slug;
+  el("llmDevice").textContent = repairId
+    ? t('chat.session.device_label_with_repair', { slug, repair: repairId.slice(0, 8) })
+    : t('chat.session.device_label_simple', { slug });
   el("llmDevice").style.display = "";
   const title = el("llmTitle");
   if (title) {
@@ -884,19 +914,19 @@ function connect() {
   updateCostTotal();
   const url = wsURL(slug, currentTier, repairId, pendingConvParam);
   pendingConvParam = null;  // consume after this connect
-  statusTone("connecting", `connexion · ${slug} · ${currentTier}`);
+  statusTone("connecting", t('chat.status.connecting', { slug, tier: currentTier }));
 
   try {
     ws = new WebSocket(url);
     window.__diagnosticWS = ws;
   } catch (err) {
-    statusTone("error", "URL invalide");
-    logSys(`échec de connexion : ${err.message}`, true);
+    statusTone("error", t('chat.status.url_invalid'));
+    logSys(t('chat.send.connect_failed', { error: err.message }), true);
     return;
   }
 
   ws.addEventListener("open", () => {
-    statusTone("connected", `connecté · ${slug} · ${currentTier}`);
+    statusTone("connected", t('chat.status.connected', { slug, tier: currentTier }));
     setSendEnabled(true);
     // Files+Vision : announce camera availability so the backend gates
     // cam_capture in the manifest (runtime_direct) and can short-circuit
@@ -905,13 +935,13 @@ function connect() {
   });
 
   ws.addEventListener("close", () => {
-    statusTone("closed", "fermé");
+    statusTone("closed", t('chat.status.closed'));
     setSendEnabled(false);
     setPanelMascot("idle");
   });
 
   ws.addEventListener("error", () => {
-    statusTone("error", "erreur socket");
+    statusTone("error", t('chat.status.error_socket'));
     setSendEnabled(false);
     setPanelMascot("error");
   });
@@ -961,7 +991,7 @@ function connect() {
           // Clear any pending safety timeout from the dashboard-side.
           if (btn._fixTimeoutId) { clearTimeout(btn._fixTimeoutId); btn._fixTimeoutId = null; }
           const n = payload.fixes_count || 1;
-          btn.innerHTML = ICON_CHECK + ` Validé (${n} fix${n > 1 ? "es" : ""})`;
+          btn.innerHTML = ICON_CHECK + " " + escapeHTML(t(n > 1 ? 'chat.fix.validated_many' : 'chat.fix.validated_one', { n }));
           btn.classList.add("is-validated");
           btn.disabled = true;
         }
@@ -973,10 +1003,16 @@ function connect() {
       case "session_ready": {
         const model = payload.model || "claude";
         const mode = payload.mode || "managed";
-        const rid = payload.repair_id ? ` · repair ${payload.repair_id.slice(0, 8)}` : "";
+        const repairShort = payload.repair_id ? payload.repair_id.slice(0, 8) : null;
         const sub = el("llmSubline");
-        if (sub) sub.textContent = `${model} · ${mode}${rid}`;
-        logSys(`session prête — ${mode} · ${model}${rid}`);
+        if (sub) {
+          sub.textContent = repairShort
+            ? t('chat.session.subline_with_repair', { model, mode, repair: repairShort })
+            : t('chat.session.subline', { model, mode });
+        }
+        logSys(repairShort
+          ? t('chat.session.ready_with_repair', { mode, model, repair: repairShort })
+          : t('chat.session.ready', { mode, model }));
         currentConvId = payload.conv_id || null;
         loadConversations();
         // Auto-align tier with the resumed conv when the tech hasn't
@@ -992,7 +1028,7 @@ function connect() {
           !userPickedTier &&
           ["fast", "normal", "deep"].includes(convTier)
         ) {
-          logSys(`→ alignement automatique sur le tier de cette conv : ${convTier}`);
+          logSys(t('chat.session.tier_auto_align', { tier: convTier }));
           // Mirror switchTier logic but skip the "user-chose" mark so a
           // future explicit tier pick still gates this auto-align.
           currentTier = convTier;
@@ -1017,18 +1053,18 @@ function connect() {
       }
       case "history_replay_start":
         el("llmLog").classList.add("replay");
-        logSys(`replay · ${payload.count} events précédents`);
+        logSys(t('chat.session.replay_count', { n: payload.count }));
         break;
       case "history_replay_end":
         el("llmLog").classList.remove("replay");
-        logSys("replay terminé — reprends où tu t'étais arrêté");
+        logSys(t('chat.session.replay_done'));
         closeTurn();
         break;
       case "context_loaded":
-        logSys("contexte device + symptôme chargé · l'agent attend ton premier message");
+        logSys(t('chat.session.context_loaded'));
         break;
       case "session_resumed":
-        logSys("session reprise · historique et mémoire agent restaurés");
+        logSys(t('chat.session.session_resumed'));
         break;
       case "session_resumed_summary":
         renderResumeSummary(payload);
@@ -1102,7 +1138,7 @@ function connect() {
         window._llmConvRefreshT = setTimeout(() => loadConversations(), 500);
         break;
       case "error":
-        logSys(`erreur : ${payload.text}`, true);
+        logSys(t('chat.error.generic', { text: payload.text }), true);
         // If the dashboard fix button is pending, clear its spinner so the
         // tech can retry instead of staring at "… Claude valide" forever.
         if (typeof window.__resetDashboardFixBtn === "function") {
@@ -1111,7 +1147,7 @@ function connect() {
         setPanelMascot("error");
         break;
       case "session_terminated":
-        logSys("session terminée", true);
+        logSys(t('chat.session.session_terminated'), true);
         closeTurn();
         setPanelMascot("idle");
         break;
@@ -1123,7 +1159,7 @@ function connect() {
         });
         break;
       case "server.upload_macro_error":
-        logSys(`upload rejeté · ${payload.reason || "raison inconnue"}`, true);
+        logSys(t('chat.upload.rejected', { reason: payload.reason || t('chat.error.unknown_reason') }), true);
         break;
       case "turn_complete":
         // Internal signal for benchmarks (end of an agent tech-turn). UI
@@ -1191,7 +1227,7 @@ function switchTier(newTier) {
   document.querySelectorAll(".llm-tier-popover button[data-tier]").forEach(btn => {
     btn.classList.toggle("on", btn.dataset.tier === newTier);
   });
-  logSys(`→ changement de tier : ${newTier}. Nouvelle conversation.`);
+  logSys(t('chat.session.tier_switch', { tier: newTier }));
   if (ws && ws.readyState <= 1) {
     try { ws.close(); } catch (_) { /* ignore */ }
   }
@@ -1235,31 +1271,34 @@ function renderConvItems() {
   if (!list || !label) return;
   list.innerHTML = "";
   if (conversationsCache.length === 0) {
-    label.textContent = "CONV 0/0";
+    label.textContent = t('chat.conv.label_empty');
     return;
   }
   const activeIdx = Math.max(0, conversationsCache.findIndex(c => c.id === currentConvId));
-  label.textContent = `CONV ${activeIdx + 1}/${conversationsCache.length}`;
+  label.textContent = t('chat.conv.label_count', { idx: activeIdx + 1, total: conversationsCache.length });
   conversationsCache.forEach((c, idx) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "conv-item" + (c.id === currentConvId ? " active" : "");
     btn.dataset.convId = c.id;
     const tier = (c.tier || "fast").toLowerCase();
-    const title = escapeHTML((c.title || `Conversation ${idx + 1}`).slice(0, 80));
+    const fallbackTitle = t('chat.conv.default_title', { idx: idx + 1 });
+    const title = escapeHTML((c.title || fallbackTitle).slice(0, 80));
     const cost = Number(c.cost_usd || 0);
-    const ago = c.last_turn_at ? humanAgo(c.last_turn_at) : "—";
+    const ago = c.last_turn_at ? humanAgo(c.last_turn_at) : t('chat.conv.ago_unknown');
+    const turnsCount = c.turns || 0;
+    const turnsLabel = t(turnsCount === 1 ? 'chat.conv.turns_one' : 'chat.conv.turns_many', { n: turnsCount });
     btn.innerHTML =
       `<span class="conv-item-head">` +
         `<span class="conv-item-tier t-${tier}">${tier.toUpperCase()}</span>` +
         `<span class="conv-item-title">${title}</span>` +
       `</span>` +
       `<span class="conv-item-meta">` +
-        `<span>${c.turns || 0} turn${(c.turns || 0) === 1 ? "" : "s"}</span>` +
+        `<span>${escapeHTML(turnsLabel)}</span>` +
         `<span class="conv-item-sep">·</span>` +
         `<span>${fmtUsd(cost)}</span>` +
         `<span class="conv-item-sep">·</span>` +
-        `<span>${ago}</span>` +
+        `<span>${escapeHTML(ago)}</span>` +
       `</span>`;
     btn.addEventListener("click", () => {
       if (c.id === currentConvId) { closeConvPopover(); return; }
@@ -1274,16 +1313,16 @@ function humanAgo(iso) {
   try {
     const then = new Date(iso).getTime();
     const diff = Math.max(0, Date.now() - then) / 1000;
-    if (diff < 60) return `il y a ${Math.floor(diff)} s`;
-    if (diff < 3600) return `il y a ${Math.floor(diff / 60)} min`;
-    if (diff < 86400) return `il y a ${Math.floor(diff / 3600)} h`;
-    return `il y a ${Math.floor(diff / 86400)} j`;
-  } catch { return "—"; }
+    if (diff < 60) return t('chat.conv.ago_seconds', { n: Math.floor(diff) });
+    if (diff < 3600) return t('chat.conv.ago_minutes', { n: Math.floor(diff / 60) });
+    if (diff < 86400) return t('chat.conv.ago_hours', { n: Math.floor(diff / 3600) });
+    return t('chat.conv.ago_days', { n: Math.floor(diff / 86400) });
+  } catch { return t('chat.conv.ago_unknown'); }
 }
 
 export function switchConv(convIdOrNew) {
   if (convIdOrNew === currentConvId) return;
-  logSys(`→ changement de conversation : ${convIdOrNew}`);
+  logSys(t('chat.conv.switching', { id: convIdOrNew }));
   if (ws && ws.readyState <= 1) {
     try { ws.close(); } catch (_) {}
   }
@@ -1333,6 +1372,15 @@ async function mountPanelFragment() {
     const res = await fetch("llm_panel.html", { cache: "no-cache" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     root.innerHTML = await res.text();
+    // Translate the freshly-injected markup. Wait for dictionaries first
+    // so the initial paint is in the right language; the i18n core falls
+    // back to the inline English text if anything is missing.
+    if (window.i18n) {
+      try {
+        await window.i18n.ready;
+        window.i18n.applyDom(root);
+      } catch (e) { /* keep the inline fallback */ }
+    }
     return true;
   } catch (err) {
     console.warn("[llm] failed to mount panel fragment:", err);
@@ -1345,6 +1393,31 @@ export async function initLLMPanel() {
   if (!mounted) return;
 
   panelMascot = mountMascot(el("llmMascot"), { size: "sm", state: "idle" });
+
+  // Re-render imperative bits (status pill, conv chip) on locale switch.
+  // The static markup is handled by `data-i18n` + i18n.applyDom; everything
+  // emitted from JS (status text, conv label, replayed log lines) needs an
+  // explicit redraw hook.
+  if (window.i18n && typeof window.i18n.onChange === "function") {
+    window.i18n.onChange(() => {
+      // Conv chip (label + items) reads localized strings on every render.
+      renderConvItems();
+      // Status text — only refresh the current tone's label so we don't
+      // overwrite an active "connecting" with a stale "idle".
+      const statusEl = el("llmStatus");
+      if (statusEl) {
+        const txt = el("llmStatusText");
+        if (txt && statusEl.classList.contains("connected")) {
+          const slug = currentDeviceSlug();
+          if (slug) txt.textContent = t('chat.status.connected', { slug, tier: currentTier });
+        } else if (txt && !statusEl.classList.contains("connecting") &&
+                   !statusEl.classList.contains("closed") &&
+                   !statusEl.classList.contains("error")) {
+          txt.textContent = t('chat.status.idle');
+        }
+      }
+    });
+  }
 
   el("llmToggle")?.addEventListener("click", togglePanel);
   el("llmClose")?.addEventListener("click", closePanel);
@@ -1439,7 +1512,7 @@ export async function initLLMPanel() {
     const text = (input?.value || "").trim();
     if (!text) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      logSys("impossible d'envoyer : socket non ouvert", true);
+      logSys(t('chat.send.socket_closed'), true);
       return;
     }
     logMessage("user", text);
@@ -1499,12 +1572,12 @@ export async function initLLMPanel() {
     }
     const id = selectedCameraDeviceId();
     if (!id) {
-      logSys("sélectionne d'abord une caméra dans le picker", true);
+      logSys(t('chat.preview.select_camera_first'), true);
       return;
     }
     const ok = await openPreview(id, selectedCameraLabel());
     if (!ok) {
-      logSys("ouverture preview échouée — vérifie les permissions", true);
+      logSys(t('chat.preview.open_failed'), true);
     }
     syncPreviewBtn();
   });
