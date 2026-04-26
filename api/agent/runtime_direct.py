@@ -26,8 +26,10 @@ from api.agent.chat_history import (
     build_ctx_tag,
     build_session_intro,
     ensure_conversation,
+    get_conversation_tier,
     list_conversations,
     load_events_with_costs,
+    materialize_conversation,
     touch_conversation,
     touch_status,
 )
@@ -199,6 +201,7 @@ async def _run_agent_turn(
                     memory_root,
                     session,
                     repair_id=repair_id,
+                    conv_id=conv_id,
                 )
             elif block.name.startswith("bv_"):
                 result = dispatch_bv(session, block.name, block.input or {})
@@ -214,12 +217,37 @@ async def _run_agent_turn(
                     session,
                     session_id=repair_id,
                 )
-            event = result.get("event")
-            if result.get("ok") and event is not None:
+            # Tools may return either `event` (single) for atomic ops or
+            # `events` (list) for composites like bv_scene. Both paths fan
+            # out individual WS frames so the frontend stays oblivious.
+            single_event = result.get("event")
+            multi_events = result.get("events") if isinstance(result.get("events"), list) else None
+            emitted_any = False
+            if result.get("ok") and single_event is not None:
                 await ws.send_json(
-                    event if isinstance(event, dict) else event.model_dump(by_alias=True)
+                    single_event if isinstance(single_event, dict)
+                    else single_event.model_dump(by_alias=True)
                 )
-            result_for_agent = {k: v for k, v in result.items() if k != "event"}
+                emitted_any = True
+            if multi_events:
+                for ev in multi_events:
+                    await ws.send_json(
+                        ev if isinstance(ev, dict) else ev.model_dump(by_alias=True)
+                    )
+                    emitted_any = True
+            if emitted_any and block.name.startswith("bv_"):
+                # Snapshot board overlay after every successful bv_* mutation
+                # — same rationale as runtime_managed: a WS reconnect should
+                # show the same highlights/annotations, not a bare board.
+                from api.agent.board_state import save_board_state
+                save_board_state(
+                    memory_root=memory_root,
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    session=session,
+                    conv_id=conv_id,
+                )
+            result_for_agent = {k: v for k, v in result.items() if k not in ("event", "events")}
             tool_results.append(
                 {
                     "type": "tool_result",
@@ -297,6 +325,7 @@ async def _dispatch_protocol_tool(
     memory_root: Path,
     session: SessionState,
     repair_id: str | None = None,
+    conv_id: str | None = None,
 ) -> dict:
     """Dispatch the 4 stepwise-protocol tools (bv_propose_protocol, bv_update_protocol,
     bv_record_step_result, bv_get_protocol). Mirrors the branches in runtime_managed._dispatch_tool.
@@ -310,10 +339,23 @@ async def _dispatch_protocol_tool(
         )
 
         valid_refdes = (
-            set(session.board.part_by_refdes().keys())
+            {p.refdes for p in session.board.parts}
             if session.board is not None
             else None
         )
+        # Tolerate "comp:U7" / "rail:+5V" prefixes the agent learns from
+        # mb_set_observation; strip "comp:" so the refdes validates, drop
+        # rail/test-point prefixes into test_point so the step still anchors
+        # somewhere meaningful even without a board part.
+        for s in payload.get("steps", []) or []:
+            t = s.get("target")
+            if isinstance(t, str) and ":" in t:
+                kind, _, rest = t.partition(":")
+                if kind == "comp":
+                    s["target"] = rest
+                else:
+                    s["target"] = None
+                    s.setdefault("test_point", t)
         try:
             step_inputs = [_SI.model_validate(s) for s in payload.get("steps", [])]
         except Exception as exc:  # noqa: BLE001
@@ -327,10 +369,11 @@ async def _dispatch_protocol_tool(
             steps=step_inputs,
             rule_inspirations=payload.get("rule_inspirations") or None,
             valid_refdes=valid_refdes,
+            conv_id=conv_id,
         )
         if result.get("ok"):
             from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
             if proto is not None:
                 result["event"] = {
                     "type": "protocol_proposed",
@@ -364,10 +407,11 @@ async def _dispatch_protocol_tool(
             new_step=new_step,
             new_order=payload.get("new_order"),
             verdict=payload.get("verdict"),
+            conv_id=conv_id,
         )
         if result.get("ok"):
             from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
             history_tail = proto.history[-3:] if proto is not None else []
             result["event"] = {
                 "type": "protocol_updated",
@@ -391,10 +435,11 @@ async def _dispatch_protocol_tool(
             observation=payload.get("observation"),
             skip_reason=payload.get("skip_reason"),
             submitted_by="agent",
+            conv_id=conv_id,
         )
         if result.get("ok"):
             from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
             history_tail = proto.history[-3:] if proto is not None else []
             result["event"] = {
                 "type": "protocol_updated",
@@ -408,7 +453,7 @@ async def _dispatch_protocol_tool(
 
     if name == "bv_get_protocol":
         from api.tools.protocol import load_active_protocol
-        proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+        proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
         if proto is None:
             return {"ok": True, "active": False}
         return {
@@ -650,16 +695,22 @@ async def run_diagnostic_session_direct(
 
     # Resolve the conversation once; every write/read below targets this id.
     # Anonymous sessions (no repair_id) skip conversation tracking entirely —
-    # they already don't persist anything.
+    # they already don't persist anything. Lazy materialization
+    # (`materialize=False`): when the resolution would create a fresh conv,
+    # we get back a pre-allocated id but nothing is written to disk yet —
+    # the slot only persists if the tech actually sends a message. The first
+    # `_materialize_pending()` call writes the index entry.
     resolved_conv_id: str | None = None
+    pending_materialize = False
     conversation_count = 0
     if repair_id:
-        resolved_conv_id, _created = ensure_conversation(
+        resolved_conv_id, pending_materialize = ensure_conversation(
             device_slug=device_slug,
             repair_id=repair_id,
             conv_id=conv_id,
             tier=tier,
             memory_root=memory_root,
+            materialize=False,
         )
         conversation_count = len(
             list_conversations(
@@ -669,6 +720,36 @@ async def run_diagnostic_session_direct(
             )
         )
 
+    pending_state = {"pending": pending_materialize}
+
+    def _materialize_pending() -> None:
+        """Idempotent: write the conv index entry + dir on the first call,
+        no-op afterwards. Used to defer the disk write to first user input
+        so opens-without-message don't pollute the index."""
+        if not pending_state["pending"] or not resolved_conv_id or not repair_id:
+            return
+        materialize_conversation(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+            tier=tier,
+            memory_root=memory_root,
+        )
+        pending_state["pending"] = False
+
+    # Surface the conv's preferred tier so the frontend can auto-align when
+    # the WS opened with a default tier that doesn't match — same rationale
+    # as the managed runtime (avoids silently dropping the tech onto an
+    # almost-empty per-tier thread of an existing multi-tier conv).
+    conv_tier_pref: str | None = None
+    if resolved_conv_id and repair_id and not pending_state["pending"]:
+        conv_tier_pref = get_conversation_tier(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+            memory_root=memory_root,
+        )
+
     await ws.accept()
     await ws.send_json(
         {
@@ -676,6 +757,7 @@ async def run_diagnostic_session_direct(
             "mode": "direct",
             "device_slug": device_slug,
             "tier": tier,
+            "conv_tier": conv_tier_pref,
             "model": model,
             "board_loaded": session.board is not None,
             "repair_id": repair_id,
@@ -685,9 +767,11 @@ async def run_diagnostic_session_direct(
     )
 
     # Hydrate any active protocol so the UI panel rebuilds on reconnect.
+    # Same protocol_cleared fallback as runtime_managed — silence at WS
+    # open would otherwise leave the previous conv's wizard pinned.
     if repair_id:
         from api.tools.protocol import load_active_protocol as _lap
-        active = _lap(memory_root, device_slug, repair_id or "")
+        active = _lap(memory_root, device_slug, repair_id or "", conv_id=resolved_conv_id)
         if active is not None:
             await ws.send_json({
                 "type": "protocol_proposed",
@@ -698,6 +782,33 @@ async def run_diagnostic_session_direct(
                 "current_step_id": active.current_step_id,
                 "replay": True,
             })
+        else:
+            await ws.send_json({"type": "protocol_cleared"})
+
+    # Hydrate the boardview overlay snapshot — same rationale as the
+    # managed runtime: the overlay state is the on-disk truth, not
+    # something to reconstruct from chat events. Apply to live SessionState
+    # AND emit the boardview.* events so brd_viewer reconstructs visually.
+    if repair_id:
+        from api.agent.board_state import load_board_state, replay_board_state_to_ws
+        # Wipe the renderer's overlay first — same rationale as
+        # runtime_managed: silence ≠ clear, the previous conv's overlay
+        # would otherwise leak onto a fresh conv's empty canvas.
+        await ws.send_json({"type": "boardview.reset_view"})
+        snapshot = load_board_state(
+            memory_root=memory_root,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+        )
+        if snapshot:
+            session.restore_view(snapshot)
+            sent = await replay_board_state_to_ws(ws, snapshot)
+            if sent:
+                logger.info(
+                    "[Diag-Direct] replayed boardview state for repair=%s conv=%s (%d events)",
+                    repair_id, resolved_conv_id, sent,
+                )
 
     # NOTE: prompt + manifest are a snapshot of the session at open time.
     # If a future task supports loading a board mid-session, both must be
@@ -730,16 +841,22 @@ async def run_diagnostic_session_direct(
         # reported symptom as a hidden first user message so the agent has
         # context the moment the tech DOES type. We do NOT call the agent
         # here: compute only runs on explicit user action.
+        # The intro is kept in the in-memory `messages` list but we DO NOT
+        # `append_event` it on disk yet when the conv is pending — otherwise
+        # an open-without-message would persist a single intro line into a
+        # never-indexed conv directory. The deferred append happens on the
+        # first real user input below, right after _materialize_pending().
         intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
         if intro:
             intro_msg = {"role": "user", "content": intro}
             messages.append(intro_msg)
-            append_event(
-                device_slug=device_slug,
-                repair_id=repair_id,
-                conv_id=resolved_conv_id,
-                event=intro_msg,
-            )
+            if not pending_state["pending"]:
+                append_event(
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    conv_id=resolved_conv_id,
+                    event=intro_msg,
+                )
             await ws.send_json(
                 {
                     "type": "context_loaded",
@@ -748,9 +865,39 @@ async def run_diagnostic_session_direct(
                 }
             )
             logger.info(
-                "[Diag-Direct] Stashed session intro for repair=%s conv=%s (awaiting tech input)",
+                "[Diag-Direct] Stashed session intro for repair=%s conv=%s (awaiting tech input, pending=%s)",
                 repair_id,
                 resolved_conv_id,
+                pending_state["pending"],
+            )
+
+    # When the conv is pending, the intro_msg above isn't yet on disk. Track
+    # it so we can flush it as the first appended event right after
+    # materialization (preserves the chronological JSONL even though the
+    # write is deferred).
+    pending_intro_msg = (
+        messages[-1]
+        if pending_state["pending"]
+        and messages
+        and isinstance(messages[-1], dict)
+        and messages[-1].get("role") == "user"
+        and isinstance(messages[-1].get("content"), str)
+        and messages[-1]["content"].startswith("[Nouvelle session")
+        else None
+    )
+
+    def _materialize_and_flush_intro() -> None:
+        """Materialize the conv on disk, then write the deferred intro so
+        the JSONL still starts with the device-context line — same on-disk
+        shape that resume / replay paths expect."""
+        was_pending = pending_state["pending"]
+        _materialize_pending()
+        if was_pending and pending_intro_msg is not None and resolved_conv_id:
+            append_event(
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+                event=pending_intro_msg,
             )
 
     first_user_seen = any(
@@ -806,9 +953,10 @@ async def run_diagnostic_session_direct(
                     observation=incoming.get("observation"),
                     skip_reason=incoming.get("skip_reason"),
                     submitted_by="tech",
+                    conv_id=resolved_conv_id,
                 )
                 if res.get("ok"):
-                    proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+                    proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=resolved_conv_id)
                     history_tail = proto.history[-3:] if proto is not None else []
                     await ws.send_json({
                         "type": "protocol_updated",
@@ -836,6 +984,7 @@ async def run_diagnostic_session_direct(
                     user_msg = {"role": "user", "content": synthetic}
                     messages.append(user_msg)
                     if resolved_conv_id:
+                        _materialize_and_flush_intro()
                         append_event(
                             device_slug=device_slug,
                             repair_id=repair_id,
@@ -878,6 +1027,7 @@ async def run_diagnostic_session_direct(
                     "un mode, demande-moi avant d'appeler l'outil."
                 )
                 if resolved_conv_id:
+                    _materialize_and_flush_intro()
                     append_event(
                         device_slug=device_slug,
                         repair_id=repair_id,
@@ -902,8 +1052,10 @@ async def run_diagnostic_session_direct(
                 touch_status(device_slug=device_slug, repair_id=repair_id, status="in_progress")
 
             # Stamp the conversation title from the first real user message —
-            # the tech-visible summary in the switcher popover.
+            # the tech-visible summary in the switcher popover. Materialize
+            # the conv on disk at the same moment if it was opened lazily.
             if not first_user_seen and repair_id and resolved_conv_id:
+                _materialize_and_flush_intro()
                 touch_conversation(
                     device_slug=device_slug,
                     repair_id=repair_id,
@@ -917,6 +1069,7 @@ async def run_diagnostic_session_direct(
             user_msg = {"role": "user", "content": tagged_text}
             messages.append(user_msg)
             if resolved_conv_id and not is_trigger:
+                _materialize_and_flush_intro()
                 append_event(
                     device_slug=device_slug,
                     repair_id=repair_id,

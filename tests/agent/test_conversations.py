@@ -12,6 +12,7 @@ from api.agent.chat_history import (
     ensure_conversation,
     list_conversations,
     load_events,
+    materialize_conversation,
     touch_conversation,
 )
 
@@ -208,6 +209,94 @@ def test_events_scoped_to_conversation(tmp_path: Path) -> None:
     )
     assert [e["content"] for e in events_a] == ["msg-in-A"]
     assert [e["content"] for e in events_b] == ["msg-in-B"]
+
+
+def test_ensure_none_picks_most_recently_touched(tmp_path: Path) -> None:
+    """When two convs exist, the one with the most recent `last_turn_at`
+    wins — not the one most recently *started*. This covers the case where
+    a tier switch creates a new (empty) conv but the tech keeps typing in
+    the previous one — without this, the empty newcomer would steal the
+    default landing and the active thread would be invisible."""
+    older_started = create_conversation(
+        device_slug=SLUG, repair_id=REPAIR, tier="normal",
+        memory_root=tmp_path,
+    )
+    newer_started_empty = create_conversation(
+        device_slug=SLUG, repair_id=REPAIR, tier="fast",
+        memory_root=tmp_path,
+    )
+    # Simulate real activity on the older-started conv, none on the newer.
+    touch_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id=older_started,
+        cost_usd=0.01, memory_root=tmp_path,
+    )
+    resolved, created = ensure_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id=None, tier="normal",
+        memory_root=tmp_path,
+    )
+    assert resolved == older_started
+    assert created is False
+    # Sanity: the empty newer one is still in the index, just not the default.
+    convs = list_conversations(
+        device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
+    )
+    assert {c["id"] for c in convs} == {older_started, newer_started_empty}
+
+
+def test_ensure_pending_does_not_write(tmp_path: Path) -> None:
+    """materialize=False on a create-path returns an id but skips disk writes."""
+    resolved, created = ensure_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id="new", tier="fast",
+        memory_root=tmp_path, materialize=False,
+    )
+    assert resolved and created is True
+    # No index, no conv dir — pending convs are in-memory only.
+    assert list_conversations(
+        device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
+    ) == []
+    assert not (
+        _repair_root(tmp_path) / "conversations" / resolved
+    ).exists()
+
+
+def test_ensure_pending_then_materialize(tmp_path: Path) -> None:
+    """materialize_conversation persists a previously-pending id."""
+    resolved, _ = ensure_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id="new", tier="fast",
+        memory_root=tmp_path, materialize=False,
+    )
+    written = materialize_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id=resolved, tier="fast",
+        memory_root=tmp_path,
+    )
+    assert written is True
+    convs = list_conversations(
+        device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
+    )
+    assert len(convs) == 1 and convs[0]["id"] == resolved
+    # Idempotent — second call is a no-op.
+    written_again = materialize_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id=resolved, tier="fast",
+        memory_root=tmp_path,
+    )
+    assert written_again is False
+    assert len(list_conversations(
+        device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
+    )) == 1
+
+
+def test_ensure_pending_uses_active_when_index_exists(tmp_path: Path) -> None:
+    """materialize=False with an existing conv resolves to active, not a fresh pending id."""
+    existing = create_conversation(
+        device_slug=SLUG, repair_id=REPAIR, tier="fast",
+        memory_root=tmp_path,
+    )
+    resolved, created = ensure_conversation(
+        device_slug=SLUG, repair_id=REPAIR, conv_id=None, tier="fast",
+        memory_root=tmp_path, materialize=False,
+    )
+    assert resolved == existing
+    assert created is False
 
 
 def test_migration_legacy_messages_jsonl(tmp_path: Path) -> None:

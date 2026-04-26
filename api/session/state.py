@@ -37,6 +37,16 @@ class SessionState:
     schematic: Any = None  # Hook for future sch_* tool family; not populated here.
     layer: Side = "top"
     highlights: set[str] = field(default_factory=set)
+    # Color the last bv_highlight / bv_focus call asked for. Without this,
+    # restoring the overlay always paints accent/cyan even when the agent
+    # originally tagged a part as warn/amber — visually misleading.
+    highlight_color: Literal["accent", "warn", "mute"] = "accent"
+    # Last component the agent put under bv_focus (centred + pulsed). Tracked
+    # separately from `highlights` because focus has visual side-effects
+    # (pan/zoom + pulse) that a plain highlight doesn't replay.
+    last_focused: str | None = None
+    last_focused_bbox: tuple[tuple[int, int], tuple[int, int]] | None = None
+    last_focused_zoom: float = 1.4
     net_highlight: str | None = None
     annotations: dict[str, dict[str, Any]] = field(default_factory=dict)
     arrows: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -79,6 +89,10 @@ class SessionState:
         self.board = board
         self.layer = "top"
         self.highlights = set()
+        self.highlight_color = "accent"
+        self.last_focused = None
+        self.last_focused_bbox = None
+        self.last_focused_zoom = 1.4
         self.net_highlight = None
         self.annotations = {}
         self.arrows = {}
@@ -86,6 +100,88 @@ class SessionState:
         self.filter_prefix = None
         self.layer_visibility = {"top": True, "bottom": True}
         self.component_cache.clear()
+
+    def serialize_view(self) -> dict[str, Any]:
+        """Plain-data snapshot of the boardview overlay state.
+
+        Caches (pack_cache, component_cache, schematic_graph_cache) and the
+        Board object itself are deliberately excluded — they're either
+        rebuilt from disk on demand or loaded from board_assets via
+        from_device(). Only the per-session UI overlay state survives, so
+        a reload reconstructs what the tech was looking at without
+        re-pulling 60 kB of board geometry.
+        """
+        return {
+            "layer": self.layer,
+            "highlights": sorted(self.highlights),
+            "highlight_color": self.highlight_color,
+            "last_focused": self.last_focused,
+            "last_focused_bbox": (
+                [list(self.last_focused_bbox[0]), list(self.last_focused_bbox[1])]
+                if self.last_focused_bbox else None
+            ),
+            "last_focused_zoom": self.last_focused_zoom,
+            "net_highlight": self.net_highlight,
+            "annotations": {k: dict(v) for k, v in self.annotations.items()},
+            "arrows": {k: dict(v) for k, v in self.arrows.items()},
+            "dim_unrelated": self.dim_unrelated,
+            "filter_prefix": self.filter_prefix,
+            "layer_visibility": dict(self.layer_visibility),
+        }
+
+    def restore_view(self, snapshot: dict[str, Any]) -> None:
+        """Inverse of serialize_view. Defensive against missing keys —
+        older on-disk snapshots that pre-date a field should still load."""
+        if not isinstance(snapshot, dict):
+            return
+        layer = snapshot.get("layer")
+        if layer in ("top", "bottom"):
+            self.layer = layer  # type: ignore[assignment]
+        highlights = snapshot.get("highlights")
+        if isinstance(highlights, list):
+            self.highlights = {h for h in highlights if isinstance(h, str)}
+        color = snapshot.get("highlight_color")
+        if color in ("accent", "warn", "mute"):
+            self.highlight_color = color  # type: ignore[assignment]
+        focused = snapshot.get("last_focused")
+        if isinstance(focused, str) or focused is None:
+            self.last_focused = focused
+        bbox = snapshot.get("last_focused_bbox")
+        if (
+            isinstance(bbox, list) and len(bbox) == 2
+            and all(isinstance(p, list) and len(p) == 2 for p in bbox)
+            and all(isinstance(c, (int, float)) for p in bbox for c in p)
+        ):
+            self.last_focused_bbox = (
+                (int(bbox[0][0]), int(bbox[0][1])),
+                (int(bbox[1][0]), int(bbox[1][1])),
+            )
+        zoom = snapshot.get("last_focused_zoom")
+        if isinstance(zoom, (int, float)):
+            self.last_focused_zoom = float(zoom)
+        net_highlight = snapshot.get("net_highlight")
+        if isinstance(net_highlight, str) or net_highlight is None:
+            self.net_highlight = net_highlight
+        annotations = snapshot.get("annotations")
+        if isinstance(annotations, dict):
+            self.annotations = {
+                k: dict(v) for k, v in annotations.items() if isinstance(v, dict)
+            }
+        arrows = snapshot.get("arrows")
+        if isinstance(arrows, dict):
+            self.arrows = {
+                k: dict(v) for k, v in arrows.items() if isinstance(v, dict)
+            }
+        if isinstance(snapshot.get("dim_unrelated"), bool):
+            self.dim_unrelated = snapshot["dim_unrelated"]
+        filter_prefix = snapshot.get("filter_prefix")
+        if isinstance(filter_prefix, str) or filter_prefix is None:
+            self.filter_prefix = filter_prefix
+        lv = snapshot.get("layer_visibility")
+        if isinstance(lv, dict):
+            self.layer_visibility = {
+                k: bool(v) for k, v in lv.items() if k in ("top", "bottom")
+            } or {"top": True, "bottom": True}
 
     @classmethod
     def from_device(cls, device_slug: str) -> SessionState:

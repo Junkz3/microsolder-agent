@@ -44,6 +44,12 @@ def highlight_component(
     if not additive:
         session.highlights = set()
     session.highlights.update(targets)
+    # Remember the color so a WS reconnect replays the overlay with the
+    # exact tone the agent picked (warn/amber for risky parts, mute for
+    # context, accent for primary). Without this the snapshot path always
+    # repaints accent and the visual semantics are lost.
+    if color in ("accent", "warn", "mute"):
+        session.highlight_color = color  # type: ignore[assignment]
 
     event = Highlight(refdes=targets, color=color, additive=additive)
     summary = f"Highlighted {', '.join(targets)}."
@@ -65,8 +71,13 @@ def focus_component(session: SessionState, *, refdes: str, zoom: float = 1.4) ->
         auto_flipped = True
 
     session.highlights = {refdes}
-
     bbox = ((part.bbox[0].x, part.bbox[0].y), (part.bbox[1].x, part.bbox[1].y))
+    # Persist the focus details so a reload can restore the centered/zoomed
+    # view, not just paint the highlight as a flat tag.
+    session.last_focused = refdes
+    session.last_focused_bbox = bbox
+    session.last_focused_zoom = zoom
+
     event = Focus(refdes=refdes, bbox=bbox, zoom=zoom, auto_flipped=auto_flipped)
     summary = f"Focused on {refdes} ({target_side})."
     return {"ok": True, "summary": summary, "event": event}
@@ -77,6 +88,10 @@ def reset_view(session: SessionState) -> dict[str, Any]:
     if err:
         return err
     session.highlights = set()
+    session.highlight_color = "accent"
+    session.last_focused = None
+    session.last_focused_bbox = None
+    session.last_focused_zoom = 1.4
     session.net_highlight = None
     session.dim_unrelated = False
     session.annotations = {}
@@ -209,3 +224,87 @@ def layer_visibility(session: SessionState, *, layer: str, visible: bool) -> dic
     session.layer_visibility[layer] = visible  # type: ignore[index]
     event = LayerVisibility(layer=layer, visible=visible)  # type: ignore[arg-type]
     return {"ok": True, "summary": f"Layer {layer} visible={visible}.", "event": event}
+
+
+def compose_scene(
+    session: SessionState,
+    *,
+    reset: bool = False,
+    highlights: list[dict[str, Any]] | None = None,
+    annotations: list[dict[str, Any]] | None = None,
+    arrows: list[dict[str, Any]] | None = None,
+    focus: dict[str, Any] | None = None,
+    dim_unrelated: bool = False,
+) -> dict[str, Any]:
+    """Apply a multi-element boardview scene in one call.
+
+    Order: reset → highlights → annotations → arrows → focus → dim. Each
+    sub-op routes through its existing helper so refdes validation, session
+    mutation, and event shape stay identical to the atomic tools. Per-item
+    failures are collected in `errors` rather than aborting the scene.
+
+    Returns `{ok, summary, events: [...], errors: [...]}`. `ok` is False
+    only when no sub-op succeeded *and* at least one failure was recorded
+    (an empty scene returns ok=true with empty events).
+    """
+    err = _no_board(session)
+    if err:
+        return err
+
+    events: list[Any] = []
+    errors: list[dict[str, Any]] = []
+
+    def _run(label: str, result: dict[str, Any]) -> None:
+        if result.get("ok") and result.get("event") is not None:
+            events.append(result["event"])
+        elif not result.get("ok"):
+            errors.append({"step": label, **{k: v for k, v in result.items() if k != "event"}})
+
+    if reset:
+        _run("reset", reset_view(session))
+
+    for idx, h in enumerate(highlights or []):
+        kwargs = {k: v for k, v in h.items() if k in ("refdes", "color", "additive")}
+        # Composite scene replaces the prior highlight set on the first
+        # entry, then accumulates — additive defaults to True past the first
+        # so the agent doesn't have to manage the flag inside one scene.
+        kwargs.setdefault("additive", idx > 0)
+        _run(f"highlights[{idx}]", highlight_component(session, **kwargs))
+
+    for idx, a in enumerate(annotations or []):
+        _run(f"annotations[{idx}]", annotate(session, **{k: v for k, v in a.items() if k in ("refdes", "label")}))
+
+    for idx, ar in enumerate(arrows or []):
+        _run(f"arrows[{idx}]", draw_arrow(session, **{k: v for k, v in ar.items() if k in ("from_refdes", "to_refdes")}))
+
+    if focus:
+        _run("focus", focus_component(session, **{k: v for k, v in focus.items() if k in ("refdes", "zoom")}))
+
+    if dim_unrelated:
+        _run("dim_unrelated", dim_unrelated_(session))
+
+    parts: list[str] = []
+    if reset:
+        parts.append("reset")
+    if highlights:
+        parts.append(f"{len(highlights)}H")
+    if annotations:
+        parts.append(f"{len(annotations)}A")
+    if arrows:
+        parts.append(f"{len(arrows)}→")
+    if focus:
+        parts.append(f"focus {focus.get('refdes')}")
+    if dim_unrelated:
+        parts.append("dim")
+    summary = f"Scène: {', '.join(parts) or 'vide'}"
+    if errors:
+        summary += f" ({len(errors)} erreur{'s' if len(errors) > 1 else ''})"
+
+    overall_ok = bool(events) or not errors
+    return {"ok": overall_ok, "summary": summary, "events": events, "errors": errors}
+
+
+# Alias to keep the local helper name from shadowing the function above when
+# compose_scene calls it. Defined after so the original `dim_unrelated`
+# remains the public handler — compose_scene routes via this alias.
+dim_unrelated_ = dim_unrelated

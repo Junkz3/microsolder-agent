@@ -150,7 +150,29 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
         )
 
 
+class _NoCacheStaticFiles(StaticFiles):
+    """StaticFiles subclass that disables browser caching for every served file.
+
+    Why: the diagnostic chat panel is loaded as a tree of ES modules
+    (`js/main.js` → `js/llm.js` → `js/protocol.js` → …). Browsers cache
+    each module URL aggressively and ES module imports are NOT invalidated
+    by bumping the parent script's `?v=` query string — the relative
+    `import './foo.js'` resolves to the bare URL. In dev that means edits
+    to a sibling module silently no-op until the tech remembers to
+    Ctrl+Shift+R, and stale cached versions keep dropping unhandled WS
+    events through old code paths (the recurring `?{...}` raw-JSON dumps
+    in chat the user kept seeing). No-store is heavy-handed for a prod
+    CDN but exactly right for a local FastAPI dev server: every reload
+    pulls fresh code with no stale-module footguns.
+    """
+
+    async def get_response(self, path, scope):  # type: ignore[override]
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+
 if WEB_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+    app.mount("/", _NoCacheStaticFiles(directory=str(WEB_DIR), html=True), name="web")
 else:
     logger.warning("web/ directory not found at %s — static files not mounted", WEB_DIR)

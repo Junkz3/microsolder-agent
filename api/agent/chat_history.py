@@ -483,21 +483,29 @@ def list_conversations(
     return _read_index(root, device_slug, repair_id)
 
 
-def create_conversation(
+def _create_index_entry(
     *,
+    root: Path,
     device_slug: str,
     repair_id: str,
+    conv_id: str,
     tier: str,
-    memory_root: Path | None = None,
-) -> str:
-    """Create a fresh conversation, close the previous active one, return its id."""
-    root = memory_root or Path(get_settings().memory_root)
+) -> bool:
+    """Append a fresh entry for `conv_id` to index.json, closing the previous
+    open one. Idempotent — returns False (and writes nothing) when an entry
+    with `conv_id` is already in the index. Returns True when a new entry
+    was actually created.
+
+    Shared by `create_conversation` (which auto-generates the id) and
+    `materialize_conversation` (which persists a pre-allocated pending id
+    that was returned by `ensure_conversation(materialize=False)`).
+    """
     index = _read_index(root, device_slug, repair_id)
-    # Close any existing open entries (typically the last one).
+    if any(entry.get("id") == conv_id for entry in index):
+        return False
     for entry in index:
         if not entry.get("closed"):
             entry["closed"] = True
-    conv_id = secrets.token_hex(4)  # 8 hex chars
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     index.append(
         {
@@ -527,7 +535,70 @@ def create_conversation(
             root=root, device_slug=device_slug, repair_id=repair_id,
             conv_id=conv_id,
         )
+    return True
+
+
+def create_conversation(
+    *,
+    device_slug: str,
+    repair_id: str,
+    tier: str,
+    memory_root: Path | None = None,
+) -> str:
+    """Create a fresh conversation, close the previous active one, return its id."""
+    root = memory_root or Path(get_settings().memory_root)
+    conv_id = secrets.token_hex(4)  # 8 hex chars
+    _create_index_entry(
+        root=root, device_slug=device_slug, repair_id=repair_id,
+        conv_id=conv_id, tier=tier,
+    )
     return conv_id
+
+
+def get_conversation_tier(
+    *,
+    device_slug: str,
+    repair_id: str,
+    conv_id: str,
+    memory_root: Path | None = None,
+) -> str | None:
+    """Return the tier the conv was originally opened with, per the index
+    entry. Used by the runtime to auto-align the WS tier with the conv on
+    default landings (no explicit `?tier=` from the tech) so a Sonnet
+    thread isn't silently resumed as Haiku because of the URL default.
+    Returns None when the conv isn't in the index (pending or unknown).
+    """
+    root = memory_root or Path(get_settings().memory_root)
+    index = _read_index(root, device_slug, repair_id)
+    for entry in index:
+        if entry.get("id") == conv_id:
+            tier = entry.get("tier")
+            return tier if isinstance(tier, str) else None
+    return None
+
+
+def materialize_conversation(
+    *,
+    device_slug: str,
+    repair_id: str,
+    conv_id: str,
+    tier: str,
+    memory_root: Path | None = None,
+) -> bool:
+    """Persist a previously-pending `conv_id` to disk (index entry + dir).
+
+    The companion to `ensure_conversation(materialize=False)`: at WS open we
+    pre-allocate an id but skip the disk write so the index doesn't pile up
+    with 0-turn conversations from sessions the tech opens and never sends
+    a message in. This call materializes the slot when real content is
+    about to land. Idempotent — returns False if `conv_id` is already in
+    the index, True when a new entry was actually appended.
+    """
+    root = memory_root or Path(get_settings().memory_root)
+    return _create_index_entry(
+        root=root, device_slug=device_slug, repair_id=repair_id,
+        conv_id=conv_id, tier=tier,
+    )
 
 
 def _seed_legacy_ma_sessions(
@@ -583,6 +654,7 @@ def ensure_conversation(
     conv_id: str | None,
     tier: str,
     memory_root: Path | None = None,
+    materialize: bool = True,
 ) -> tuple[str, bool]:
     """Resolve a conv_id to the right target, creating / migrating when needed.
 
@@ -594,27 +666,50 @@ def ensure_conversation(
       - Unknown `conv_id` → raise KeyError.
 
     Returns `(resolved_id, created)` — `created` is True when this call
-    created or migrated a conversation.
+    created (or pre-allocated, see below) a conversation, including the
+    legacy migration.
+
+    `materialize` (default True): when False, the create path returns a
+    freshly-generated id WITHOUT writing the index entry or making the conv
+    directory. The caller is then responsible for calling
+    `materialize_conversation` once real content is about to land — typically
+    on the first user message. This avoids spawning 0-turn entries when a
+    technician opens the diagnostic panel without sending anything. Has no
+    effect on the resolve-existing path (no write happens there anyway).
+    Migration of legacy `messages.jsonl` always materializes — moving a
+    file off disk is the whole point of that path.
     """
     root = memory_root or Path(get_settings().memory_root)
     if conv_id == "new":
-        return (
-            create_conversation(
-                device_slug=device_slug,
-                repair_id=repair_id,
-                tier=tier,
-                memory_root=root,
-            ),
-            True,
-        )
+        if materialize:
+            return (
+                create_conversation(
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    tier=tier,
+                    memory_root=root,
+                ),
+                True,
+            )
+        return secrets.token_hex(4), True
 
     index = _read_index(root, device_slug, repair_id)
 
     if conv_id is None:
         if index:
-            # Active = most recent (last in index) — even if marked closed,
-            # we open it read-only. Callers can decide to create a new one.
-            return index[-1]["id"], False
+            # Active = the conv the technician most recently *touched*. The
+            # naive "last in index" pick was wrong: index order is
+            # `started_at` ascending, so a conv started 5 minutes ago that
+            # got 0 turns trumps a conv started 10 minutes ago that's still
+            # accumulating turns right now. Tier switches and reopens
+            # particularly hit this — they create a fresh conv even if the
+            # tech then keeps working in the previous one. Sort by
+            # `last_turn_at` (with `started_at` as tie-breaker for never-
+            # touched entries) so the default landing always lands on the
+            # thread the tech actually has live activity in.
+            def _recency_key(entry: dict[str, Any]) -> str:
+                return entry.get("last_turn_at") or entry.get("started_at") or ""
+            return max(index, key=_recency_key)["id"], False
         # No index yet — migrate legacy if present, else create fresh.
         legacy = _legacy_history_file(root, device_slug, repair_id)
         if legacy.exists():
@@ -627,15 +722,17 @@ def ensure_conversation(
                 ),
                 True,
             )
-        return (
-            create_conversation(
-                device_slug=device_slug,
-                repair_id=repair_id,
-                tier=tier,
-                memory_root=root,
-            ),
-            True,
-        )
+        if materialize:
+            return (
+                create_conversation(
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    tier=tier,
+                    memory_root=root,
+                ),
+                True,
+            )
+        return secrets.token_hex(4), True
 
     # Explicit id — must exist.
     if not any(entry["id"] == conv_id for entry in index):

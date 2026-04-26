@@ -634,11 +634,20 @@ def list_repair_conversations(repair_id: str) -> dict:
 
 
 @router.get("/repairs/{repair_id}/protocol")
-async def get_repair_protocol(repair_id: str, device_slug: str) -> dict:
-    """Return the active protocol artifact for this repair (or {active: false})."""
+async def get_repair_protocol(
+    repair_id: str, device_slug: str, conv: str | None = None,
+) -> dict:
+    """Return the active protocol artifact for this repair (or {active: false}).
+
+    `conv` is the conversation id to scope the lookup. When omitted, falls
+    back to the legacy repair-root protocol pointer (kept for backward
+    compatibility with pre-per-conv artefacts).
+    """
     from api.tools.protocol import load_active_protocol
     settings = get_settings()
-    proto = load_active_protocol(Path(settings.memory_root), device_slug, repair_id)
+    proto = load_active_protocol(
+        Path(settings.memory_root), device_slug, repair_id, conv_id=conv,
+    )
     if proto is None:
         return {"active": False}
     return {

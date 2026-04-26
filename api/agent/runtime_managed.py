@@ -31,9 +31,11 @@ from api.agent.chat_history import (
     build_ctx_tag,
     build_session_intro,
     ensure_conversation,
+    get_conversation_tier,
     list_conversations,
     load_events,
     load_ma_session_id,
+    materialize_conversation,
     save_ma_session_id,
     strip_ctx_tag,
     touch_conversation,
@@ -88,6 +90,97 @@ class _SessionMirrors:
             )
             for task in list(self._pending):
                 task.cancel()
+
+
+def _mirror_jsonl(
+    *,
+    device_slug: str | None,
+    repair_id: str | None,
+    conv_id: str | None,
+    memory_root: Path | None,
+    event: dict[str, Any],
+) -> None:
+    """Best-effort mirror of one Anthropic-shaped event to the conv's
+    `messages.jsonl`. The managed runtime historically relied on MA's
+    server-side event store as its only source of truth for transcripts,
+    but MA can archive sessions out from under us (beta TTL is undocumented
+    and shorter than the ~30 d the docs imply — see real loss of a 31-turn
+    iPhone repair conv on 2026-04-26 where `events.list` returned empty).
+    Mirroring every user message + agent text + tool_use to disk gives
+    `_replay_ma_history_to_ws` and `_summarize_prior_history_for_resume`
+    something to fall back on. Anonymous (no repair_id) and pending convs
+    skip silently — no destination yet.
+    """
+    if not repair_id or not conv_id or not device_slug:
+        return
+    try:
+        append_event(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            event=event,
+            memory_root=memory_root,
+        )
+    except Exception as exc:  # noqa: BLE001 — never block the WS on a mirror write
+        logger.warning(
+            "[Diag-MA] _mirror_jsonl failed for repair=%s conv=%s: %s",
+            repair_id, conv_id, exc,
+        )
+
+
+class _PendingConv:
+    """Lazy-materialization handle for a conversation that doesn't exist on
+    disk yet. Created at WS-open via `ensure_conversation(materialize=False)`
+    so the index doesn't accumulate 0-turn entries from sessions the tech
+    opens and never sends a message in. The first `materialize_now()` call
+    writes the index entry, the conv directory, and (if applicable) saves
+    the MA session id linking this conv to the freshly-created MA session.
+    Idempotent.
+    """
+
+    def __init__(
+        self,
+        *,
+        device_slug: str,
+        repair_id: str | None,
+        conv_id: str | None,
+        tier: str,
+        memory_root: Path,
+        session_id: str | None,
+        pending: bool,
+    ) -> None:
+        self.device_slug = device_slug
+        self.repair_id = repair_id
+        self.conv_id = conv_id
+        self.tier = tier
+        self.memory_root = memory_root
+        self.session_id = session_id
+        self._pending = pending
+
+    @property
+    def is_pending(self) -> bool:
+        return self._pending
+
+    def materialize_now(self) -> None:
+        if not self._pending or not self.conv_id or not self.repair_id:
+            return
+        materialize_conversation(
+            device_slug=self.device_slug,
+            repair_id=self.repair_id,
+            conv_id=self.conv_id,
+            tier=self.tier,
+            memory_root=self.memory_root,
+        )
+        if self.session_id:
+            save_ma_session_id(
+                device_slug=self.device_slug,
+                repair_id=self.repair_id,
+                conv_id=self.conv_id,
+                session_id=self.session_id,
+                tier=self.tier,
+                memory_root=self.memory_root,
+            )
+        self._pending = False
 
 
 _SUMMARY_SYSTEM = (
@@ -364,6 +457,7 @@ async def _dispatch_tool(
     session_id: str | None = None,
     repair_id: str | None = None,
     session_mirrors: _SessionMirrors | None = None,
+    conv_id: str | None = None,
 ) -> dict:
     """Run a custom tool locally and return the raw result.
 
@@ -398,10 +492,23 @@ async def _dispatch_tool(
         )
 
         valid_refdes = (
-            set(session.board.part_by_refdes().keys())
+            {p.refdes for p in session.board.parts}
             if session.board is not None
             else None
         )
+        # Tolerate "comp:U7" / "rail:+5V" prefixes the agent learns from
+        # mb_set_observation; strip "comp:" so the refdes validates, drop
+        # rail/test-point prefixes into test_point so the step still anchors
+        # somewhere meaningful even without a board part.
+        for s in payload.get("steps", []) or []:
+            t = s.get("target")
+            if isinstance(t, str) and ":" in t:
+                kind, _, rest = t.partition(":")
+                if kind == "comp":
+                    s["target"] = rest
+                else:
+                    s["target"] = None
+                    s.setdefault("test_point", t)
         try:
             step_inputs = [_SI.model_validate(s) for s in payload.get("steps", [])]
         except Exception as exc:  # noqa: BLE001
@@ -415,10 +522,11 @@ async def _dispatch_tool(
             steps=step_inputs,
             rule_inspirations=payload.get("rule_inspirations") or None,
             valid_refdes=valid_refdes,
+            conv_id=conv_id,
         )
         if result.get("ok"):
             from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
             if proto is not None:
                 result["event"] = {
                     "type": "protocol_proposed",
@@ -452,10 +560,11 @@ async def _dispatch_tool(
             new_step=new_step,
             new_order=payload.get("new_order"),
             verdict=payload.get("verdict"),
+            conv_id=conv_id,
         )
         if result.get("ok"):
             from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
             history_tail = proto.history[-3:] if proto is not None else []
             result["event"] = {
                 "type": "protocol_updated",
@@ -479,10 +588,11 @@ async def _dispatch_tool(
             observation=payload.get("observation"),
             skip_reason=payload.get("skip_reason"),
             submitted_by="agent",
+            conv_id=conv_id,
         )
         if result.get("ok"):
             from api.tools.protocol import load_active_protocol
-            proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+            proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
             history_tail = proto.history[-3:] if proto is not None else []
             result["event"] = {
                 "type": "protocol_updated",
@@ -496,7 +606,7 @@ async def _dispatch_tool(
 
     if name == "bv_get_protocol":
         from api.tools.protocol import load_active_protocol
-        proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+        proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
         if proto is None:
             return {"ok": True, "active": False}
         return {
@@ -800,16 +910,24 @@ async def run_diagnostic_session_managed(
 
     # Resolve which conversation within the repair this WS targets. Anonymous
     # sessions (no repair_id) skip conversation tracking — MA still persists
-    # server-side, but we can't index it without an owning repair.
+    # server-side, but we can't index it without an owning repair. Lazy
+    # materialization (`materialize=False`): when the resolution would create
+    # a fresh conv, we get back a pre-allocated id but nothing is written
+    # to disk yet — the slot only persists if the tech actually sends a
+    # message. Without this, every "+ Nouvelle conversation" click and every
+    # tier switch leaves a 0-turn entry behind. Materialization happens on
+    # the first user.message via `pending_conv.materialize_now()`.
     resolved_conv_id: str | None = None
+    pending_materialize = False
     conversation_count = 0
     if repair_id:
-        resolved_conv_id, _created = ensure_conversation(
+        resolved_conv_id, pending_materialize = ensure_conversation(
             device_slug=device_slug,
             repair_id=repair_id,
             conv_id=conv_id,
             tier=tier,
             memory_root=memory_root,
+            materialize=False,
         )
         conversation_count = len(
             list_conversations(
@@ -849,8 +967,10 @@ async def run_diagnostic_session_managed(
     # that's how conversation context survives a WS close/reopen. Sessions
     # are keyed BY (CONV, TIER): each conversation owns its own MA session
     # id and each tier within a conversation has its own agent identity.
+    # Pending convs (lazy-materialized) have no on-disk dir yet, so there's
+    # no saved MA session id to look up — skip the read.
     reused_session_id = None
-    if resolved_conv_id:
+    if resolved_conv_id and not pending_materialize:
         reused_session_id = load_ma_session_id(
             device_slug=device_slug,
             repair_id=repair_id,
@@ -859,28 +979,32 @@ async def run_diagnostic_session_managed(
         )
     session = None
     resumed = False
+    # Distinguish two paths into the "fresh MA session + recap" branch:
+    #  - real recovery (MA returned an error / agent_id matches but retrieve
+    #    failed for whatever reason — expired, archived, outage)
+    #  - agent-version drift (the saved session is bound to an agent that is
+    #    no longer the current one because microsolder-agent-evolve bumped
+    #    the SYSTEM_PROMPT or manifest). The agent has new capabilities so
+    #    we must run on the current one, but the user shouldn't see the
+    #    "Reprise de session" UI card every overnight bump — the recap is
+    #    still injected into the new agent's intro for context continuity,
+    #    just not surfaced to the chat panel.
+    stale_agent_recovery = False
     if reused_session_id:
         try:
             session = await client.beta.sessions.retrieve(reused_session_id)
-            # The session is retrievable even if it was bound to an agent that
-            # has since been archived (e.g. after a manifest refresh). In that
-            # case the agent running the session still has the OLD tool set
-            # and system prompt — the tech won't see profile_* nor the
-            # <technician_profile> block on this conversation. Detect the
-            # drift and treat it like a failed retrieve so the fallback path
-            # below kicks in: fresh session on the current agent + Haiku
-            # summary of what happened on the old one.
             session_agent = getattr(session, "agent", None)
             session_agent_id = getattr(session_agent, "id", None) if session_agent else None
             if session_agent_id and session_agent_id != agent_info["id"]:
                 logger.info(
                     "[Diag-MA] session=%s bound to stale agent=%s (current=%s) — "
-                    "forcing fresh session + recap",
+                    "forcing fresh session + silent recap",
                     reused_session_id,
                     session_agent_id,
                     agent_info["id"],
                 )
                 session = None
+                stale_agent_recovery = True
             else:
                 resumed = True
                 logger.info(
@@ -899,13 +1023,11 @@ async def run_diagnostic_session_managed(
 
     recovery_summary: dict[str, Any] | None = None
     if session is None:
-        # The old MA session is gone (archived / expired). Before we create a
-        # fresh one, synthesize a recap from the JSONL so the agent can pick up
-        # the context without the full history being replayed through MA again.
+        # The old MA session is gone (archived / expired) OR its bound agent
+        # no longer matches the current one (overnight evolve bump). Either
+        # way we synthesize a recap from MA history (or JSONL fallback) so
+        # the new agent picks up the context without a full replay.
         if reused_session_id:
-            # Pull the transcript from the dying MA session itself — in managed
-            # mode nothing is persisted to disk, the source of truth lives on
-            # Anthropic's side.
             recovery_summary = await _summarize_prior_history_for_resume(
                 client=client,
                 old_session_id=reused_session_id,
@@ -922,7 +1044,12 @@ async def run_diagnostic_session_managed(
             await ws.send_json({"type": "error", "text": f"session create failed: {exc}"})
             await ws.close()
             return
-        if resolved_conv_id:
+        # Save the link from this conv to the fresh MA session id NOW only
+        # for already-materialized convs. Pending convs defer this until
+        # `pending_conv.materialize_now()` runs on the first user message —
+        # otherwise we'd write a `ma_session_<tier>.json` into a directory
+        # whose parent index doesn't list this conv, leaving an orphan.
+        if resolved_conv_id and not pending_materialize:
             save_ma_session_id(
                 device_slug=device_slug,
                 repair_id=repair_id,
@@ -930,6 +1057,16 @@ async def run_diagnostic_session_managed(
                 session_id=session.id,
                 tier=tier,
             )
+
+    pending_conv = _PendingConv(
+        device_slug=device_slug,
+        repair_id=repair_id,
+        conv_id=resolved_conv_id,
+        tier=tier,
+        memory_root=memory_root,
+        session_id=session.id,
+        pending=pending_materialize,
+    )
 
     logger.info(
         "[Diag-MA] session=%s device=%s tier=%s model=%s memory=%s resumed=%s",
@@ -941,6 +1078,21 @@ async def run_diagnostic_session_managed(
         resumed,
     )
 
+    # Surface the conv's "preferred" tier (the one it was originally created
+    # with) so the frontend can auto-align if the WS opened with a default
+    # tier that doesn't match — e.g. tech reopens panel which defaults to
+    # `fast`, lands on a Sonnet conv, and would otherwise silently see the
+    # nearly-empty Haiku thread of that same conv instead of the real
+    # Sonnet history.
+    conv_tier_pref: str | None = None
+    if resolved_conv_id and repair_id and not pending_materialize:
+        conv_tier_pref = get_conversation_tier(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+            memory_root=memory_root,
+        )
+
     await ws.accept()
     await ws.send_json(
         {
@@ -950,6 +1102,7 @@ async def run_diagnostic_session_managed(
             "memory_store_id": memory_store_id,
             "device_slug": device_slug,
             "tier": tier,
+            "conv_tier": conv_tier_pref,
             "model": agent_info["model"],
             "board_loaded": session_state.board is not None,
             "repair_id": repair_id,
@@ -959,9 +1112,13 @@ async def run_diagnostic_session_managed(
     )
 
     # Hydrate any active protocol so the UI panel rebuilds on reconnect.
+    # When no protocol exists for this conv, push an explicit
+    # `protocol_cleared` so the wizard sidebar drops any leftover state
+    # from the previous conv (silence would have left the prior wizard
+    # pinned on screen — same root cause as the boardview reset above).
     if repair_id:
         from api.tools.protocol import load_active_protocol as _lap
-        active = _lap(memory_root, device_slug, repair_id or "")
+        active = _lap(memory_root, device_slug, repair_id or "", conv_id=resolved_conv_id)
         if active is not None:
             await ws.send_json({
                 "type": "protocol_proposed",
@@ -972,6 +1129,39 @@ async def run_diagnostic_session_managed(
                 "current_step_id": active.current_step_id,
                 "replay": True,
             })
+        else:
+            await ws.send_json({"type": "protocol_cleared"})
+
+    # Hydrate the boardview overlay (highlights, focus, annotations,
+    # dim, layer flip) from the per-repair snapshot. This survives MA
+    # archiving the conv: even if the agent's chat memory is gone, the
+    # board still shows the same components highlighted / annotated as
+    # before the reload — the visual state IS the on-disk truth, not
+    # something that has to be reconstructed from MA events. Apply it
+    # to the live SessionState too so the next bv_* dispatch sees the
+    # restored overlay rather than silently overwriting it.
+    if repair_id:
+        from api.agent.board_state import load_board_state, replay_board_state_to_ws
+        # Always wipe the renderer's overlay first so a switch from a
+        # heavily-annotated conv to a fresh one shows a clean board. Without
+        # this, brd_viewer keeps the previous conv's highlights / annotations
+        # / focus on screen because the per-conv backend has nothing to
+        # send for the new conv (and silence ≠ "clear what was there").
+        await ws.send_json({"type": "boardview.reset_view"})
+        snapshot = load_board_state(
+            memory_root=memory_root,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+        )
+        if snapshot:
+            session_state.restore_view(snapshot)
+            sent = await replay_board_state_to_ws(ws, snapshot)
+            if sent:
+                logger.info(
+                    "[Diag-MA] replayed boardview state for repair=%s conv=%s (%d events)",
+                    repair_id, resolved_conv_id, sent,
+                )
 
     # The intro (device context + reported symptom + technician profile) only
     # needs injection on a FRESH session. When we resume, the MA session
@@ -983,14 +1173,33 @@ async def run_diagnostic_session_managed(
     # MA stores the intro as one hidden user message prefixed to the first real
     # turn (see _forward_ws_to_session's pending_intro handling).
     intro: str | None
+    state_summary: dict[str, Any] = {"measurements": 0, "protocol": None, "outcome": False}
     if resumed:
         intro = None
+        # Even when MA resumes cleanly, compute the summary so we can ship
+        # it in any later context_lost emitted from the replay path.
+        from api.agent.recovery_state import build_repair_state_block as _brsb
+        _, state_summary = _brsb(
+            memory_root=memory_root, device_slug=device_slug, repair_id=repair_id,
+            conv_id=resolved_conv_id,
+        )
     else:
+        from api.agent.recovery_state import build_repair_state_block
         from api.profile.prompt import render_technician_block
         from api.profile.store import load_profile
 
         device_intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
         tech_block = render_technician_block(load_profile())
+        # Hard-fact snapshot from disk (measurements + protocol + outcome).
+        # Surfaces what the tech actually has on record so a fresh MA agent
+        # doesn't redo work or re-ask measurements that already exist on
+        # disk. Critical when the prior MA session was lost (cf. context_lost
+        # path) — without this the agent is back to "dis-moi quel est ton
+        # symptôme" even though 8 measurements + a 5-step protocol survive.
+        state_block, state_summary = build_repair_state_block(
+            memory_root=memory_root, device_slug=device_slug, repair_id=repair_id,
+            conv_id=resolved_conv_id,
+        )
         parts: list[str] = []
         if recovery_summary:
             parts.append(
@@ -999,6 +1208,8 @@ async def run_diagnostic_session_managed(
             )
         if device_intro:
             parts.append(device_intro)
+        if state_block:
+            parts.append(state_block)
         parts.append(f"[CONTEXTE TECHNICIEN]\n{tech_block}")
         intro = "\n\n---\n\n".join(parts) if parts else None
 
@@ -1009,7 +1220,9 @@ async def run_diagnostic_session_managed(
     ctx_tag = build_ctx_tag(
         device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
     )
-    if recovery_summary:
+    if recovery_summary and not stale_agent_recovery:
+        # Real recovery (MA session expired / outage). Surface to the chat
+        # panel so the tech sees the seam — the prior conv is gone for real.
         await ws.send_json(
             {
                 "type": "session_resumed_summary",
@@ -1017,6 +1230,41 @@ async def run_diagnostic_session_managed(
                 "tokens_in": recovery_summary["usage"]["input_tokens"],
                 "tokens_out": recovery_summary["usage"]["output_tokens"],
             }
+        )
+    elif recovery_summary and stale_agent_recovery:
+        # Agent-bump recovery: the recap is glued into the new agent's intro
+        # (above) so context survives, but the UI stays quiet — overnight
+        # evolve loops shouldn't visibly disrupt the tech's chat thread.
+        logger.info(
+            "[Diag-MA] silent agent-bump recap injected into intro for "
+            "repair=%s conv=%s (tokens %d→%d)",
+            repair_id,
+            resolved_conv_id,
+            recovery_summary["usage"]["input_tokens"],
+            recovery_summary["usage"]["output_tokens"],
+        )
+    elif reused_session_id and not recovery_summary and not resumed:
+        # Worst case: MA archived the prior session (events.list empty) AND
+        # we had no local JSONL to summarize — typically a conv created
+        # before the JSONL mirror landed. The fresh MA session has zero
+        # memory of the prior turns. Tell the tech explicitly so they
+        # don't assume the agent remembers the symptom they discussed an
+        # hour ago. Without this, the chat lies — it says "session reprise"
+        # while the model has been factory-reset under the hood.
+        await ws.send_json(
+            {
+                "type": "context_lost",
+                "old_session_id": reused_session_id,
+                "new_session_id": session.id,
+                "preserved": state_summary,
+            }
+        )
+        logger.warning(
+            "[Diag-MA] context_lost emitted for repair=%s conv=%s — old "
+            "session=%s archived and no JSONL backup; new agent starts blank",
+            repair_id,
+            resolved_conv_id,
+            reused_session_id,
         )
     if intro:
         await ws.send_json(
@@ -1030,6 +1278,28 @@ async def run_diagnostic_session_managed(
             "[Diag-MA] Stashed session intro for repair=%s (awaiting tech input)",
             repair_id,
         )
+    # Replay the chat history from local JSONL when we just created a fresh
+    # MA session AND we have a transcript on disk. Without this, the silent
+    # agent-bump path (bootstrap reload → stale agent_id → fresh session)
+    # leaves the chat panel empty even though the conv has 37 lines on
+    # disk. Symmetric with the `if resumed:` MA-events replay below — the
+    # tech never has to guess whether their conversation history is
+    # actually visible based on which recovery path the runtime took.
+    if not resumed and repair_id and resolved_conv_id:
+        replayed_local = await _replay_jsonl_history_to_ws(
+            ws,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+            memory_root=memory_root,
+            session_state=session_state,
+        )
+        if replayed_local:
+            logger.info(
+                "[Diag-MA] replayed chat from local JSONL for fresh session "
+                "(repair=%s conv=%s)",
+                repair_id, resolved_conv_id,
+            )
     if resumed:
         await ws.send_json(
             {
@@ -1042,13 +1312,89 @@ async def run_diagnostic_session_managed(
         # the conversation visually. Also replays per-turn costs from the
         # span.model_request_end events MA stores alongside so the lifetime
         # cost chip survives the reopen.
-        await _replay_ma_history_to_ws(
+        replayed_anything = await _replay_ma_history_to_ws(
             ws,
             client,
             session.id,
             session_state,
             agent_info["model"],
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=resolved_conv_id,
+            memory_root=memory_root,
         )
+        # If MA's events.list returned empty AND there was no JSONL backup
+        # to replay, the resumed session is alive in name only — its
+        # internal context has likely been compacted/dropped. The chat
+        # panel showing nothing is a lie unless we tell the tech the agent
+        # is effectively starting fresh. Emit `context_lost` so the
+        # frontend renders an explicit alert card.
+        if not replayed_anything:
+            # The resumed MA session is alive but empty (events.list returned
+            # only metadata, no JSONL backup). The agent has no
+            # conversational history. Inject the on-disk state snapshot as
+            # a synthetic user.message so it has the hard facts (mesures,
+            # protocol progress, outcome) before the tech's next turn —
+            # otherwise the agent would re-ask measurements that already
+            # exist on disk. The intro path was skipped because we entered
+            # via the resumed=True branch, so this is the only chance to
+            # prime the agent.
+            from api.agent.recovery_state import build_repair_state_block as _brsb
+
+            state_block_now, _ = _brsb(
+                memory_root=memory_root,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+            )
+            if state_block_now:
+                try:
+                    await client.beta.sessions.events.send(
+                        session.id,
+                        events=[{
+                            "type": "user.message",
+                            "content": [{"type": "text", "text": state_block_now}],
+                        }],
+                    )
+                    _mirror_jsonl(
+                        device_slug=device_slug,
+                        repair_id=repair_id,
+                        conv_id=resolved_conv_id,
+                        memory_root=memory_root,
+                        event={
+                            "role": "user",
+                            "content": [{"type": "text", "text": state_block_now}],
+                        },
+                    )
+                    logger.info(
+                        "[Diag-MA] context_lost recovery — pushed state block "
+                        "(%d measurements, protocol=%s, outcome=%s) to fresh agent",
+                        state_summary["measurements"],
+                        bool(state_summary["protocol"]),
+                        state_summary["outcome"],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[Diag-MA] failed to push state block on context_lost: %s",
+                        exc,
+                    )
+            await ws.send_json(
+                {
+                    "type": "context_lost",
+                    "old_session_id": session.id,
+                    "new_session_id": session.id,
+                    "reason": "ma_events_empty",
+                    "preserved": state_summary,
+                }
+            )
+            logger.warning(
+                "[Diag-MA] context_lost (resumed but empty) for repair=%s "
+                "conv=%s session=%s — events.list returned 0 and no JSONL "
+                "backup; agent will respond as if starting fresh",
+                repair_id,
+                resolved_conv_id,
+                session.id,
+            )
 
     # Cache: agent.custom_tool_use events by event.id, so we can look up
     # name+input when `requires_action` arrives and only hands us event_ids.
@@ -1075,6 +1421,7 @@ async def run_diagnostic_session_managed(
                 device_slug=device_slug,
                 conv_id=resolved_conv_id,
                 memory_root=memory_root,
+                pending_conv=pending_conv,
             ),
             name="ws->session",
         )
@@ -1091,6 +1438,7 @@ async def run_diagnostic_session_managed(
                 repair_id=repair_id,
                 conv_id=resolved_conv_id,
                 session_mirrors=session_mirrors,
+                pending_conv=pending_conv,
             ),
             name="session->ws",
         )
@@ -1140,13 +1488,108 @@ async def run_diagnostic_session_managed(
         set_validation_emitter(None)
 
 
+async def _replay_jsonl_history_to_ws(
+    ws: WebSocket,
+    *,
+    device_slug: str,
+    repair_id: str | None,
+    conv_id: str | None,
+    memory_root: Path | None,
+    session_state: SessionState,
+) -> bool:
+    """Replay the conv's local `messages.jsonl` to the WS chat panel.
+
+    Used as a fallback when `_replay_ma_history_to_ws` finds the MA session
+    archived (events.list empty) but we mirrored the transcript locally.
+    Returns True if anything was emitted, False when JSONL was empty too.
+    """
+    if not repair_id or not conv_id:
+        return False
+    events = load_events(
+        device_slug=device_slug,
+        repair_id=repair_id,
+        conv_id=conv_id,
+        memory_root=memory_root,
+    )
+    if not events:
+        return False
+    await ws.send_json({"type": "history_replay_start", "count": len(events)})
+    for ev in events:
+        role = ev.get("role")
+        content = ev.get("content")
+        if role == "user":
+            text: str | None = None
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text") or ""
+                        break
+            if not text:
+                continue
+            text = strip_ctx_tag(text)
+            if text.startswith(
+                (
+                    "[Nouvelle session de diagnostic]",
+                    "[CONTEXTE TECHNICIEN]",
+                    "[REPRISE DE CONVERSATION",
+                )
+            ):
+                marker = "\n\n---\n\n"
+                idx = text.rfind(marker)
+                if idx >= 0:
+                    text = text[idx + len(marker):].strip()
+                else:
+                    continue
+            if not text:
+                continue
+            await ws.send_json(
+                {"type": "message", "role": "user", "text": text, "replay": True}
+            )
+        elif role == "assistant" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    text = block.get("text") or ""
+                    if not text:
+                        continue
+                    clean, _ = sanitize_agent_text(text, session_state.board)
+                    await ws.send_json(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "text": clean,
+                            "replay": True,
+                        }
+                    )
+                elif btype == "tool_use":
+                    await ws.send_json(
+                        {
+                            "type": "tool_use",
+                            "name": block.get("name"),
+                            "input": block.get("input") or {},
+                            "replay": True,
+                        }
+                    )
+    await ws.send_json({"type": "history_replay_end"})
+    return True
+
+
 async def _replay_ma_history_to_ws(
     ws: WebSocket,
     client: AsyncAnthropic,
     session_id: str,
     session_state: SessionState,
     agent_model: str,
-) -> None:
+    *,
+    device_slug: str | None = None,
+    repair_id: str | None = None,
+    conv_id: str | None = None,
+    memory_root: Path | None = None,
+) -> bool:
     """Replay a MA session's past events to the browser chat panel.
 
     The SDK exposes events via `client.beta.sessions.events.list(session_id)`.
@@ -1156,16 +1599,38 @@ async def _replay_ma_history_to_ws(
     the first real user message) is stripped so the tech sees only what
     they themselves typed.
 
-    Swallows any error — the stream will still work even if replay fails.
+    Returns True when something was emitted (either from MA or from the
+    JSONL fallback). Returns False when both sources were empty — the
+    caller can then warn the tech that the agent's internal context was
+    likely lost too. Swallows any error.
     """
+    async def _try_jsonl_fallback(reason: str) -> bool:
+        if device_slug is None:
+            return False
+        used = await _replay_jsonl_history_to_ws(
+            ws,
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            memory_root=memory_root,
+            session_state=session_state,
+        )
+        if used:
+            logger.info(
+                "[Diag-MA] %s — replayed from local JSONL instead "
+                "(repair=%s conv=%s)",
+                reason, repair_id, conv_id,
+            )
+        return used
+
     try:
         events_iter = client.beta.sessions.events.list(session_id)
     except AttributeError:
         logger.warning("[Diag-MA] SDK has no beta.sessions.events.list — skipping replay")
-        return
+        return await _try_jsonl_fallback(f"events.list unavailable for {session_id}")
     except Exception as exc:  # noqa: BLE001
         logger.warning("[Diag-MA] events.list failed for %s: %s", session_id, exc)
-        return
+        return await _try_jsonl_fallback(f"events.list failed for {session_id}")
 
     collected: list[Any] = []
     try:
@@ -1180,13 +1645,38 @@ async def _replay_ma_history_to_ws(
             collected.extend(data)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[Diag-MA] events.list iterate failed: %s", exc)
-        return
+        return await _try_jsonl_fallback(f"events.list iterate failed for {session_id}")
 
     if not collected:
-        return
+        # MA archived/expired the session — happens silently in the beta.
+        # Without this fallback the chat panel was empty even though we
+        # have the full transcript on disk (post-mirror). With it, the tech
+        # sees their conversation again the next time they open it.
+        return await _try_jsonl_fallback(f"events.list empty for {session_id}")
 
-    await ws.send_json({"type": "history_replay_start", "count": len(collected)})
+    # Pre-count events that have a chance to render visibly. MA can return
+    # turn-skeleton events (agent.thinking, span.model_request_end,
+    # session.status_idle) without any user/agent.message survival — the
+    # banner used to lie ("replay · 3 events" then nothing). Counting
+    # candidates first matches the banner to what the chat will actually
+    # show. Pure-intro user messages still get filtered later in the for
+    # loop (their content depends on the marker layout); any drop there
+    # is caught by `emitted_visible` below so the caller can flag a
+    # context-loss when the banner promised content the chat couldn't render.
+    renderable_types = {"user.message", "agent.message", "agent.custom_tool_use"}
+    renderable_count = sum(
+        1 for e in collected if getattr(e, "type", None) in renderable_types
+    )
+    if renderable_count == 0:
+        # Only metadata events survived (cost, thinking, idle markers).
+        # Try JSONL — if it has the real transcript we'll replay from there.
+        return await _try_jsonl_fallback(
+            f"events.list yielded only metadata for {session_id}"
+        )
 
+    await ws.send_json({"type": "history_replay_start", "count": renderable_count})
+
+    emitted_visible = 0
     for event in collected:
         etype = getattr(event, "type", None)
         if etype == "user.message":
@@ -1219,6 +1709,7 @@ async def _replay_ma_history_to_ws(
                 await ws.send_json(
                     {"type": "message", "role": "user", "text": text, "replay": True}
                 )
+                emitted_visible += 1
 
         elif etype == "agent.message":
             content = getattr(event, "content", None) or []
@@ -1236,6 +1727,7 @@ async def _replay_ma_history_to_ws(
                             "replay": True,
                         }
                     )
+                    emitted_visible += 1
 
         elif etype == "agent.custom_tool_use":
             await ws.send_json(
@@ -1246,6 +1738,7 @@ async def _replay_ma_history_to_ws(
                     "replay": True,
                 }
             )
+            emitted_visible += 1
 
         elif etype == "span.model_request_end":
             # Reprice the turn from MA's persisted usage so the lifetime
@@ -1266,6 +1759,20 @@ async def _replay_ma_history_to_ws(
                 await ws.send_json({"type": "turn_cost", **cost, "replay": True})
 
     await ws.send_json({"type": "history_replay_end"})
+    if emitted_visible == 0:
+        # Banner promised renderable events but every one of them turned
+        # out to be the auto-injected device intro (no real exchange ever
+        # happened on this MA session). Treat as no real replay so the
+        # caller can flag context_lost — the chat panel showing only the
+        # banner row would otherwise look like the agent silently lost
+        # the conversation while pretending nothing happened.
+        logger.info(
+            "[Diag-MA] replay rendered 0 visible events out of %d renderable "
+            "(all intro-only) for session=%s — flagging as empty",
+            renderable_count, session_id,
+        )
+        return False
+    return True
 
 
 async def _forward_ws_to_session(
@@ -1279,6 +1786,7 @@ async def _forward_ws_to_session(
     device_slug: str | None = None,
     conv_id: str | None = None,
     memory_root: Path | None = None,
+    pending_conv: _PendingConv | None = None,
 ) -> None:
     """Read user text from the WS, post it as `user.message` to the session.
 
@@ -1335,9 +1843,10 @@ async def _forward_ws_to_session(
                 observation=payload.get("observation"),
                 skip_reason=payload.get("skip_reason"),
                 submitted_by="tech",
+                conv_id=conv_id,
             )
             if res.get("ok"):
-                proto = load_active_protocol(memory_root, device_slug, repair_id or "")
+                proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
                 history_tail = proto.history[-3:] if proto is not None else []
                 await ws.send_json({
                     "type": "protocol_updated",
@@ -1386,6 +1895,8 @@ async def _forward_ws_to_session(
                 "un mode, demande-moi avant d'appeler l'outil."
             )
             if repair_id and conv_id and device_slug and memory_root:
+                if pending_conv is not None:
+                    pending_conv.materialize_now()
                 append_event(
                     device_slug=device_slug,
                     repair_id=repair_id,
@@ -1406,8 +1917,13 @@ async def _forward_ws_to_session(
 
         # Stamp the conv title from the first real user message (before the
         # intro prefix is glued on so the popover shows what the tech typed,
-        # not the device-context boilerplate).
+        # not the device-context boilerplate). Materialize the conv on disk
+        # at the same moment if it was opened lazily — this is the point at
+        # which the slot stops being a no-op WS open and starts holding
+        # actual content worth indexing.
         if not first_user_seen and repair_id and conv_id and device_slug:
+            if pending_conv is not None:
+                pending_conv.materialize_now()
             touch_conversation(
                 device_slug=device_slug,
                 repair_id=repair_id,
@@ -1435,6 +1951,19 @@ async def _forward_ws_to_session(
                 }
             ],
         )
+        # Mirror the user turn to local JSONL so we still have the transcript
+        # if MA later archives the session. Symmetric with what MA stores —
+        # ctx_tag + intro prefix included; the replay path strips them.
+        _mirror_jsonl(
+            device_slug=device_slug,
+            repair_id=repair_id,
+            conv_id=conv_id,
+            memory_root=memory_root,
+            event={
+                "role": "user",
+                "content": [{"type": "text", "text": text}],
+            },
+        )
 
 
 async def _forward_session_to_ws(
@@ -1450,6 +1979,7 @@ async def _forward_session_to_ws(
     repair_id: str | None = None,
     conv_id: str | None = None,
     session_mirrors: _SessionMirrors | None = None,
+    pending_conv: _PendingConv | None = None,
 ) -> None:
     """Stream session events to the WS and dispatch custom tool calls.
 
@@ -1480,6 +2010,16 @@ async def _forward_session_to_ws(
                         if unknown:
                             logger.warning("sanitizer wrapped unknown refdes: %s", unknown)
                         await ws.send_json({"type": "message", "role": "assistant", "text": clean})
+                        _mirror_jsonl(
+                            device_slug=device_slug,
+                            repair_id=repair_id,
+                            conv_id=conv_id,
+                            memory_root=memory_root,
+                            event={
+                                "role": "assistant",
+                                "content": [{"type": "text", "text": clean}],
+                            },
+                        )
 
             elif etype == "agent.thinking":
                 text = getattr(event, "text", "") or ""
@@ -1509,6 +2049,12 @@ async def _forward_session_to_ws(
                     )
                     await ws.send_json({"type": "turn_cost", **cost})
                     if repair_id and conv_id:
+                        # Defensive: in normal flow `_forward_ws_to_session`
+                        # has already materialized on the user message that
+                        # triggered this turn, but call it again so a cost
+                        # event never lands against an unindexed conv slot.
+                        if pending_conv is not None:
+                            pending_conv.materialize_now()
                         touch_conversation(
                             device_slug=device_slug,
                             repair_id=repair_id,
@@ -1520,12 +2066,29 @@ async def _forward_session_to_ws(
 
             elif etype == "agent.custom_tool_use":
                 events_by_id[event.id] = event
+                tool_name = getattr(event, "name", None)
+                tool_input = getattr(event, "input", {}) or {}
                 await ws.send_json(
                     {
                         "type": "tool_use",
-                        "name": getattr(event, "name", None),
-                        "input": getattr(event, "input", {}) or {},
+                        "name": tool_name,
+                        "input": tool_input,
                     }
+                )
+                _mirror_jsonl(
+                    device_slug=device_slug,
+                    repair_id=repair_id,
+                    conv_id=conv_id,
+                    memory_root=memory_root,
+                    event={
+                        "role": "assistant",
+                        "content": [{
+                            "type": "tool_use",
+                            "id": getattr(event, "id", None),
+                            "name": tool_name,
+                            "input": tool_input,
+                        }],
+                    },
                 )
 
             elif etype == "agent.tool_use":
@@ -1581,15 +2144,46 @@ async def _forward_session_to_ws(
                         session_id,
                         repair_id=repair_id,
                         session_mirrors=session_mirrors,
+                        conv_id=conv_id,
                     )
-                    # Emit the WS event if the dispatch succeeded.
-                    bv_event = result.get("event")
-                    if result.get("ok") and bv_event is not None:
+                    # Emit the WS event(s) if the dispatch succeeded. Atomic
+                    # tools return `event` (single), composites like bv_scene
+                    # return `events` (list); fan both out as individual WS
+                    # frames so the frontend stays oblivious.
+                    single_event = result.get("event")
+                    multi_events = (
+                        result.get("events")
+                        if isinstance(result.get("events"), list)
+                        else None
+                    )
+                    emitted_any = False
+                    if result.get("ok") and single_event is not None:
                         await ws.send_json(
-                            bv_event if isinstance(bv_event, dict)
-                            else bv_event.model_dump(by_alias=True)
+                            single_event if isinstance(single_event, dict)
+                            else single_event.model_dump(by_alias=True)
                         )
-                    result_for_agent = {k: v for k, v in result.items() if k != "event"}
+                        emitted_any = True
+                    if multi_events:
+                        for ev in multi_events:
+                            await ws.send_json(
+                                ev if isinstance(ev, dict)
+                                else ev.model_dump(by_alias=True)
+                            )
+                            emitted_any = True
+                    if emitted_any and name.startswith("bv_"):
+                        # Snapshot board overlay after every successful bv_*
+                        # mutation so a WS reconnect can replay highlights /
+                        # annotations / focus instead of showing a bare board
+                        # while the chat references "I highlighted U7 for you".
+                        from api.agent.board_state import save_board_state
+                        save_board_state(
+                            memory_root=memory_root,
+                            device_slug=device_slug,
+                            repair_id=repair_id,
+                            session=session_state,
+                            conv_id=resolved_conv_id,
+                        )
+                    result_for_agent = {k: v for k, v in result.items() if k not in ("event", "events")}
                     await client.beta.sessions.events.send(
                         session_id,
                         events=[

@@ -488,12 +488,21 @@ def test_ws_diagnostic_direct_fresh_repair_emits_context_loaded(
         assert ready["repair_id"] == repair_id
         assert ready["conv_id"], "a fresh conversation must be minted"
 
-        # The fresh-repair branch in run_diagnostic_session_direct emits
-        # exactly one follow-up frame before blocking on user input.
-        second = ws.receive_json()
-        assert second["type"] == "context_loaded"
-        assert second["device_slug"] == slug
-        assert second["repair_id"] == repair_id
+        # The fresh-repair branch in run_diagnostic_session_direct emits a
+        # `boardview.reset_view` (per-conv canvas wipe — keeps the renderer
+        # from inheriting the previous conv's overlay) followed by the
+        # `context_loaded` signal that gates user input. Drain frames
+        # until we hit context_loaded so this test stays robust to other
+        # bootstrap events the runtime may insert in front later.
+        ctx = None
+        for _ in range(8):
+            frame = ws.receive_json()
+            if frame.get("type") == "context_loaded":
+                ctx = frame
+                break
+        assert ctx is not None, "context_loaded never arrived after session_ready"
+        assert ctx["device_slug"] == slug
+        assert ctx["repair_id"] == repair_id
 
 
 def test_ws_diagnostic_direct_replays_prior_conversation(
@@ -540,11 +549,18 @@ def test_ws_diagnostic_direct_replays_prior_conversation(
         assert ready["repair_id"] == repair_id
         assert ready["conv_id"] == conv_id
 
-        # Expected replay sequence:
-        #   history_replay_start, message(user, replay), message(assistant,
-        #   replay), history_replay_end — pull them explicitly so a missing
-        #   frame fails the test fast.
-        frames = [ws.receive_json() for _ in range(4)]
+        # Expected replay sequence (with the per-conv canvas wipe in front):
+        #   boardview.reset_view, history_replay_start, message(user, replay),
+        #   message(assistant, replay), history_replay_end. Filter on the
+        #   chat-history bracket so this stays robust to other bootstrap
+        #   events.
+        all_frames = [ws.receive_json() for _ in range(8)]
+        frames = [
+            f for f in all_frames
+            if f.get("type") in (
+                "history_replay_start", "history_replay_end", "message",
+            )
+        ]
         types = [f.get("type") for f in frames]
         assert types[0] == "history_replay_start"
         assert types[-1] == "history_replay_end"

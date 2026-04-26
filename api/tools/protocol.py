@@ -134,23 +134,53 @@ def _repair_dir(memory_root: Path, device_slug: str, repair_id: str) -> Path:
     return memory_root / device_slug / "repairs" / repair_id
 
 
-def _pointer_path(memory_root: Path, device_slug: str, repair_id: str) -> Path:
-    return _repair_dir(memory_root, device_slug, repair_id) / POINTER_FILENAME
+def _conv_scope_dir(
+    memory_root: Path,
+    device_slug: str,
+    repair_id: str,
+    conv_id: str | None,
+) -> Path:
+    """Return the directory the protocol artefacts live under.
+
+    Per-conv when `conv_id` is given (each chat thread holds its own
+    plan, so opening a fresh conv shows no protocol even if a sibling
+    conv has one running). Falls back to the repair-root location for
+    callers that don't track conv (legacy artefacts + the REST endpoint
+    `GET /pipeline/repairs/{rid}/protocol` until it grows a `?conv=`).
+    """
+    base = _repair_dir(memory_root, device_slug, repair_id)
+    if conv_id:
+        return base / "conversations" / conv_id
+    return base
+
+
+def _pointer_path(
+    memory_root: Path, device_slug: str, repair_id: str, conv_id: str | None = None,
+) -> Path:
+    return _conv_scope_dir(memory_root, device_slug, repair_id, conv_id) / POINTER_FILENAME
 
 
 def _protocol_path(
-    memory_root: Path, device_slug: str, repair_id: str, protocol_id: str
+    memory_root: Path,
+    device_slug: str,
+    repair_id: str,
+    protocol_id: str,
+    conv_id: str | None = None,
 ) -> Path:
     return (
-        _repair_dir(memory_root, device_slug, repair_id)
+        _conv_scope_dir(memory_root, device_slug, repair_id, conv_id)
         / PROTOCOLS_SUBDIR
         / f"{protocol_id}.json"
     )
 
 
-def save_protocol(memory_root: Path, proto: Protocol) -> None:
+def save_protocol(
+    memory_root: Path, proto: Protocol, *, conv_id: str | None = None,
+) -> None:
     """Atomically write the full protocol artifact to disk."""
-    path = _protocol_path(memory_root, proto.device_slug, proto.repair_id, proto.protocol_id)
+    path = _protocol_path(
+        memory_root, proto.device_slug, proto.repair_id, proto.protocol_id, conv_id,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = proto.model_dump(mode="json")
     tmp = path.with_suffix(".json.tmp")
@@ -159,9 +189,14 @@ def save_protocol(memory_root: Path, proto: Protocol) -> None:
 
 
 def load_protocol(
-    memory_root: Path, device_slug: str, repair_id: str, protocol_id: str
+    memory_root: Path,
+    device_slug: str,
+    repair_id: str,
+    protocol_id: str,
+    *,
+    conv_id: str | None = None,
 ) -> Protocol | None:
-    path = _protocol_path(memory_root, device_slug, repair_id, protocol_id)
+    path = _protocol_path(memory_root, device_slug, repair_id, protocol_id, conv_id)
     if not path.exists():
         return None
     try:
@@ -173,14 +208,14 @@ def load_protocol(
 
 def save_active_pointer(
     memory_root: Path, device_slug: str, repair_id: str, protocol_id: str | None,
-    *, prior_status: ProtocolStatus | None = None,
+    *, prior_status: ProtocolStatus | None = None, conv_id: str | None = None,
 ) -> None:
     """Set the active pointer; appends an entry to its rolling history.
 
     `prior_status` is the status that the previously-active protocol takes
     (typically `replaced` or `abandoned`); a fresh repair has no prior.
     """
-    path = _pointer_path(memory_root, device_slug, repair_id)
+    path = _pointer_path(memory_root, device_slug, repair_id, conv_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, Any] = {"active_protocol_id": None, "history": []}
     if path.exists():
@@ -202,9 +237,10 @@ def save_active_pointer(
 
 
 def load_active_pointer(
-    memory_root: Path, device_slug: str, repair_id: str
+    memory_root: Path, device_slug: str, repair_id: str,
+    *, conv_id: str | None = None,
 ) -> dict[str, Any]:
-    path = _pointer_path(memory_root, device_slug, repair_id)
+    path = _pointer_path(memory_root, device_slug, repair_id, conv_id)
     if not path.exists():
         return {"active_protocol_id": None, "history": []}
     try:
@@ -214,13 +250,14 @@ def load_active_pointer(
 
 
 def load_active_protocol(
-    memory_root: Path, device_slug: str, repair_id: str
+    memory_root: Path, device_slug: str, repair_id: str,
+    *, conv_id: str | None = None,
 ) -> Protocol | None:
-    pointer = load_active_pointer(memory_root, device_slug, repair_id)
+    pointer = load_active_pointer(memory_root, device_slug, repair_id, conv_id=conv_id)
     pid = pointer.get("active_protocol_id")
     if not pid:
         return None
-    return load_protocol(memory_root, device_slug, repair_id, pid)
+    return load_protocol(memory_root, device_slug, repair_id, pid, conv_id=conv_id)
 
 
 # --- Protocol factory --------------------------------------------------------
@@ -242,6 +279,7 @@ def propose_protocol(
     steps: list[StepInput],
     rule_inspirations: list[str] | None = None,
     valid_refdes: set[str] | None,
+    conv_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a protocol; archive any prior active one. Returns ok / reason dict.
 
@@ -270,15 +308,15 @@ def propose_protocol(
     now = datetime.now(UTC).isoformat()
 
     # Mark prior active as replaced.
-    pointer = load_active_pointer(memory_root, device_slug, repair_id)
+    pointer = load_active_pointer(memory_root, device_slug, repair_id, conv_id=conv_id)
     prior_id = pointer.get("active_protocol_id")
     if prior_id:
-        prior = load_protocol(memory_root, device_slug, repair_id, prior_id)
+        prior = load_protocol(memory_root, device_slug, repair_id, prior_id, conv_id=conv_id)
         if prior is not None and prior.status == "active":
             prior.status = "replaced"
             prior.history.append(HistoryEntry(action="replaced_protocol", ts=now,
                                               reason="superseded by fresh propose"))
-            save_protocol(memory_root, prior)
+            save_protocol(memory_root, prior, conv_id=conv_id)
 
     pid = _new_protocol_id()
     materialised: list[Step] = []
@@ -303,10 +341,11 @@ def propose_protocol(
         steps=materialised,
         history=[HistoryEntry(action="proposed", step_count=len(materialised), ts=now)],
     )
-    save_protocol(memory_root, proto)
+    save_protocol(memory_root, proto, conv_id=conv_id)
     save_active_pointer(
         memory_root, device_slug, repair_id, pid,
         prior_status="replaced" if prior_id else None,
+        conv_id=conv_id,
     )
     return {"ok": True, "protocol_id": pid, "step_count": len(materialised),
             "current_step_id": proto.current_step_id}
@@ -407,13 +446,14 @@ def record_step_result(
     observation: str | None = None,
     skip_reason: str | None = None,
     submitted_by: Literal["agent", "tech"] = "agent",
+    conv_id: str | None = None,
 ) -> dict[str, Any]:
     """Record the tech's result for a step and advance the state machine.
 
     Returns ``{"ok": True, "outcome": ..., "current_step_id": ...}`` on
     success, or ``{"ok": False, "reason": ...}`` on validation failure.
     """
-    proto = load_active_protocol(memory_root, device_slug, repair_id)
+    proto = load_active_protocol(memory_root, device_slug, repair_id, conv_id=conv_id)
     if proto is None:
         return {"ok": False, "reason": "no_active_protocol"}
     step = next((s for s in proto.steps if s.id == step_id), None)
@@ -435,7 +475,7 @@ def record_step_result(
             history_action="step_skipped", outcome_for_history="skipped",
             skip_reason=skip_reason,
         )
-        save_protocol(memory_root, proto)
+        save_protocol(memory_root, proto, conv_id=conv_id)
         return {"ok": True, "outcome": "skipped", "current_step_id": next_id,
                 "protocol_id": proto.protocol_id}
 
@@ -490,7 +530,7 @@ def record_step_result(
         proto, step=step, new_status=new_status, result=result,
         history_action=history_action, outcome_for_history=outcome,
     )
-    save_protocol(memory_root, proto)
+    save_protocol(memory_root, proto, conv_id=conv_id)
     return {"ok": True, "outcome": outcome, "current_step_id": next_id,
             "protocol_id": proto.protocol_id}
 
@@ -521,8 +561,9 @@ def update_protocol(
     new_step: StepInput | None = None,
     new_order: list[str] | None = None,
     verdict: str | None = None,
+    conv_id: str | None = None,
 ) -> dict[str, Any]:
-    proto = load_active_protocol(memory_root, device_slug, repair_id)
+    proto = load_active_protocol(memory_root, device_slug, repair_id, conv_id=conv_id)
     if proto is None:
         return {"ok": False, "reason": "no_active_protocol"}
     if proto.status != "active":
@@ -602,7 +643,7 @@ def update_protocol(
         proto.history.append(HistoryEntry(
             action="completed", verdict=verdict, reason=reason, ts=now,
         ))
-        save_protocol(memory_root, proto)
+        save_protocol(memory_root, proto, conv_id=conv_id)
         # Keep the pointer aimed at this protocol so callers can still load it
         # to inspect the final verdict; the non-active status gates re-entry.
         return {"ok": True, "current_step_id": None, "protocol_id": proto.protocol_id,
@@ -613,10 +654,11 @@ def update_protocol(
         proto.completed_at = now
         proto.current_step_id = None
         proto.history.append(HistoryEntry(action="abandoned", reason=reason, ts=now))
-        save_protocol(memory_root, proto)
+        save_protocol(memory_root, proto, conv_id=conv_id)
         save_active_pointer(
             memory_root, device_slug, repair_id, None,
             prior_status="abandoned",
+            conv_id=conv_id,
         )
         return {"ok": True, "current_step_id": None, "protocol_id": proto.protocol_id,
                 "status": "abandoned"}
@@ -624,6 +666,6 @@ def update_protocol(
     else:
         return {"ok": False, "reason": "unknown_action"}
 
-    save_protocol(memory_root, proto)
+    save_protocol(memory_root, proto, conv_id=conv_id)
     return {"ok": True, "current_step_id": proto.current_step_id,
             "protocol_id": proto.protocol_id}
