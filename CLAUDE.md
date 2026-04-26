@@ -103,8 +103,8 @@ session in `managed` mode):
 
 ```
 api/
-  main.py            FastAPI app: /health, legacy /ws, /ws/diagnostic/{slug},
-                     mounts web/ static, includes pipeline + board routers
+  main.py            FastAPI app: /health, /ws/diagnostic/{slug}, mounts
+                     web/ static, includes pipeline + board + profile routers
   config.py          Pydantic-settings Settings loaded from .env (cached)
   logging_setup.py   Single stdout handler, idempotent
   pipeline/          Knowledge factory — Scout → Registry → Writers(×3) → Auditor
@@ -329,7 +329,6 @@ Diagnostic:
 - `WS   /ws/diagnostic/{device_slug}?tier={fast|normal|deep}&repair={id}`
   — tier-selectable, optional repair scoping (replays prior messages).
   `DIAGNOSTIC_MODE` env var picks `managed` (default) vs `direct`.
-- `WS   /ws` — legacy echo endpoint, kept for smoke tests
 
 ### Diagnostic runtime (`api/agent/`)
 
@@ -350,7 +349,7 @@ Two siblings, same WS protocol:
   LLM summary. Spec:
   `docs/superpowers/plans/2026-04-26-ma-memory-layered-architecture.md`.
 - `runtime_direct.py` — `messages.create` fallback with a Python tool loop.
-  Same WS protocol; feature-equivalent for demos when MA beta is
+  Same WS protocol; feature-equivalent fallback when the MA beta is
   unavailable.
 
 Custom tools (`manifest.py`):
@@ -385,19 +384,21 @@ available.
   Concrete parsers use the `@register` decorator and declare
   `extensions = (...)`. Dispatch via `parser_for(path)`. Adding a new format
   = one new file in `parser/`, no changes to base.
-- Implemented parsers: `test_link.py` (OpenBoardView `.brd` v3, clean-room;
-  refuses obfuscated files with `ObfuscatedFileError`), `brd2.py` (KiCad-
-  boardview BRD2 output), `kicad.py` (`.kicad_pcb`, helpers in
-  `_kicad_extract.py`).
-- Stubs pending real parsers: `bv.py`, `cad.py`, `gr.py`, `cst.py`, `tvw.py`,
-  `asc.py`, `fz.py`, `f2b.py`, `bdv.py` (each declares its extensions +
-  raises `NotImplementedError`). Generic shape in `_stub.py`.
+- Implemented parsers (all clean-room, Apache 2.0): `test_link.py`
+  (OpenBoardView `.brd` v3; refuses obfuscated files with
+  `ObfuscatedFileError`), `brd2.py` (KiCad-boardview BRD2 output, content-
+  sniffed from `.brd`), `kicad.py` (`.kicad_pcb`, helpers in
+  `_kicad_extract.py`), plus `asc.py`, `bdv.py`, `bv.py`, `cad.py`,
+  `cst.py`, `f2b.py`, `fz.py`, `gr.py`, `tvw.py` for the corresponding
+  legacy boardview formats. The full roadmap and per-format design notes
+  live in `docs/superpowers/specs/2026-04-22-boardview-formats-roadmap.md`
+  and `docs/superpowers/specs/2026-04-25-boardview-formats-v1.md`.
 - `validator.py` — anti-hallucination guardrail (pure functions, no I/O).
   `is_valid_refdes`, `resolve_part`, `resolve_net`, `resolve_pin`,
   `suggest_similar` (Levenshtein neighbours for "did you mean").
-- `router.py` — `POST /api/board/parse`; `events.py` — WS event envelopes
-  (`BoardLoaded`, `Highlight`, `Focus`, `Flip`, `Annotate`, …) shared between
-  backend and frontend.
+- `router.py` — `POST /api/board/parse`; WS event envelopes
+  (`BoardLoaded`, `Highlight`, `Focus`, `Flip`, `Annotate`, …) live in
+  `api/tools/ws_events.py` and are shared between backend and frontend.
 
 ### Session state (`api/session/state.py`)
 
@@ -457,13 +458,15 @@ Pro-tool chrome — do not break this skeleton:
 | Band       | Size    | Role                                                   |
 |------------|---------|--------------------------------------------------------|
 | Top bar    | 48 px   | brand · breadcrumbs · mode pill · global actions       |
-| Left rail  | 52 px   | canonical section switcher (8 entries, hash-routed)    |
+| Left rail  | 52 px   | canonical section switcher (5 entries, hash-routed)    |
 | Metabar    | 44 px   | device context · filter chips · search                 |
 | Workspace  | flex    | the view for the current section                       |
 | Status bar | 28 px   | agent state · counts · zoom readout (mono)             |
 
-Sections are URL-hash routed via `SECTIONS` and `navigate()`: `#home`, `#pcb`,
-`#schematic`, `#graphe`, `#memory-bank`, `#agent`, `#profile`, `#aide`.
+Sections are URL-hash routed via `SECTIONS` and `navigate()`: `#home`,
+`#pcb`, `#schematic`, `#graphe`, `#profile`. The legacy `#memory-bank`
+hash redirects to `#graphe?view=md` (raw memory-bank view living inside
+the graph section); `main.js` keeps the redirect for old links.
 Adding a section = append to `SECTIONS`, add a rail button with
 `data-section="…"`, and ship either a real DOM block or a
 `<section class="stub">` placeholder.
@@ -629,17 +632,26 @@ a new vision-capable model lands (Sonnet 4.7+ or improved Haiku).
 
 ## Specs and plans — read before structural work
 
-Current:
+Specs in `docs/superpowers/specs/` are the authoritative design docs;
+plans in `docs/superpowers/plans/` are the per-feature implementation
+walkthroughs. Plans whose work has shipped are moved under
+`docs/superpowers/plans/archived/` so the live folder is a short list of
+in-flight or recently-touched plans only.
+
+Currently authoritative specs (start here for structural work):
 - `docs/superpowers/specs/2026-04-22-backend-v2-knowledge-factory.md` — the
   authoritative knowledge-factory spec; supersedes the 2026-04-21 v1 design.
-- `docs/superpowers/specs/2026-04-22-boardview-formats-roadmap.md` — parser
-  roadmap for the stub formats in `api/board/parser/`.
+- `docs/superpowers/specs/2026-04-22-boardview-formats-roadmap.md` and
+  `docs/superpowers/specs/2026-04-25-boardview-formats-v1.md` — parser
+  roadmap and the v1 fixture-validation programme for `api/board/parser/`.
 - `docs/superpowers/specs/2026-04-23-agent-boardview-control-design.md` —
   bv_* tools + dynamic manifest + mb_* aggregation design.
-- `docs/superpowers/plans/2026-04-23-agent-boardview-control.md` — current
-  implementation plan (source of truth for in-progress scope).
+- `docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md` — Phase 2.5
+  function→refdes bridge (replaces the reverted Scout/Registry enrichment).
+- `docs/superpowers/specs/2026-04-25-simulator-invariants-design.md` — the
+  10 deterministic invariants the simulator must satisfy on every pack.
 
-Archived (kept for historical context but marked archive):
+Archived specs (still useful as context, no longer authoritative):
 - `docs/superpowers/specs/2026-04-21-microsolder-agent-v1-design.md`
 - `docs/superpowers/specs/2026-04-21-boardview-design.md`
 
