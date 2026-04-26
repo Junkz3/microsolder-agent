@@ -1463,8 +1463,14 @@ def test_leaky_short_on_decoupling_cap_returns_shorted_rail():
     assert "+5V" in cascade["shorted_rails"]
 
 
-def test_regulating_low_on_ic_returns_degraded_sourced_rails():
-    """ic.regulating_low marks every rail the IC sources as degraded."""
+def test_regulating_low_on_ic_returns_shorted_sourced_rails():
+    """ic.regulating_low marks every rail the IC sources as shorted.
+
+    Encoded as `shorted_rails` (not `degraded_rails`) so the candidate
+    survives `_relevant_to_observations` and `_score_candidate` — see
+    `_simulate_failure` for the rationale, mirrors the leaky decoupling
+    cap fix.
+    """
     from api.pipeline.schematic.hypothesize import _simulate_failure
     from api.pipeline.schematic.schemas import (
         ComponentNode,
@@ -1486,4 +1492,4 @@ def test_regulating_low_on_ic_returns_degraded_sourced_rails():
         quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
     )
     cascade = _simulate_failure(graph, analyzed_boot=None, refdes="U7", mode="regulating_low")
-    assert "+5V" in cascade["degraded_rails"]
+    assert "+5V" in cascade["shorted_rails"]
