@@ -737,7 +737,7 @@ async def delete_repair(repair_id: str) -> dict:
     # repair which never opened a session simply no-ops here.
     store_deleted = False
     try:
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key or "missing")
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key or "missing", max_retries=settings.anthropic_max_retries)  # noqa: E501
         store_deleted = await delete_repair_store(
             client, device_slug=device_slug, repair_id=repair_id
         )
