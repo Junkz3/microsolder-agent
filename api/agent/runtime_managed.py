@@ -94,7 +94,12 @@ def _safe_tool_result_text(result: dict[str, Any]) -> str:
         pass
     try:
         return json.dumps(result, default=str)
-    except (TypeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — last-resort safety net
+        # An object that raises out of `__str__` (or a json encoder bug)
+        # must NOT take the runtime down. Best we can do is tell the
+        # agent the result couldn't be serialized so it picks a
+        # different code path instead of waiting on a tool result that
+        # never arrives.
         logger.error(
             "[Diag-MA] tool result serialization failed: %s — type=%s",
             exc,
@@ -103,7 +108,7 @@ def _safe_tool_result_text(result: dict[str, Any]) -> str:
         return json.dumps({
             "ok": False,
             "reason": "serialization_failed",
-            "error": str(exc)[:200],
+            "error": str(exc)[:200] if exc.args else type(exc).__name__,
         })
 
 
@@ -1197,8 +1202,8 @@ async def run_diagnostic_session_managed(
                 "type": "error",
                 "code": "session_already_open",
                 "text": (
-                    "Une conversation est déjà ouverte ailleurs pour ce "
-                    "repair. Ferme-la avant d'en ouvrir une nouvelle."
+                    "Another conversation is already open for this repair. "
+                    "Close it before opening a new one."
                 ),
             })
             await ws.close(code=1008, reason="session already open")
@@ -1402,8 +1407,16 @@ async def run_diagnostic_session_managed(
         pending=pending_materialize,
     )
 
+    # log_id pairs the session_id with a human-grep-friendly triplet so a
+    # post-mortem can find an incident either by `sesn_…` or by
+    # `repair:conv:tier`. Emitted once at session_start; downstream log
+    # lines keep `session=%s` so existing log-grep alerts still work, and
+    # an operator can pivot from one to the other via this anchor line.
+    log_id = _build_log_id(repair_id, resolved_conv_id, tier)
     logger.info(
-        "[Diag-MA] session=%s device=%s tier=%s model=%s memory=%s resumed=%s",
+        "[Diag-MA] session_start log_id=%s session=%s device=%s "
+        "tier=%s model=%s memory=%s resumed=%s",
+        log_id,
         session.id,
         device_slug,
         tier,
@@ -1539,8 +1552,8 @@ async def run_diagnostic_session_managed(
         # Surfaces what the tech actually has on record so a fresh MA agent
         # doesn't redo work or re-ask measurements that already exist on
         # disk. Critical when the prior MA session was lost (cf. context_lost
-        # path) — without this the agent is back to "dis-moi quel est ton
-        # symptôme" even though 8 measurements + a 5-step protocol survive.
+        # path) — without this the agent is back to "tell me your symptom"
+        # even though 8 measurements + a 5-step protocol survive.
         state_block, state_summary = build_repair_state_block(
             memory_root=memory_root, device_slug=device_slug, repair_id=repair_id,
             conv_id=resolved_conv_id,
