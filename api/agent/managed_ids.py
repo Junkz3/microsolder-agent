@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Read the bootstrap IDs produced by `scripts/bootstrap_managed_agent.py`.
 
-Supports both the multi-tier format (current) and the legacy single-agent
-format (pre-C.5). The legacy agent, if present, is exposed as tier `deep`
-with `legacy: True` so the runtime can decide whether to use it or skip to
-the real deep agent.
+The expected on-disk shape is the multi-tier format
+(`{"environment_id", "agents": {"fast", "normal", "deep"}}`). The bootstrap
+script also migrates pre-multi-tier files in place when they're detected, so
+the runtime here can stay narrow and reject anything that hasn't been
+upgraded yet.
 """
 
 from __future__ import annotations
@@ -25,15 +26,15 @@ class AgentInfo(TypedDict, total=False):
 
 class ManagedIds(TypedDict):
     environment_id: str
-    agents: dict[str, AgentInfo]  # keys: "fast" | "mid" | "deep"
+    agents: dict[str, AgentInfo]  # keys: "fast" | "normal" | "deep"
 
 
 def load_managed_ids() -> ManagedIds:
     """Return the persisted agent/environment IDs, tier-keyed.
 
-    Raises `RuntimeError` if the file is missing. If the file is still in
-    the legacy single-agent format, synthesises a single `deep` entry
-    flagged `legacy: True` — the runtime can then upgrade via re-bootstrap.
+    Raises `RuntimeError` if the file is missing or in an unrecognised shape;
+    the caller is expected to re-run `scripts/bootstrap_managed_agent.py` to
+    materialise / migrate it.
     """
     if not IDS_FILE.exists():
         raise RuntimeError(
@@ -49,26 +50,9 @@ def load_managed_ids() -> ManagedIds:
             "agents": data["agents"],
         }
 
-    # Legacy single-agent file — synthesize a deep-tier entry. The model
-    # name is metadata only (the real model is bound at agent creation
-    # server-side); we surface settings.anthropic_model_main so the local
-    # echo stays in sync with the configured deep-tier choice.
-    if "agent_id" in data:
-        from api.config import get_settings
-        return {
-            "environment_id": data["environment_id"],
-            "agents": {
-                "deep": {
-                    "id": data["agent_id"],
-                    "version": data["agent_version"],
-                    "model": get_settings().anthropic_model_main,
-                    "legacy": True,
-                }
-            },
-        }
-
     raise RuntimeError(
-        f"{IDS_FILE.name} has an unknown shape (neither legacy nor multi-tier)."
+        f"{IDS_FILE.name} has an unrecognised shape — re-run "
+        "`python scripts/bootstrap_managed_agent.py` to migrate it."
     )
 
 
