@@ -124,6 +124,29 @@ evolve/*
 evolve/reports/*
 !evolve/reports/.gitkeep
 
+# Pipeline-evolve loop (uncommitted experiment — runtime state + infra + skills)
+evolve-pipeline/
+evolve-pipeline-vision/
+scripts/eval_pipeline.py
+scripts/eval_pipeline_vision.py
+scripts/pipeline-evolve-bootstrap.sh
+scripts/pipeline-evolve-runner.sh
+scripts/pipeline-evolve-vision-bootstrap.sh
+scripts/pipeline-evolve-vision-runner.sh
+.claude/skills/microsolder-pipeline-evolve/
+.claude/skills/microsolder-pipeline-evolve-monitor/
+.claude/skills/microsolder-pipeline-evolve-vision/
+
+# Agent-evolve loop (uncommitted experiment — runtime state + infra + skills + bench harness)
+evolve-agent/
+scripts/eval_diagnostic_agent.py
+scripts/agent-evolve-bootstrap.sh
+scripts/agent-evolve-runner.sh
+scripts/agent_baseline_report.py
+scripts/clean_memory_store.py
+benchmark/agent_scenarios.jsonl
+.claude/skills/microsolder-agent-evolve/
+
 # --- Demo / offline fallback ---
 # Vendored CDN assets pulled by `make pin-cdn` (D3, marked, DOMPurify).
 # Regenerated on demand; not tracked.
