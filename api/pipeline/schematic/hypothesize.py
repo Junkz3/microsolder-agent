@@ -703,7 +703,12 @@ def _cascade_decoupling_short(electrical: ElectricalGraph, passive: _CompNode) -
 
 
 def _cascade_decoupling_leaky(electrical: ElectricalGraph, comp: _CompNode) -> dict:
-    """passive_c.leaky_short on decoupling/bulk cap — decoupled rail degrades."""
+    """passive_c.leaky_short on decoupling/bulk cap — decoupled rail collapses
+    toward GND. Encoded as `shorted_rails` (not `degraded_rails`) so it's
+    observable through the same axis a tech reports: 'rail PP1V8 shorted'.
+    The simulator marks the rail `degraded` because it models a finite ESR
+    leak, but for the diagnostic round-trip the symptom is rail-low/short.
+    """
     target_rail: str | None = None
     for label, rail in electrical.power_rails.items():
         if comp.refdes in rail.decoupling:
@@ -711,7 +716,7 @@ def _cascade_decoupling_leaky(electrical: ElectricalGraph, comp: _CompNode) -> d
             break
     c = _empty_cascade()
     if target_rail is not None:
-        c["degraded_rails"] = frozenset({target_rail})
+        c["shorted_rails"] = frozenset({target_rail})
     return c
 
 

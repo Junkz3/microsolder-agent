@@ -1415,8 +1415,13 @@ def test_find_cell_protection_downstream_returns_none_below_two_rails():
     assert _find_cell_protection_downstream(graph, q_one_rail) is None
 
 
-def test_leaky_short_on_decoupling_cap_returns_degraded_rail():
-    """passive_c.leaky_short routes via the passive table to a degraded rail."""
+def test_leaky_short_on_decoupling_cap_returns_shorted_rail():
+    """passive_c.leaky_short routes via the passive table to a shorted rail.
+
+    Encoded as `shorted_rails` (not `degraded_rails`) so the diagnostic
+    round-trip is observable through the same axis a tech reports — see
+    `_cascade_decoupling_leaky` for the rationale.
+    """
     from api.pipeline.schematic.hypothesize import _simulate_failure
     from api.pipeline.schematic.schemas import (
         ComponentNode,
@@ -1455,7 +1460,7 @@ def test_leaky_short_on_decoupling_cap_returns_degraded_rail():
         quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
     )
     cascade = _simulate_failure(graph, analyzed_boot=None, refdes="C42", mode="leaky_short")
-    assert "+5V" in cascade["degraded_rails"]
+    assert "+5V" in cascade["shorted_rails"]
 
 
 def test_regulating_low_on_ic_returns_degraded_sourced_rails():
