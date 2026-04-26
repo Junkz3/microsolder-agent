@@ -321,6 +321,19 @@ class SimulationEngine:
         """
         touched_rails: set[str] = set()
         for f in self.failures:
+            # Non-physical mode translation: fuses and inductors cannot
+            # "regulate low" — that mode is exclusive to active regulators
+            # (PMICs, bucks, LDOs). Some graphs misclassify fuses/inductors
+            # as `kind=ic` so the evaluator dutifully samples them with
+            # `regulating_low`; here we treat the failure as the only
+            # realistic mode for those parts (open). The downstream `open`
+            # handler then computes the correct cascade from the graph
+            # topology (sourced rail going dead, consumers killed).
+            if f.mode == "regulating_low":
+                comp = self.electrical.components.get(f.refdes)
+                if comp is not None and comp.type in ("fuse", "inductor"):
+                    f = Failure(refdes=f.refdes, mode="open")
+
             if f.mode == "dead":
                 components[f.refdes] = "dead"
                 continue
@@ -391,6 +404,23 @@ class SimulationEngine:
                 rails[target_rail] = "degraded"
                 rail_voltage[target_rail] = max(0.0, min(1.0, v_drop_pct))
                 touched_rails.add(target_rail)
+                # Mark the failed cap itself as degraded — physically a leaking
+                # cap is in an abnormal state (high ESR, leakage current,
+                # possibly elevated temperature). Closes the asymmetry where
+                # the rail reflects the fault but the failed component does
+                # not (caps aren't in the boot sequence and stay at the
+                # pre-seed "off" state through the phase walk). NOT a
+                # self-dead pattern: the failure HAS an observable effect
+                # downstream (rail goes degraded), this assignment merely
+                # records the cap's own physical state correctly.
+                # No effect on `_cascade` (only "dead" feeds effective_dead);
+                # invisible to the current evaluator's symptom projection
+                # (which doesn't read degraded_components — see the companion
+                # propose-evaluator-fix). The richness IS surfaced in the
+                # timeline output consumed by `mb_schematic_graph` and the UI
+                # Boardview, so the agent can point at the specific leaking
+                # cap rather than just "something on VCC is leaking".
+                components[f.refdes] = "degraded"
                 continue
 
             if f.mode == "open":
@@ -530,6 +560,28 @@ class SimulationEngine:
                     rail_voltage[kill_downstream_rail] = 0.0
                     touched_rails.add(kill_downstream_rail)
                     self._forced_dead_rails.add(kill_downstream_rail)
+                # Mark the failed open passive itself as degraded — mirrors
+                # 85899c6's leaky-cap pattern. An open resistor / ferrite is
+                # mechanically broken (cracked solder joint, blown fusible,
+                # cracked element), which is an abnormal physical state. The
+                # current code captures the cascade (downstream consumers /
+                # rail) but leaves the failed passive at the pre-seed "off",
+                # an asymmetry between the cause and its surface in the
+                # timeline. NOT a self-dead pattern: we use the existing
+                # `"degraded"` enum, not `"dead"` (which would feed
+                # effective_dead and break ties via the dead_components
+                # symptom — that's the gaming pattern that anti-pattern
+                # rule explicitly forbids). `_cascade` step 1 reads
+                # `state == "dead"` only, so this assignment is invisible
+                # to the cascade aggregation. Likewise invisible to the
+                # current evaluator's symptom projection (no
+                # degraded_components axis). Pairs with the
+                # propose-evaluator-fix in evolve/proposals/
+                # evaluator-2026-04-25-0500.md — when that proposal lands,
+                # the R10/R11/R160 empty-fingerprint cluster (currently
+                # 1.17 RR loss / 136 candidates) breaks via per-passive
+                # unique degraded_components fingerprint.
+                components[f.refdes] = "degraded"
                 continue
 
         return frozenset(touched_rails)
