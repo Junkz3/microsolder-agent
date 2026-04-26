@@ -1,6 +1,12 @@
 """Tests for build_tools_manifest and render_system_prompt."""
 
-from api.agent.manifest import BV_TOOLS, MB_TOOLS, build_tools_manifest, render_system_prompt
+from api.agent.manifest import (
+    BV_TOOLS,
+    CONSULT_TOOLS,
+    MB_TOOLS,
+    build_tools_manifest,
+    render_system_prompt,
+)
 from api.board.model import Board, Layer, Part, Point
 from api.session.state import SessionState
 
@@ -79,7 +85,9 @@ def test_manifest_without_board_has_only_mb_profile_protocol_tools() -> None:
         | {t["name"] for t in PROTOCOL_TOOLS}
     )
     assert names == expected
-    assert len(manifest) == len(MB_TOOLS) + len(PROFILE_TOOLS) + len(PROTOCOL_TOOLS)
+    assert len(manifest) == (
+        len(MB_TOOLS) + len(PROFILE_TOOLS) + len(PROTOCOL_TOOLS)
+    )
 
 
 def test_manifest_with_board_adds_bv_tools() -> None:
@@ -94,7 +102,36 @@ def test_manifest_with_board_adds_bv_tools() -> None:
         | {t["name"] for t in PROTOCOL_TOOLS}
     )
     assert names == expected
-    assert len(manifest) == len(MB_TOOLS) + len(BV_TOOLS) + len(PROFILE_TOOLS) + len(PROTOCOL_TOOLS)
+    assert len(manifest) == (
+        len(MB_TOOLS)
+        + len(BV_TOOLS)
+        + len(PROFILE_TOOLS)
+        + len(PROTOCOL_TOOLS)
+    )
+
+
+def test_consult_specialist_absent_from_direct_mode_manifest() -> None:
+    """consult_specialist requires MA tier-scoped agents; direct mode has none."""
+    names_no_board = {t["name"] for t in build_tools_manifest(SessionState())}
+    names_with_board = {t["name"] for t in build_tools_manifest(_session_with_board())}
+    assert "consult_specialist" not in names_no_board
+    assert "consult_specialist" not in names_with_board
+    # CONSULT_TOOLS still defined in the module (consumed by bootstrap_managed_agent.py)
+    assert any(t["name"] == "consult_specialist" for t in CONSULT_TOOLS)
+
+
+def test_consult_specialist_exposed_and_under_ma_limit() -> None:
+    """The escalation tool must be present and fit MA's 1024-char description cap."""
+    assert len(CONSULT_TOOLS) == 1
+    tool = CONSULT_TOOLS[0]
+    assert tool["name"] == "consult_specialist"
+    assert tool["input_schema"]["required"] == ["tier", "query"]
+    assert set(tool["input_schema"]["properties"]["tier"]["enum"]) == {
+        "fast",
+        "normal",
+        "deep",
+    }
+    assert len(tool["description"]) <= 1024
 
 
 def test_manifest_has_no_sch_tools_regardless_of_session() -> None:

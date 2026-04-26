@@ -23,7 +23,7 @@ from api.pipeline.prompts import SCOUT_RETRY_SUFFIX, SCOUT_SYSTEM, SCOUT_USER_TE
 if TYPE_CHECKING:
     from api.pipeline.telemetry.token_stats import PhaseTokenStats
 
-logger = logging.getLogger("microsolder.pipeline.scout")
+logger = logging.getLogger("wrench_board.pipeline.scout")
 
 
 class ThinScoutDumpError(RuntimeError):
@@ -238,14 +238,15 @@ async def _scout_once(
 
     for iteration in range(max_continuations + 1):
         logger.info("[Scout] API call iteration=%d (attempt=%d)", iteration + 1, attempt + 1)
+        effort = "xhigh" if str(model).startswith("claude-opus-4-") else "high"
         response = await client.messages.create(
             model=model,
             max_tokens=16000,
             system=SCOUT_SYSTEM,
             messages=messages,
             tools=[web_search_tool],
-            thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": effort},
         )
 
         total_input += response.usage.input_tokens

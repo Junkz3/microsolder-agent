@@ -811,10 +811,69 @@ CAM_TOOLS: list[dict] = [
 ]
 
 
+CONSULT_TOOLS: list[dict] = [
+    {
+        "type": "custom",
+        "name": "consult_specialist",
+        "description": (
+            "Delegate a focused question to a specialist sub-agent on a "
+            "different model tier. Use this when your tier is too shallow "
+            "(Haiku on multi-step electrical reasoning) or you want a quick "
+            "second opinion (Opus consulting Sonnet for a sanity check). "
+            "The sub-agent runs as an isolated Managed-Agent session, "
+            "returns only its final text answer, and CANNOT call any tool — "
+            "tell it everything it needs in `context`. The call costs a "
+            "separate session-hour on the chosen tier. Avoid recursive "
+            "consultations. Good triggers: 'this needs Opus-grade reasoning', "
+            "'check my hypothesis with a second model'. Bad triggers: "
+            "'classify this string' (too cheap), 'continue the conversation' "
+            "(use your own turn)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tier": {
+                    "type": "string",
+                    "enum": ["fast", "normal", "deep"],
+                    "description": (
+                        "Specialist tier. `fast`=Haiku 4.5 (cheap quick "
+                        "lookups), `normal`=Sonnet 4.6 (balanced), "
+                        "`deep`=Opus 4.7 (best multi-step reasoning). "
+                        "Don't pick your own tier — the dispatcher will reject "
+                        "self-consultation."
+                    ),
+                },
+                "query": {
+                    "type": "string",
+                    "description": "The focused question for the specialist.",
+                },
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "Self-contained briefing: device, symptoms, prior "
+                        "measurements, hypotheses already ruled out. The "
+                        "sub-agent has no access to your tools or memory."
+                    ),
+                },
+            },
+            "required": ["tier", "query"],
+        },
+    },
+]
+
+
 def build_tools_manifest(session: SessionState) -> list[dict]:
-    """Return the tools list for `session`. `profile_*` and `protocol_*` always
-    present; `bv_*` only when a board is loaded; `cam_*` only when the
-    frontend reported a camera available."""
+    """Return the tools list for `session` in DIRECT mode. `profile_*` and
+    `protocol_*` always present; `bv_*` only when a board is loaded; `cam_*`
+    only when the frontend reported a camera available.
+
+    `consult_specialist` is intentionally absent here — escalation between
+    tiers requires the Managed Agents control plane (separate agent IDs per
+    tier, persisted in `managed_ids.json`). Direct mode runs a single
+    `messages.create` loop with no peer tiers to consult, so exposing the
+    tool would let the agent call something with no dispatcher behind it.
+    The MA runtime bakes CONSULT_TOOLS into each tier-scoped agent at
+    bootstrap time (see `scripts/bootstrap_managed_agent.py`)."""
     manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS) + list(PROTOCOL_TOOLS)
     if session.board is not None:
         manifest.extend(BV_TOOLS)

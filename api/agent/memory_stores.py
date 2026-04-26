@@ -29,7 +29,7 @@ from anthropic import AsyncAnthropic
 
 from api.config import get_settings
 
-logger = logging.getLogger("microsolder.agent.memory_stores")
+logger = logging.getLogger("wrench_board.agent.memory_stores")
 
 _BETA_HEADER = "managed-agents-2026-04-01"
 _API_BASE = "https://api.anthropic.com/v1"
@@ -197,7 +197,7 @@ async def ensure_memory_store(
         if store_id:
             return store_id
 
-    name = f"microsolder-{device_slug}"
+    name = f"wrench-board-{device_slug}"
     description = _store_description(device_slug)
     store_id: str | None = None
 
@@ -302,7 +302,7 @@ async def ensure_global_store(
     if cached_id:
         return cached_id
 
-    name = f"microsolder-global-{kind}"
+    name = f"wrench-board-global-{kind}"
     store_id: str | None = None
 
     sdk_beta = getattr(client, "beta", None)
@@ -398,7 +398,7 @@ async def ensure_repair_store(
                 "[MemoryStore] repair marker %s unreadable", marker
             )
 
-    name = f"microsolder-repair-{device_slug}-{repair_id}"
+    name = f"wrench-board-repair-{device_slug}-{repair_id}"
     description = _repair_store_description(device_slug, repair_id)
     store_id: str | None = None
 
@@ -457,12 +457,82 @@ async def ensure_repair_store(
     return store_id
 
 
+async def list_memory_paths_to_ids(
+    client: AsyncAnthropic,
+    *,
+    store_id: str,
+) -> dict[str, str]:
+    """Return `{memory_path: memory_id}` for all memories in `store_id`.
+
+    Used by callers that already know which paths exist and want to skip
+    the create→409→update dance that `upsert_memory` would otherwise do
+    every time. One round-trip up front saves three (SDK retries × 3 + the
+    eventual update) per existing memory on subsequent upserts.
+
+    Returns `{}` on any failure.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return {}
+    out: dict[str, str] = {}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            # `limit` is server-capped at 100 (verified live 2026-04-26 —
+            # `limit=1000` returns `400 invalid_request_error`). Our
+            # knowledge stores carry ≤10 leaf files plus the field-reports
+            # subtree, so one page at limit=100 covers the realistic case.
+            # If a tenant ever pushes past 100 entries we should add cursor
+            # pagination here.
+            resp = await http.get(
+                f"{_API_BASE}/memory_stores/{store_id}/memories",
+                headers=_http_headers(settings.anthropic_api_key),
+                params={"limit": 100, "view": "basic"},
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[MemoryStore] HTTP list raised for store=%s: %s", store_id, exc
+        )
+        return {}
+    if resp.status_code != 200:
+        logger.warning(
+            "[MemoryStore] HTTP list returned %d for store=%s: %s",
+            resp.status_code,
+            store_id,
+            resp.text[:300],
+        )
+        return {}
+    try:
+        body = resp.json()
+        items = body.get("data", []) if isinstance(body, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            # The list endpoint mixes "memory" (full leaf) and
+            # "memory_prefix" (directory-like) entries. Only the former
+            # has an id we can address for updates.
+            if item.get("type") != "memory":
+                continue
+            mid = item.get("id")
+            mpath = item.get("path")
+            if isinstance(mid, str) and isinstance(mpath, str):
+                out[mpath] = mid
+    except (ValueError, KeyError) as exc:
+        logger.warning(
+            "[MemoryStore] HTTP list body parse failed for store=%s: %s",
+            store_id,
+            exc,
+        )
+        return {}
+    return out
+
+
 async def upsert_memory(
     client: AsyncAnthropic,
     *,
     store_id: str,
     path: str,
     content: str,
+    memory_id: str | None = None,
 ) -> str | None:
     """Upsert a memory by path into `store_id`, returning its `content_sha256`.
 
@@ -470,7 +540,27 @@ async def upsert_memory(
     server creates on first write and replaces content thereafter. See
     `docs/en/managed-agents/memory` for the contract. Returns `None` on
     failure so callers can track per-memory status without raising.
+
+    When `memory_id` is supplied (typically from `list_memory_paths_to_ids`),
+    we skip straight to the update endpoint instead of doing a path-based
+    create that the server will reject with 409 + auto-fallback to update.
+    Saves ~3s per known memory by avoiding the SDK's naïve retry loop on
+    the conflict.
     """
+    settings = get_settings()
+    if memory_id and settings.anthropic_api_key:
+        # Fast path — one round-trip update, no create attempt, no 409s.
+        sha = await _update_memory_via_http(
+            api_key=settings.anthropic_api_key,
+            store_id=store_id,
+            memory_id=memory_id,
+            content=content,
+        )
+        if sha is not None:
+            return sha
+        # If the direct update failed (memory deleted, store rotated,
+        # etc.), fall through to the full upsert path so we can recover.
+
     sdk_beta = getattr(client, "beta", None)
     sdk_stores = getattr(sdk_beta, "memory_stores", None) if sdk_beta else None
     sdk_surface = getattr(sdk_stores, "memories", None) if sdk_stores else None
@@ -498,7 +588,6 @@ async def upsert_memory(
                     exc,
                 )
 
-    settings = get_settings()
     if not settings.anthropic_api_key:
         return None
     return await _upsert_memory_via_http(

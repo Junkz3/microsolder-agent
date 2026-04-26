@@ -47,12 +47,19 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from api.agent.manifest import BV_TOOLS, CAM_TOOLS, MB_TOOLS, PROFILE_TOOLS, PROTOCOL_TOOLS
+from api.agent.manifest import (
+    BV_TOOLS,
+    CAM_TOOLS,
+    CONSULT_TOOLS,
+    MB_TOOLS,
+    PROFILE_TOOLS,
+    PROTOCOL_TOOLS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IDS_FILE = REPO_ROOT / "managed_ids.json"
 
-ENV_NAME = "microsolder-diagnostic-env"
+ENV_NAME = "wrench-board-diagnostic-env"
 
 SYSTEM_PROMPT = """\
 You are a calm, methodical board-level diagnostics assistant for a
@@ -63,7 +70,7 @@ mis à disposition :
   - mb_get_component(refdes) — VALIDATEUR anti-hallucination. Vérifie
     qu'un refdes existe dans le registry du device et retourne
     `closest_matches` (Levenshtein) en cas de miss. Tu peux aussi
-    `read /mnt/memory/microsolder-{slug}/knowledge/registry.json` pour
+    `read /mnt/memory/wrench-board-{slug}/knowledge/registry.json` pour
     explorer la structure, mais tout refdes que tu mentionnes au tech
     DOIT passer par ce tool — c'est la garantie qu'il existe. Si le
     tool retourne {found: false, closest_matches: [...]}, propose une
@@ -74,8 +81,8 @@ mis à disposition :
     — API canonique pour persister un finding confirmé par le technicien
     en fin de session ("c'était bien U7, je l'ai remplacé, ça fonctionne").
     Le serveur valide le refdes, écrit en JSON+Markdown, et mirror dans
-    `/mnt/memory/microsolder-{slug}/field_reports/`. **Ne confonds pas**
-    avec ton bloc-notes scratch (`/mnt/memory/microsolder-repair-*/`) —
+    `/mnt/memory/wrench-board-{slug}/field_reports/`. **Ne confonds pas**
+    avec ton bloc-notes scratch (`/mnt/memory/wrench-board-repair-*/`) —
     le scratch est tes notes de travail, `mb_record_finding` est
     l'archive officielle lue par les futures sessions.
   - mb_expand_knowledge(focus_symptoms, focus_refdes?) — étend la memory
@@ -149,7 +156,7 @@ Tu travailles avec jusqu'à 4 mounts /mnt/memory/<store-name>/ attachés
 nom exact de chaque mount et son rôle. Lis-les dans cet ordre quand tu
 cherches du contexte (du général au spécifique) :
 
-  1. **/mnt/memory/microsolder-global-patterns/** (read-only)
+  1. **/mnt/memory/wrench-board-global-patterns/** (read-only)
      Archétypes de défaillance cross-device :
        - `/patterns/short-to-gnd.md` — courts-circuits sur rails
        - `/patterns/thermal-cascades.md` — cascades thermiques
@@ -157,9 +164,9 @@ cherches du contexte (du général au spécifique) :
        - `/patterns/anti-patterns-bench.md` — pièges de bench
      Grep ici quand `mb_get_rules_for_symptoms` retourne 0 résultats —
      un archétype global s'applique souvent au-delà d'une famille.
-     Exemple : `grep -r "diode-mode" /mnt/memory/microsolder-global-patterns/`
+     Exemple : `grep -r "diode-mode" /mnt/memory/wrench-board-global-patterns/`
 
-  2. **/mnt/memory/microsolder-global-playbooks/** (read-only)
+  2. **/mnt/memory/wrench-board-global-playbooks/** (read-only)
      Templates de protocoles JSON conformes au schéma de
      `bv_propose_protocol(steps=[...])`. Indexés par symptôme :
        - `/playbooks/boot-no-power.json` — séquence pas d'allumage
@@ -167,18 +174,18 @@ cherches du contexte (du général au spécifique) :
        - `/playbooks/pmic-rail-collapse.json` — sag PMU sous charge
      **Avant de synthétiser un protocole**, grep ici pour un playbook
      qui match le symptôme et préfère-le — il est field-tested.
-     Exemple : `glob /mnt/memory/microsolder-global-playbooks/playbooks/*.json`
+     Exemple : `glob /mnt/memory/wrench-board-global-playbooks/playbooks/*.json`
 
-  3. **/mnt/memory/microsolder-{device-slug}/** (read-only)
+  3. **/mnt/memory/wrench-board-{device-slug}/** (read-only)
      Pack de connaissance et findings confirmés DE CE DEVICE :
        - `/knowledge/registry.json`, `/knowledge/rules.json`, …
        - `/field_reports/*.md` mirroré depuis `mb_record_finding`
      Lecture libre (grep / read). **N'écris PAS ici directement** :
      utilise `mb_record_finding` pour les findings canoniques (validation
      refdes + format YAML strict).
-     Exemple : `grep -l "U1501" /mnt/memory/microsolder-*/field_reports/`
+     Exemple : `grep -l "U1501" /mnt/memory/wrench-board-*/field_reports/`
 
-  4. **/mnt/memory/microsolder-repair-{slug}-{repair_id}/** (read-write)
+  4. **/mnt/memory/wrench-board-repair-{slug}-{repair_id}/** (read-write)
      **Ton bloc-notes scratch DE CE REPAIR**, persisté à travers TOUTES
      les sessions du même repair. Arborescence canonique :
        - `state.md` — snapshot des hypothèses + mesures clés
@@ -190,8 +197,8 @@ cherches du contexte (du général au spécifique) :
 
 Au début de chaque session, lis le mount repair pour reprendre le fil :
 
-    glob /mnt/memory/microsolder-repair-*/decisions/*.md
-    read /mnt/memory/microsolder-repair-*/state.md   # si existe
+    glob /mnt/memory/wrench-board-repair-*/decisions/*.md
+    read /mnt/memory/wrench-board-repair-*/state.md   # si existe
 
 Si le mount est vide → première session du repair, démarre normalement.
 
@@ -351,9 +358,30 @@ _AGENT_TOOLSET = {
         {"name": "edit", "enabled": True},
         {"name": "grep", "enabled": True},
         # glob is needed for the per-repair scribe pattern: agent does
-        # glob /mnt/memory/microsolder-repair-*/decisions/*.md to list
+        # glob /mnt/memory/wrench-board-repair-*/decisions/*.md to list
         # past decisions chronologically.
         {"name": "glob", "enabled": True},
+    ],
+}
+
+# Curator gets the same filesystem subset PLUS explicit web_search and
+# web_fetch — those are the whole point of the curator role. We list them
+# individually with `permission_policy: always_allow` so the agent-level
+# config is unambiguous about intent (the org-level admin policy still
+# applies on top: if the org sets web_search to always_deny, the call
+# fails regardless of what the agent declares; this list only matters
+# once the org permission is unblocked).
+_CURATOR_TOOLSET = {
+    "type": "agent_toolset_20260401",
+    "default_config": {"enabled": False},
+    "configs": [
+        {"name": "read", "enabled": True, "permission_policy": {"type": "always_allow"}},
+        {"name": "write", "enabled": True, "permission_policy": {"type": "always_allow"}},
+        {"name": "edit", "enabled": True, "permission_policy": {"type": "always_allow"}},
+        {"name": "grep", "enabled": True, "permission_policy": {"type": "always_allow"}},
+        {"name": "glob", "enabled": True, "permission_policy": {"type": "always_allow"}},
+        {"name": "web_search", "enabled": True, "permission_policy": {"type": "always_allow"}},
+        {"name": "web_fetch", "enabled": True, "permission_policy": {"type": "always_allow"}},
     ],
 }
 # cam_capture is always exposed in the MA agent's tool list (the manifest
@@ -361,12 +389,20 @@ _AGENT_TOOLSET = {
 # runtime decides at dispatch time whether the frontend has a camera and
 # returns is_error otherwise — keeps the agent informed without an
 # explosion of tier × capability agent variants.
-TOOLS = _ma_filter(MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + PROTOCOL_TOOLS + CAM_TOOLS) + [_AGENT_TOOLSET]
+#
+# `consult_specialist` is exposed only to fast + normal — deep is the top
+# tier, so escalation from it would either be a no-op (Opus → Opus) or a
+# downgrade (Opus → Sonnet). The escalation graph is therefore strictly
+# ascending: a tier may spawn a deeper one, never a shallower one.
+_BASE_TOOLS = MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + PROTOCOL_TOOLS + CAM_TOOLS
+
+TOOLS_WITH_CONSULT = _ma_filter(_BASE_TOOLS + CONSULT_TOOLS) + [_AGENT_TOOLSET]
+TOOLS_NO_CONSULT = _ma_filter(_BASE_TOOLS) + [_AGENT_TOOLSET]
 
 TIERS = {
-    "fast":   {"model": "claude-haiku-4-5",  "name": "microsolder-coordinator-fast"},
-    "normal": {"model": "claude-sonnet-4-6", "name": "microsolder-coordinator-normal"},
-    "deep":   {"model": "claude-opus-4-7",   "name": "microsolder-coordinator-deep"},
+    "fast":   {"model": "claude-haiku-4-5",  "name": "wrench-board-coordinator-fast",   "tools": TOOLS_WITH_CONSULT},
+    "normal": {"model": "claude-sonnet-4-6", "name": "wrench-board-coordinator-normal", "tools": TOOLS_WITH_CONSULT},
+    "deep":   {"model": "claude-opus-4-7",   "name": "wrench-board-coordinator-deep",   "tools": TOOLS_NO_CONSULT},
 }
 
 
@@ -436,8 +472,8 @@ def _ensure_agent(
     agent = client.beta.agents.create(
         name=spec["name"],
         model=spec["model"],
-        system=SYSTEM_PROMPT,
-        tools=TOOLS,
+        system=spec.get("system", SYSTEM_PROMPT),
+        tools=spec["tools"],
     )
     print(f"   → {agent.id} (v{agent.version})")
     data["agents"][tier] = {
@@ -448,9 +484,60 @@ def _ensure_agent(
     _save(data)
 
 
+# Specialist sub-agent invoked by the diagnostic runtime when the tech
+# authorizes a knowledge-bank expansion. Different system prompt, different
+# tool surface — only the agent_toolset (web_search + filesystem) is
+# enabled. No memory_bank tools — its job is to research, not to mutate
+# the pack directly. The runtime takes its text output, runs the existing
+# Registry + Clinicien validators, and merges the result into rules.json.
+CURATOR_SYSTEM_PROMPT = """\
+You are a research agent for board-level electronics repair. Given a
+device and a focus symptom area:
+
+1. Decompose the symptom into 3-5 concrete failure-mode hypotheses that
+   together cover the likely root causes (filter / inductor damage, IC
+   failure, connector pad lift, decoupling cap short, software vs
+   hardware split, etc.).
+2. For each hypothesis, run targeted web searches scoped to the
+   specialized microsoldering community — r/boardrepair, Louis Rossmann,
+   NorthridgeFix, iPadRehab, badcaps, EEVblog, REWA. Prefer primary forum
+   threads and repair-shop case studies over aggregator blogs and
+   consumer-help posts.
+3. Read each source in full — don't skim. Extract specific component
+   identifiers (refdes, IC part numbers), measurement values, boot-stage
+   failures, and named fix paths, with attribution to the URL.
+4. Synthesize a Markdown research dump that a downstream extractor will
+   parse into structured rules. One block per failure-mode confirmed by
+   at least one credible source:
+
+     ## Symptom: <short label>
+     - <symptom bullet> [source: <actual URL>]
+     - Failing components reported: <refdes list>
+     - Typical fix path: <one sentence>
+
+   Stop when you have 3-6 such blocks. Cite real URLs returned by your
+   searches — never fabricate references.
+
+Be skeptical. If sources conflict on a refdes or a fix path, say so in a
+final "Conflicts and gaps" paragraph and explain which you find more
+credible and why. Don't paper over uncertainty with confident-sounding
+prose.
+"""
+
+CURATOR_SPEC = {
+    "model": "claude-sonnet-4-6",
+    "name": "wrench-board-knowledge-curator",
+    "system": CURATOR_SYSTEM_PROMPT,
+    # Curator-specific toolset: filesystem + explicit web_search /
+    # web_fetch. No bash, no custom mb_*/bv_* tools. Keeps the curator
+    # role honest: research only, no side effects on the pack.
+    "tools": [_CURATOR_TOOLSET],
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Bootstrap or refresh MA agents for microsolder-agent."
+        description="Bootstrap or refresh MA agents for wrench-board."
     )
     parser.add_argument(
         "--refresh-tools",
@@ -474,6 +561,10 @@ def main() -> None:
     _ensure_environment(client, data)
     for tier, spec in TIERS.items():
         _ensure_agent(client, tier, spec, data, refresh_tools=args.refresh_tools)
+    # Knowledge curator: separate agent the diagnostic runtime spawns when
+    # the tech authorizes a knowledge expansion. Lives in `agents.curator`
+    # alongside the tier coordinators.
+    _ensure_agent(client, "curator", CURATOR_SPEC, data, refresh_tools=args.refresh_tools)
 
     print(f"\n✅ managed_ids.json up-to-date at {IDS_FILE.name}")
     print(f"   environment: {data['environment_id']}")

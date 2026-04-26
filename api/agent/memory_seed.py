@@ -21,10 +21,14 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
-from api.agent.memory_stores import ensure_memory_store, upsert_memory
+from api.agent.memory_stores import (
+    ensure_memory_store,
+    list_memory_paths_to_ids,
+    upsert_memory,
+)
 from api.config import get_settings
 
-logger = logging.getLogger("microsolder.agent.memory_seed")
+logger = logging.getLogger("wrench_board.agent.memory_seed")
 
 MARKER_FILENAME = "managed.json"
 
@@ -154,6 +158,19 @@ async def seed_memory_store_from_pack(
             status[path] = "skipped:no_store"
         return status
 
+    # One round-trip up front to learn the existing memory ids for this
+    # store, so we can update-by-id directly instead of round-tripping
+    # through create→409→update for every file. Costs O(1) extra request
+    # but saves O(N × 3s SDK retry) on re-seeds.
+    known_ids = await list_memory_paths_to_ids(client, store_id=store_id)
+    if known_ids:
+        logger.info(
+            "[MemorySeed] %d existing memories cached for store=%s — "
+            "using direct-update path",
+            len(known_ids),
+            store_id,
+        )
+
     seeded_mtimes: dict[str, float] = {}
     for file_name, memory_path in targets:
         on_disk = pack_dir / file_name
@@ -167,7 +184,11 @@ async def seed_memory_store_from_pack(
         mtime_before = on_disk.stat().st_mtime
         content = on_disk.read_text(encoding="utf-8")
         result = await upsert_memory(
-            client, store_id=store_id, path=memory_path, content=content,
+            client,
+            store_id=store_id,
+            path=memory_path,
+            content=content,
+            memory_id=known_ids.get(memory_path),
         )
         if result is None:
             status[memory_path] = "error:upsert_failed"

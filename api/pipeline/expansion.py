@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,14 @@ from api.pipeline.schemas import Registry, RulesSet
 from api.pipeline.tool_call import call_with_forced_tool
 from api.pipeline.writers import SUBMIT_RULES_TOOL_NAME, _submit_rules_tool
 
-logger = logging.getLogger("microsolder.pipeline.expansion")
+logger = logging.getLogger("wrench_board.pipeline.expansion")
+
+# Signature for the optional "chunk provider" injected by the MA runtime
+# when it wants to spawn a KnowledgeCurator sub-agent instead of running
+# the inline `_run_targeted_scout` ourselves. Returns the same Markdown
+# chunk shape so the rest of the pipeline (Registry + Clinicien) is
+# oblivious to who produced it.
+ChunkProvider = Callable[..., Awaitable[str]]
 
 
 TARGETED_SCOUT_TEMPLATE = """\
@@ -117,6 +125,7 @@ async def _run_targeted_scout(
     # Single pass; we don't expect long pause_turn chains on a narrow scope.
     attempt = 0
     response = None
+    effort = "xhigh" if str(model).startswith("claude-opus-4-") else "high"
     while attempt < 2:
         response = await client.messages.create(
             model=model,
@@ -124,8 +133,8 @@ async def _run_targeted_scout(
             system=SCOUT_SYSTEM,
             messages=messages,
             tools=[web_search_tool],
-            thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": effort},
         )
         if response.stop_reason == "pause_turn":
             messages = [
@@ -153,8 +162,8 @@ async def _run_targeted_scout(
             system=SCOUT_SYSTEM,
             messages=[{"role": "user", "content": user_prompt + SCOUT_RETRY_SUFFIX}],
             tools=[web_search_tool],
-            thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": effort},
         )
         text_parts = [block.text for block in response.content if block.type == "text"]
         chunk = "\n\n".join(t for t in text_parts if t.strip())
@@ -237,6 +246,7 @@ async def expand_pack(
     focus_refdes: list[str] | None = None,
     client: AsyncAnthropic | None = None,
     memory_root: Path | None = None,
+    chunk_provider: ChunkProvider | None = None,
 ) -> dict[str, Any]:
     """Grow the on-disk pack for `device_slug` around a focus symptom area.
 
@@ -282,13 +292,23 @@ async def expand_pack(
     # 1. Targeted Scout → new chunk.
     model_sonnet = settings.anthropic_model_sonnet
     model_main = settings.anthropic_model_main
-    chunk = await _run_targeted_scout(
-        client=client,
-        model=model_sonnet,
-        device_label=device_label,
-        focus_symptoms=focus_symptoms,
-        focus_refdes=focus_refdes,
-    )
+    if chunk_provider is not None:
+        # Runtime opted in to a Managed-Agent KnowledgeCurator session
+        # instead of an inline messages.create Scout. Same output shape.
+        logger.info("[Expand] using injected chunk_provider (MA curator)")
+        chunk = await chunk_provider(
+            device_label=device_label,
+            focus_symptoms=focus_symptoms,
+            focus_refdes=focus_refdes,
+        )
+    else:
+        chunk = await _run_targeted_scout(
+            client=client,
+            model=model_sonnet,
+            device_label=device_label,
+            focus_symptoms=focus_symptoms,
+            focus_refdes=focus_refdes,
+        )
     _append_scout_chunk(pack_dir, chunk, focus_symptoms)
     dump_bytes_added = len(chunk)
 

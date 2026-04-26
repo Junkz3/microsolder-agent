@@ -117,9 +117,11 @@ async def _run_agent_turn(
     # incompatible with forced tool_choice — the runtime never sets one
     # here (default `auto`), so this is safe. Sonnet 4.6 / Haiku 4.5 keep
     # their defaults: effort=xhigh is Opus-tier only and 400s elsewhere.
+    # Opus 4.7 default for `thinking.display` is "omitted" — without
+    # `display: "summarized"` the frontend never sees the reasoning text.
     extra_kwargs: dict[str, Any] = {}
     if model.startswith("claude-opus-4-7"):
-        extra_kwargs["thinking"] = {"type": "adaptive"}
+        extra_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
         extra_kwargs["output_config"] = {"effort": "xhigh"}
 
     while True:
@@ -327,7 +329,7 @@ async def _replay_history_to_ws(
     await ws.send_json({"type": "history_replay_end"})
 
 
-logger = logging.getLogger("microsolder.agent.direct")
+logger = logging.getLogger("wrench_board.agent.direct")
 
 
 async def _dispatch_protocol_tool(

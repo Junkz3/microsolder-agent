@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", bound=BaseModel)
 
-logger = logging.getLogger("microsolder.pipeline.tool_call")
+logger = logging.getLogger("wrench_board.pipeline.tool_call")
 
 
 async def call_with_forced_tool(
@@ -97,8 +97,13 @@ async def call_with_forced_tool(
             tool_choice=tool_choice_param,
         )
         if thinking_budget is not None:
-            stream_kwargs["thinking"] = {"type": "adaptive"}
-            stream_kwargs.setdefault("output_config", {})["effort"] = "high"
+            # Opus 4.7 default for `thinking.display` is "omitted" (silent),
+            # so summarized blocks never reach observers. Opt back in.
+            stream_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
+            # `xhigh` is the Opus-tier sweet spot per Anthropic's 4.7 guide;
+            # falls back to `high` on Sonnet/Haiku where xhigh would 400.
+            effort = "xhigh" if str(model).startswith("claude-opus-4-") else "high"
+            stream_kwargs.setdefault("output_config", {})["effort"] = effort
 
         async with client.messages.stream(**stream_kwargs) as stream:
             response = await stream.get_final_message()

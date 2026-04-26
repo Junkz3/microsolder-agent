@@ -61,7 +61,7 @@ from api.tools.schematic import mb_schematic_graph
 TierLiteral = Literal["fast", "normal", "deep"]
 DEFAULT_TIER: TierLiteral = "fast"
 
-logger = logging.getLogger("microsolder.agent.managed")
+logger = logging.getLogger("wrench_board.agent.managed")
 
 
 async def _sessions_create_with_retry(
@@ -395,6 +395,132 @@ async def _run_subagent_consultation(
             "error": str(exc),
             "tier": tier,
         }
+    finally:
+        if sub_session is not None:
+            try:
+                await client.beta.sessions.archive(sub_session.id)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+async def _run_knowledge_curator(
+    *,
+    client: AsyncAnthropic,
+    device_label: str,
+    focus_symptoms: list[str],
+    focus_refdes: list[str],
+    environment_id: str,
+    parent_session_id: str | None,
+    ws: WebSocket | None = None,
+    timeout_s: float = 180.0,
+) -> str:
+    """Spawn the bootstrapped KnowledgeCurator MA agent for a research run.
+
+    Returns the curator's Markdown chunk (same shape as the inline Scout in
+    `api.pipeline.expansion._run_targeted_scout`). Surfaces `agent.tool_use`
+    events on `ws` if provided so the tech sees the live web_search queries.
+    """
+    try:
+        curator_info = get_agent(load_managed_ids(), tier="curator")
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "knowledge_curator agent not bootstrapped — re-run "
+            "scripts/bootstrap_managed_agent.py"
+        ) from exc
+
+    focus_block = "\n".join(f"  - {s}" for s in focus_symptoms)
+    refdes_section = ""
+    if focus_refdes:
+        refdes_lines = "\n".join(f"  - {r}" for r in focus_refdes)
+        refdes_section = f"\n\nFocus refdes:\n{refdes_lines}"
+
+    prompt = (
+        f"Device: {device_label}\n\n"
+        f"Focus symptoms (target THESE only):\n{focus_block}"
+        f"{refdes_section}\n\n"
+        "Run a focused web research pass and produce the Markdown dump in "
+        "your system-prompt format. 4-8 searches max, each scoped to one "
+        "symptom + the device. Stop when you have 3-6 symptom blocks with "
+        "traceable sources. Avoid topics already common knowledge — surface "
+        "new failure-mode information for the focus symptoms only."
+    )
+
+    sub_session = None
+    try:
+        sub_session = await _sessions_create_with_retry(
+            client,
+            agent={
+                "type": "agent",
+                "id": curator_info["id"],
+                "version": curator_info["version"],
+            },
+            environment_id=environment_id,
+            title=(
+                f"curator-from-{parent_session_id}"
+                if parent_session_id
+                else "curator"
+            ),
+        )
+        sub_session_id = sub_session.id
+        logger.info(
+            "[Curator] spawned session=%s for device=%r focus=%s",
+            sub_session_id,
+            device_label,
+            focus_symptoms,
+        )
+        if ws is not None:
+            await ws.send_json({
+                "type": "subagent_spawned",
+                "role": "curator",
+                "session_id": sub_session_id,
+            })
+
+        chunks: list[str] = []
+        stream_ctx = await client.beta.sessions.events.stream(sub_session_id)
+        async with stream_ctx as stream:
+            await client.beta.sessions.events.send(
+                sub_session_id,
+                events=[{
+                    "type": "user.message",
+                    "content": [{"type": "text", "text": prompt}],
+                }],
+            )
+
+            async def _consume() -> None:
+                async for event in stream:
+                    etype = getattr(event, "type", None)
+                    if etype == "agent.message":
+                        for block in getattr(event, "content", []) or []:
+                            if getattr(block, "type", None) == "text":
+                                chunks.append(block.text)
+                    elif etype == "agent.tool_use" and ws is not None:
+                        # Server-side tools (web_search, web_fetch).
+                        # Mirror to ws so the tech sees the live research.
+                        await ws.send_json({
+                            "type": "subagent_tool_use",
+                            "role": "curator",
+                            "name": getattr(event, "name", None),
+                            "input": getattr(event, "input", {}) or {},
+                        })
+                    elif etype == "session.status_idle":
+                        stop = getattr(event, "stop_reason", None)
+                        sr = getattr(stop, "type", None) if stop else None
+                        if sr != "requires_action":
+                            return
+                    elif etype == "session.status_terminated":
+                        return
+
+            try:
+                await asyncio.wait_for(_consume(), timeout=timeout_s)
+            except TimeoutError:
+                logger.warning(
+                    "[Curator] session=%s timed out after %.1fs",
+                    sub_session_id,
+                    timeout_s,
+                )
+
+        return "\n".join(c for c in chunks if c).strip()
+
     finally:
         if sub_session is not None:
             try:
@@ -2424,6 +2550,117 @@ async def _forward_session_to_ws(
                         continue
                     name = getattr(tool_event, "name", "")
                     payload = getattr(tool_event, "input", {}) or {}
+
+                    # mb_expand_knowledge: route through the MA
+                    # KnowledgeCurator sub-agent instead of the inline
+                    # Scout `messages.create`. The curator does the focused
+                    # research; the existing Registry + Clinicien validate
+                    # and merge the chunk into rules.json.
+                    if name == "mb_expand_knowledge":
+                        from api.pipeline.expansion import expand_pack
+
+                        focus_symptoms = list(payload.get("focus_symptoms") or [])
+                        focus_refdes = list(payload.get("focus_refdes") or [])
+
+                        async def _curator_provider(
+                            *,
+                            device_label: str,
+                            focus_symptoms: list[str],
+                            focus_refdes: list[str],
+                        ) -> str:
+                            return await _run_knowledge_curator(
+                                client=client,
+                                device_label=device_label,
+                                focus_symptoms=focus_symptoms,
+                                focus_refdes=focus_refdes,
+                                environment_id=environment_id,
+                                parent_session_id=session_id,
+                                ws=ws,
+                            )
+
+                        try:
+                            expand_result = await expand_pack(
+                                device_slug=device_slug,
+                                focus_symptoms=focus_symptoms,
+                                focus_refdes=focus_refdes,
+                                client=client,
+                                memory_root=memory_root,
+                                chunk_provider=_curator_provider,
+                            )
+                            expand_result["ok"] = True
+                            if session_state is not None:
+                                session_state.invalidate_pack_cache(device_slug)
+                            # Sync the MA memory store mount with the freshly
+                            # expanded pack so the agent's mount-based reads
+                            # (grep on /mnt/memory/wrench-board-{slug}/) see the
+                            # new rules + registry mid-session, not just on
+                            # the next session-create. Custom mb_* tools see
+                            # the changes immediately via the cache invalidate
+                            # above; this closes the gap on the mount path.
+                            try:
+                                from api.agent.memory_seed import (
+                                    seed_memory_store_from_pack,
+                                )
+                                sync_status = await seed_memory_store_from_pack(
+                                    client=client,
+                                    device_slug=device_slug,
+                                    pack_dir=memory_root / device_slug,
+                                    only_files=["rules.json", "registry.json"],
+                                )
+                                seeded = [
+                                    p for p, s in sync_status.items()
+                                    if s == "seeded"
+                                ]
+                                logger.info(
+                                    "[Curator] mount sync slug=%s seeded=%s",
+                                    device_slug,
+                                    seeded,
+                                )
+                            except Exception as sync_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "[Curator] memory store sync failed "
+                                    "(non-critical): %s",
+                                    sync_exc,
+                                )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.exception(
+                                "[Curator] expand_pack failed device=%s",
+                                device_slug,
+                            )
+                            expand_result = {
+                                "ok": False,
+                                "expanded": False,
+                                "reason": type(exc).__name__,
+                                "error": str(exc)[:300],
+                            }
+
+                        await ws.send_json({
+                            "type": "knowledge_expanded",
+                            "ok": bool(expand_result.get("ok")),
+                            "stats": {
+                                k: v for k, v in expand_result.items()
+                                if k in (
+                                    "new_rules_count",
+                                    "new_components_count",
+                                    "new_signals_count",
+                                    "total_rules_after",
+                                    "dump_bytes_added",
+                                )
+                            },
+                        })
+                        await client.beta.sessions.events.send(
+                            session_id,
+                            events=[{
+                                "type": "user.custom_tool_result",
+                                "custom_tool_use_id": eid,
+                                "content": [{
+                                    "type": "text",
+                                    "text": json.dumps(expand_result, default=str),
+                                }],
+                            }],
+                        )
+                        responded_tool_ids.add(eid)
+                        continue
 
                     # consult_specialist is async (spawns a fresh MA session
                     # on another tier and streams its events). Intercept

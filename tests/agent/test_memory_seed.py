@@ -93,10 +93,22 @@ async def test_seed_creates_one_memory_per_file(pack_dir, monkeypatch):
 
     monkeypatch.setattr("api.agent.memory_seed.ensure_memory_store", fake_ensure)
 
+    async def fake_list_ids(_client, *, store_id):
+        return {}
+
+    monkeypatch.setattr(
+        "api.agent.memory_seed.list_memory_paths_to_ids", fake_list_ids
+    )
+
     upserts: list[dict] = []
 
-    async def fake_upsert(_client, *, store_id, path, content):
-        upserts.append({"store_id": store_id, "path": path, "bytes": len(content)})
+    async def fake_upsert(_client, *, store_id, path, content, memory_id=None):
+        upserts.append({
+            "store_id": store_id,
+            "path": path,
+            "bytes": len(content),
+            "memory_id": memory_id,
+        })
         return "sha_" + path
 
     monkeypatch.setattr("api.agent.memory_seed.upsert_memory", fake_upsert)
@@ -284,10 +296,14 @@ async def test_seed_only_files_uploads_subset(tmp_path: Path, monkeypatch):
 
     calls: list[str] = []
 
-    async def fake_upsert(client, *, store_id, path, content):
+    async def fake_upsert(client, *, store_id, path, content, memory_id=None):
         calls.append(path)
         return {"id": "mem_1"}
     monkeypatch.setattr(ms_mod, "upsert_memory", fake_upsert)
+
+    async def fake_list_ids(client, *, store_id):
+        return {}
+    monkeypatch.setattr(ms_mod, "list_memory_paths_to_ids", fake_list_ids)
 
     status = await ms_mod.seed_memory_store_from_pack(
         client=AsyncMock(), device_slug="demo", pack_dir=pack,
@@ -339,9 +355,13 @@ async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, mo
         return "memstore_xyz"
     monkeypatch.setattr(ms_mod, "ensure_memory_store", fake_ensure)
 
-    async def fake_upsert(client, *, store_id, path, content):
+    async def fake_upsert(client, *, store_id, path, content, memory_id=None):
         return {"id": "mem_1"}
     monkeypatch.setattr(ms_mod, "upsert_memory", fake_upsert)
+
+    async def fake_list_ids(client, *, store_id):
+        return {}
+    monkeypatch.setattr(ms_mod, "list_memory_paths_to_ids", fake_list_ids)
 
     # Partial re-seed of rules.json only — its current stat mtime is newer
     # than the (back-dated) marker entry, so the merge path triggers.
@@ -406,9 +426,13 @@ async def test_seed_merges_into_legacy_marker(tmp_path: Path, monkeypatch):
         return "memstore_xyz"
     monkeypatch.setattr(ms_mod, "ensure_memory_store", fake_ensure)
 
-    async def fake_upsert(client, *, store_id, path, content):
+    async def fake_upsert(client, *, store_id, path, content, memory_id=None):
         return {"id": "mem_1"}
     monkeypatch.setattr(ms_mod, "upsert_memory", fake_upsert)
+
+    async def fake_list_ids(client, *, store_id):
+        return {}
+    monkeypatch.setattr(ms_mod, "list_memory_paths_to_ids", fake_list_ids)
 
     await ms_mod.seed_memory_store_from_pack(
         client=AsyncMock(), device_slug="demo", pack_dir=pack,
