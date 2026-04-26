@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from api.profile.catalog import SKILLS_CATALOG, SkillId, ToolId
 from api.profile.derive import effective_verbosity, global_level, skill_status
 from api.profile.model import SkillEvidence
@@ -131,7 +133,12 @@ def profile_track_skill(skill_id: str, evidence: dict[str, Any]) -> dict[str, An
 
     try:
         ev = SkillEvidence.model_validate(evidence)
-    except Exception as exc:
+    except ValidationError as exc:
+        # Narrow the catch to ValidationError so a real bug in
+        # `bump_skill` / `load_profile` (AttributeError, RuntimeError) is
+        # NOT silently coerced into the documented `invalid_evidence`
+        # error channel — callers would mis-attribute the failure to
+        # bad input when it's actually an internal regression.
         return {"error": "invalid_evidence", "detail": str(exc)}
 
     profile = load_profile()

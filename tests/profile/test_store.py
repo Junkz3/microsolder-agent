@@ -84,3 +84,45 @@ def test_bump_skill_caps_evidences_fifo(tmp_memory_root: Path):
     # FIFO: oldest were dropped — the first evidence we should still see
     # is for i == 5 (we dropped i == 0..4).
     assert rec.evidences[0].repair_id == "rep_5"
+
+
+def test_load_profile_corrupt_json_returns_default(tmp_memory_root: Path):
+    """Garbled JSON is a known recovery path: fall back to defaults silently."""
+    path = tmp_memory_root / "_profile" / "technician.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not valid json at all}", encoding="utf-8")
+    p = load_profile()
+    default = TechnicianProfile.default()
+    assert p.identity == default.identity
+    assert p.skills == default.skills
+
+
+def test_load_profile_schema_drift_returns_default(tmp_memory_root: Path):
+    """A file with valid JSON but wrong shape (e.g. wrong field types) → defaults."""
+    path = tmp_memory_root / "_profile" / "technician.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # `tools` is supposed to be an object, not an int — triggers ValidationError.
+    path.write_text('{"tools": 42}', encoding="utf-8")
+    p = load_profile()
+    default = TechnicianProfile.default()
+    assert p.tools == default.tools
+
+
+def test_load_profile_unexpected_error_propagates(
+    tmp_memory_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Anti-regression: only the documented recovery exceptions are swallowed.
+
+    A bug-shaped exception (e.g. AttributeError) must surface — we don't want
+    the narrowed catch eating real defects in `model_validate`.
+    """
+    path = tmp_memory_root / "_profile" / "technician.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"identity": {}}', encoding="utf-8")
+
+    def boom(*_args, **_kwargs):
+        raise AttributeError("simulated bug in model_validate")
+
+    monkeypatch.setattr(TechnicianProfile, "model_validate", boom)
+    with pytest.raises(AttributeError, match="simulated bug"):
+        load_profile()

@@ -13,6 +13,8 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from api.config import get_settings
 from api.profile.catalog import SKILL_EVIDENCES_CAP, SkillId
 from api.profile.model import SkillEvidence, SkillRecord, TechnicianProfile
@@ -38,9 +40,11 @@ def load_profile() -> TechnicianProfile:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         return TechnicianProfile.model_validate(raw)
-    except Exception:
-        # Corrupt file → fall back to defaults rather than crashing the server.
-        # The user can edit to recover; the corrupt file is left alone.
+    except (OSError, json.JSONDecodeError, ValidationError):
+        # Corrupt file or unreadable → fall back to defaults rather than crashing
+        # the server. The user can edit to recover; the corrupt file is left alone.
+        # Truly unexpected errors (e.g. AttributeError from a bug) intentionally
+        # surface so they can be diagnosed instead of silently swallowed.
         return TechnicianProfile.default()
 
 
@@ -53,14 +57,18 @@ def save_profile(profile: TechnicianProfile) -> None:
     fd, tmp_path = tempfile.mkstemp(
         prefix=".technician.", suffix=".tmp", dir=str(path.parent)
     )
+    replaced = False
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
         os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
+        replaced = True
+    finally:
+        # Cleanup tmp file on any failure path (incl. KeyboardInterrupt /
+        # SystemExit) so we never leave .technician.*.tmp residue on disk.
+        # On success the rename has consumed it, so we skip the unlink.
+        if not replaced and os.path.exists(tmp_path):
             os.unlink(tmp_path)
-        raise
 
 
 def bump_skill(skill_id: SkillId, evidence: SkillEvidence) -> SkillRecord:

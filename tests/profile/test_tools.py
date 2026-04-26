@@ -92,6 +92,47 @@ def test_profile_track_skill_happy_path_promotes(memroot: Path):
     assert out["promoted"] is True
 
 
+def test_profile_track_skill_returns_invalid_evidence_on_validation_error(
+    memroot: Path,
+):
+    """ValidationError-shaped failures stay in the documented {error: invalid_evidence} channel."""
+    out = profile_track_skill(
+        "reflow_bga",
+        {
+            # Missing required fields and bogus action_summary type — long enough
+            # to pass the EVIDENCE_MIN_CHARS guard so we hit the model_validate path.
+            "action_summary": "x" * 30,
+            "date": 12345,  # wrong type, triggers ValidationError
+        },
+    )
+    assert out.get("error") == "invalid_evidence"
+    assert "detail" in out
+
+
+def test_profile_track_skill_propagates_unexpected_errors(
+    memroot: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Anti-regression: only ValidationError is swallowed by the invalid_evidence branch.
+
+    A bug in `bump_skill` or `load_profile` must surface as the original exception
+    rather than be silently coerced into {error: invalid_evidence}.
+    """
+    from api.profile import tools as profile_tools
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("simulated downstream defect")
+
+    monkeypatch.setattr(profile_tools, "bump_skill", boom)
+    with pytest.raises(RuntimeError, match="simulated downstream defect"):
+        profile_track_skill(
+            "reflow_bga",
+            {
+                "repair_id": "r1", "device_slug": "ix", "symptom": "no_boot",
+                "action_summary": "Reflow du PMIC U2 après court-circuit VDD_MAIN",
+                "date": "2026-04-22T10:00:00Z",
+            },
+        )
+
 def test_profile_get_caches_within_session(memroot: Path, monkeypatch):
     """Second profile_get on the same session must not re-read disk."""
     from api.profile import tools as profile_tools
