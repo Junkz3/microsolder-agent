@@ -10,6 +10,9 @@
 // `phase_narration` event after each phase_finished; we render those into
 // the timeline rows so the technician watches the agent learn.
 
+import { mountMascot, setMascotState } from './mascot.js';
+import { prettifySlug } from './router.js';
+
 const STATUS_NEUTRAL = "";
 const STATUS_LOADING = "loading";
 const STATUS_ERROR = "error";
@@ -19,11 +22,144 @@ const PHASE_ORDER = ["scout", "registry", "mapper", "writers", "audit"];
 let isSubmitting = false;
 let progressWs = null;
 let pipelineStartedAt = 0;
+let _landingMascot = null;
+
+function setLandingMascot(state) {
+  if (!_landingMascot) return;
+  setMascotState(_landingMascot, state);
+}
+
+const _landingDateFmt = new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+});
+
+async function loadAndRenderSidebar() {
+  const sidebar = document.getElementById("landingSidebar");
+  const list = document.getElementById("landingSidebarList");
+  const count = document.getElementById("landingSidebarCount");
+  if (!sidebar || !list) return;
+
+  let repairs = [];
+  try {
+    const res = await fetch("/pipeline/repairs");
+    if (res.ok) repairs = await res.json();
+  } catch (err) {
+    console.warn("[landing] loadRepairs failed", err);
+  }
+  if (!repairs || repairs.length === 0) {
+    sidebar.hidden = true;
+    return;
+  }
+
+  // Most recent first.
+  repairs.sort((a, b) => {
+    const ta = new Date(a.created_at).getTime() || 0;
+    const tb = new Date(b.created_at).getTime() || 0;
+    return tb - ta;
+  });
+
+  if (count) count.textContent = `${repairs.length} repair${repairs.length > 1 ? "s" : ""}`;
+
+  list.innerHTML = "";
+  for (const r of repairs) {
+    const li = document.createElement("li");
+    li.className = "landing-sidebar-item";
+
+    const a = document.createElement("a");
+    a.className = "landing-sidebar-link";
+    a.href = `?device=${encodeURIComponent(r.device_slug)}&repair=${encodeURIComponent(r.repair_id)}#home`;
+
+    const dev = document.createElement("span");
+    dev.className = "landing-sidebar-device";
+    dev.textContent = prettifySlug(r.device_slug);
+
+    const sym = document.createElement("span");
+    sym.className = "landing-sidebar-symptom";
+    sym.textContent = r.symptom || "—";
+    if (r.symptom) sym.title = r.symptom;
+
+    const meta = document.createElement("span");
+    meta.className = "landing-sidebar-meta";
+    const dateStr = r.created_at
+      ? _landingDateFmt.format(new Date(r.created_at)).replace(/,\s*/g, " ")
+      : "";
+    const ridShort = (r.repair_id || "").slice(0, 8);
+    meta.textContent = dateStr ? `${dateStr} · ${ridShort}` : ridShort;
+
+    a.appendChild(dev);
+    a.appendChild(sym);
+    a.appendChild(meta);
+    li.appendChild(a);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "landing-sidebar-delete";
+    del.setAttribute("aria-label", "Supprimer cette réparation");
+    del.title = "Supprimer";
+    del.textContent = "×";
+    del.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onDeleteRepairClick(r.repair_id, li, del);
+    });
+    li.appendChild(del);
+
+    list.appendChild(li);
+  }
+  sidebar.hidden = false;
+}
+
+async function onDeleteRepairClick(repairId, itemEl, btnEl) {
+  const ok = window.confirm(
+    "Supprimer cette réparation ? La conversation et les notes de l'agent seront effacées définitivement."
+  );
+  if (!ok) return;
+
+  btnEl.disabled = true;
+  try {
+    const res = await fetch(`/pipeline/repairs/${encodeURIComponent(repairId)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${detail}`);
+    }
+  } catch (err) {
+    console.error("[landing] delete failed", err);
+    setStatus(`Échec de la suppression : ${err.message || err}`, STATUS_ERROR);
+    btnEl.disabled = false;
+    return;
+  }
+
+  itemEl.remove();
+  const list = document.getElementById("landingSidebarList");
+  const count = document.getElementById("landingSidebarCount");
+  const remaining = list ? list.children.length : 0;
+  if (count) {
+    count.textContent = remaining > 0
+      ? `${remaining} repair${remaining > 1 ? "s" : ""}`
+      : "";
+  }
+  if (remaining === 0) {
+    const sidebar = document.getElementById("landingSidebar");
+    if (sidebar) sidebar.hidden = true;
+  }
+}
 
 export function showLanding() {
   document.body.classList.add("show-landing");
   const ov = document.getElementById("landing-overlay");
   if (ov) ov.hidden = false;
+  // Mount the hero mascot once; reopens reset to idle. Sidebar refetches
+  // every reopen so a fresh leaveSession() shows the latest repair list.
+  if (!_landingMascot) {
+    _landingMascot = mountMascot(document.getElementById("landingMascot"), {
+      size: "md", state: "idle",
+    });
+  } else {
+    setLandingMascot("idle");
+  }
+  loadAndRenderSidebar();
   setTimeout(() => document.getElementById("landingDevice")?.focus(), 50);
 }
 
@@ -138,6 +274,7 @@ async function onSubmit(ev) {
 
   setStatus("J'enregistre ta réparation et je vérifie si je connais déjà cet appareil…", STATUS_LOADING);
   setSubmitting(true);
+  setLandingMascot("thinking");
   resetTimeline();
 
   try {
@@ -197,6 +334,7 @@ async function onSubmit(ev) {
   } catch (err) {
     console.error("[landing] submit failed", err);
     setStatus(`Échec de la création : ${err.message || err}`, STATUS_ERROR);
+    setLandingMascot("error");
     setSubmitting(false);
   }
 }
@@ -238,6 +376,7 @@ function handleProgressEvent(ev, slug, repairId) {
       const phase = ev.phase;
       if (PHASE_ORDER.includes(phase) || phase === "expand") {
         setPhaseState(phase, "running");
+        setLandingMascot("working");
       }
       break;
     }
@@ -258,6 +397,7 @@ function handleProgressEvent(ev, slug, repairId) {
       setTimelineTitle(`Fiche prête · ${ev.status || ""}`);
       setStatus("C'est prêt. J'ouvre le diagnostic…", STATUS_NEUTRAL);
       stopEtaTicker();
+      setLandingMascot("success");
       // 2500 ms grace gives the audit phase narration (Haiku ~800-1600 ms)
       // time to land on the WS bus and render before we navigate away.
       setTimeout(() => goToWorkspace(repairId, slug), 2500);
@@ -272,6 +412,7 @@ function handleProgressEvent(ev, slug, repairId) {
         running.classList.add("is-failed");
       }
       stopEtaTicker();
+      setLandingMascot("error");
       setSubmitting(false);
       break;
     }

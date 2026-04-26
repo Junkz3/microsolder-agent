@@ -12,6 +12,22 @@
   overflow: hidden;
   display: grid;
   place-items: center;
+  /* Reserve the left rail for the recent-repairs sidebar — the centering
+     applies to the remaining space, so the hero feels centered between
+     the sidebar and the right edge (Claude / GPT pattern). */
+  padding-left: 300px;
+}
+
+/* The sidebar lives at the viewport's left edge (position: absolute on
+   .landing); the .landing-shell wrapper is layout-transparent so the hero
+   participates in .landing's centering grid as a direct child. */
+.landing-shell { display: contents; }
+
+/* Below 1000px, the sidebar disappears and the landing collapses back to
+   a single-column hero centered on the full viewport. */
+@media (max-width: 999px) {
+  .landing { padding-left: 0; }
+  .landing-sidebar { display: none !important; }
 }
 
 .landing-bg {
@@ -286,3 +302,173 @@
   0%, 100% { box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.10); }
   50%      { box-shadow: 0 0 0 8px rgba(125, 211, 252, 0.04); }
 }
+
+/* ============ Sidebar — recent repairs library ============
+ * Hidden by default; web/js/landing.js shows it once /pipeline/repairs
+ * resolves to ≥1 entry. Click on an item navigates to that repair's
+ * dashboard (same target as the journal cards). */
+
+.landing-sidebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  background: rgba(15, 26, 46, 0.85);
+  border-right: 1px solid var(--border-soft);
+  padding: 18px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(10px);
+  animation: landing-rise .4s cubic-bezier(.2, .8, .2, 1);
+  z-index: 2;
+}
+
+.landing-sidebar[hidden] { display: none; }
+
+.landing-sidebar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 8px;
+}
+
+.landing-sidebar-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.landing-sidebar-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.landing-sidebar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.landing-sidebar-list::-webkit-scrollbar { width: 6px; }
+.landing-sidebar-list::-webkit-scrollbar-track { background: transparent; }
+.landing-sidebar-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.landing-sidebar-item {
+  position: relative;
+  border-radius: 8px;
+  transition: background .15s;
+}
+.landing-sidebar-item:hover { background: var(--panel-2); }
+
+/* No left-rail accent on hover. The cyan in tokens.css is locked to
+   component semantics (see CLAUDE.md "design tokens"); using it as a
+   generic hover affordance was a semantic violation AND read as
+   stock-SaaS-sidebar. Hover = background lift + symptom/meta brightening
+   + the × button reveal — that's enough signal. */
+.landing-sidebar-link {
+  display: block;
+  padding: 9px 30px 9px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+.landing-sidebar-link:focus-visible {
+  outline: 1px solid var(--border-hover);
+  outline-offset: -1px;
+}
+
+.landing-sidebar-delete {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-3);
+  font-size: 16px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, background .15s, color .15s, border-color .15s;
+}
+.landing-sidebar-item:hover .landing-sidebar-delete,
+.landing-sidebar-delete:focus-visible {
+  opacity: 1;
+}
+.landing-sidebar-delete:hover {
+  background: var(--panel);
+  color: var(--amber);
+  border-color: rgba(245, 158, 11, .35);
+}
+.landing-sidebar-delete:disabled {
+  opacity: .4;
+  cursor: progress;
+}
+
+.landing-sidebar-device {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.landing-sidebar-symptom {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color .15s;
+}
+.landing-sidebar-meta {
+  display: block;
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: 0.2px;
+  transition: color .15s;
+}
+.landing-sidebar-item:hover .landing-sidebar-symptom { color: var(--text); }
+.landing-sidebar-item:hover .landing-sidebar-meta { color: var(--text-2); }
+
+/* ============ Hero mascot ============
+ * Mounted by web/js/landing.js. State follows the pipeline: idle by
+ * default, working during the build, success on completion, error on
+ * pipeline_failed. */
+.landing-mascot {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 10px;
+}
+.landing-mascot .mascot { width: 150px; }
+

@@ -74,12 +74,17 @@
 <!-- Landing hero — visible only when body has class .show-landing -->
 <div id="landing-overlay" class="landing" hidden>
   <div class="landing-bg" aria-hidden="true"></div>
-  <main class="landing-hero">
+  <div class="landing-shell">
+    <aside class="landing-sidebar" id="landingSidebar" hidden aria-label="Réparations récentes">
+      <header class="landing-sidebar-head">
+        <h2 class="landing-sidebar-title">Récents</h2>
+        <span class="landing-sidebar-count mono" id="landingSidebarCount"></span>
+      </header>
+      <ol class="landing-sidebar-list" id="landingSidebarList"></ol>
+    </aside>
+    <main class="landing-hero">
+    <div class="landing-mascot" id="landingMascot" aria-hidden="true"></div>
     <div class="landing-mark">
-      <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor"
-           stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M13 2L3 14h7l-1 8 11-13h-7z" fill="currentColor" stroke="none"/>
-      </svg>
       <span>Wrench Board</span>
     </div>
     <h1 class="landing-title">Ton assistant de réparation hardware.</h1>
@@ -126,6 +131,7 @@
 
     <div class="landing-status" id="landingStatus" aria-live="polite"></div>
   </main>
+  </div>
 </div>
 
 <!-- ============ TOP BAR ============ -->
