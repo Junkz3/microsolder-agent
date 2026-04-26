@@ -553,8 +553,16 @@ def test_ws_diagnostic_direct_replays_prior_conversation(
         #   boardview.reset_view, history_replay_start, message(user, replay),
         #   message(assistant, replay), history_replay_end. Filter on the
         #   chat-history bracket so this stays robust to other bootstrap
-        #   events.
-        all_frames = [ws.receive_json() for _ in range(8)]
+        #   events. Read until the history_replay_end sentinel rather than a
+        #   hardcoded count — the bootstrap event mix evolves (board_state,
+        #   recovery_state, etc.) and a fixed range() hangs on `receive_json()`
+        #   when fewer events arrive.
+        all_frames: list[dict] = []
+        for _ in range(20):  # safety cap
+            f = ws.receive_json()
+            all_frames.append(f)
+            if f.get("type") == "history_replay_end":
+                break
         frames = [
             f for f in all_frames
             if f.get("type") in (
