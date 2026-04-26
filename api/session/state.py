@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections import OrderedDict
@@ -69,6 +70,12 @@ class SessionState:
     # by device_slug. No explicit invalidator — the pipeline always rewrites the
     # file, so mtime comparison catches every realistic mutation.
     schematic_graph_cache: dict[str, tuple[float, dict[str, Any]]] = field(default_factory=dict)
+    # Files+Vision : capability flag from the frontend's client.capabilities
+    # frame at WS open. Default False — `cam_capture` is gated off until set.
+    has_camera: bool = False
+    # Files+Vision Flow B : per-request capture Futures, keyed by request_id.
+    # Resolved when the frontend posts back client.capture_response.
+    pending_captures: dict[str, asyncio.Future] = field(default_factory=dict)
 
     def invalidate_pack_cache(self, device_slug: str) -> None:
         """Drop the cached pack AND all derived component results for `device_slug`.
