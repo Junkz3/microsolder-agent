@@ -9,12 +9,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import __version__
+from api.agent.macros import macro_path_for
 from api.board.router import router as board_router
 from api.config import get_settings
 from api.logging_setup import configure_logging
@@ -75,6 +76,40 @@ app.include_router(profile_router)
 async def health() -> JSONResponse:
     """Liveness probe."""
     return JSONResponse({"status": "ok", "version": __version__})
+
+
+_MACRO_MIME = {
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".webp": "image/webp",
+}
+
+
+@app.get("/api/macros/{slug}/{repair_id}/{filename}")
+async def get_macro(slug: str, repair_id: str, filename: str) -> FileResponse:
+    """Serve a stored macro image for chat replay rendering.
+
+    Both Flow A (tech upload) and Flow B (agent cam_capture) write under
+    `memory/{slug}/repairs/{repair_id}/macros/`. This route resolves
+    `image_ref.path` references stored in `messages.jsonl` so the frontend
+    can re-render image bubbles when the chat history reloads.
+
+    Path validation delegates to `api.agent.macros.macro_path_for` which
+    blocks traversal (`..`, `/`, leading dot, escape via resolve()).
+    """
+    settings = get_settings()
+    try:
+        path = macro_path_for(
+            memory_root=Path(settings.memory_root),
+            slug=slug, repair_id=repair_id, filename=filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="macro not found")
+    media_type = _MACRO_MIME.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type)
 
 
 _VALID_TIERS = {"fast", "normal", "deep"}
