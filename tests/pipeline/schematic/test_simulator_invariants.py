@@ -282,10 +282,18 @@ def _build_observations_from_timeline(timeline, graph: ElectricalGraph) -> Obser
             if st == "shorted" and label not in state_rails:
                 state_rails[label] = "shorted"
             elif st == "degraded" and label not in state_rails:
+                # Project a degraded rail to "shorted" when the failure mode is
+                # one a tech reports as rail-low/short. Two cases:
+                # (a) leaky decoupling cap on the rail (cap state == degraded);
+                # (b) regulator IC running low (rail.source_refdes is the
+                #     failed IC — captured here via the rail simply being
+                #     degraded with no other producer; matches the
+                #     regulating_low IC mode).
                 rail = graph.power_rails.get(label)
-                if rail and degraded_comps.intersection(rail.decoupling or []):
-                    # A leaky decoupling cap pulls its rail's voltage low; the
-                    # tech sees a low/shorted rail, not a "degraded" abstraction.
+                if rail and (
+                    degraded_comps.intersection(rail.decoupling or [])
+                    or rail.source_refdes is not None
+                ):
                     state_rails[label] = "shorted"
     return Observations(state_comps=state_comps, state_rails=state_rails)
 
@@ -536,17 +544,24 @@ def test_inv8_round_trip_top5_recall(graph: ElectricalGraph, all_pertinent_pairs
         mode_aliases = {mode}
         if mode in ("regulating_low", "dead"):
             mode_aliases |= {"dead", "anomalous"}
-        if mode == "leaky_short":
+        if mode in ("leaky_short", "regulating_low"):
+            # Both project to a "rail short" symptom on the bench.
             mode_aliases |= {"short"}
         # For a leaky decoupling cap, every sibling cap on the same rail is a
         # legitimate diagnostic candidate — a tech who reads "rail PP1V8 short"
         # measures each decoupling cap on it; whichever one is found leaky
-        # is the fix. The hypothesizer tied them at the same score, so accept
+        # is the fix. The hypothesizer ties them at the same score, so accept
         # any sibling-on-same-rail in top5 with a short mode as a valid match.
+        # Same logic for an IC `regulating_low`: any cap on the IC's sourced
+        # rails is a legitimate first-measurement candidate.
         valid_refdes = {refdes}
         if mode == "leaky_short":
             for rail in graph.power_rails.values():
                 if refdes in (rail.decoupling or []):
+                    valid_refdes.update(rail.decoupling or [])
+        elif mode == "regulating_low":
+            for rail in graph.power_rails.values():
+                if rail.source_refdes == refdes:
                     valid_refdes.update(rail.decoupling or [])
         in_top5 = any(r in valid_refdes and m in mode_aliases for r, m in top5)
         if in_top5:
