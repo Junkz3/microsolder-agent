@@ -108,11 +108,16 @@ def test_repairs_endpoint_empty_rules_pack_fires_expand(memory_root, client):
     assert body["matched_rule_id"] is None
     m_pipeline.assert_not_called()
     # expand_pack was fired in background — allow the task to run.
+    # Py3.12: get_event_loop() raises when no loop is set on the main
+    # thread (other tests in the suite close their loops, leaving the
+    # thread bare); spin up a fresh one to drive the sleep.
     import asyncio
 
-    loop = asyncio.get_event_loop()
-    # Give the created_task a tick to execute.
-    loop.run_until_complete(asyncio.sleep(0.05))
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(asyncio.sleep(0.05))
+    finally:
+        loop.close()
     m_expand.assert_called_once()
     # Repair record persisted regardless.
     assert body["repair_id"]
@@ -259,11 +264,17 @@ def test_repairs_branch_full_when_pack_absent(memory_root, client):
             "/pipeline/repairs",
             json={"device_label": "Brand New Device", "symptom": "screen is dark on power-on"},
         )
-    # Give the background task a tick to run.
+    # Give the background task a tick to run. Py3.12: see note in
+    # test_repairs_endpoint_empty_rules_pack_fires_expand — fresh loop
+    # to avoid `RuntimeError: no current event loop` under suite-level
+    # state pollution.
     import asyncio
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(asyncio.sleep(0.05))
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(asyncio.sleep(0.05))
+    finally:
+        loop.close()
 
     assert res.status_code == 200
     body = res.json()
@@ -302,10 +313,15 @@ def test_repairs_branch_expand_when_pack_complete_and_symptom_uncovered(memory_r
             "/pipeline/repairs",
             json={"device_label": "Demo Pi", "symptom": "USB port delivers no 5V"},
         )
+    # Py3.12 fresh loop — see note in
+    # test_repairs_endpoint_empty_rules_pack_fires_expand.
     import asyncio
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(asyncio.sleep(0.05))
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(asyncio.sleep(0.05))
+    finally:
+        loop.close()
 
     body = res.json()
     assert body["pipeline_kind"] == "expand"
