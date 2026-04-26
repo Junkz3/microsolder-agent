@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from api.agent.conversation_log import record_session_log
 from api.agent.field_reports import record_field_report
 from api.board.validator import suggest_similar
 from api.session.state import SessionState
@@ -214,6 +215,43 @@ async def mb_record_finding(
         mechanism=mechanism,
         notes=notes,
         session_id=session_id,
+        memory_root=memory_root,
+    )
+
+
+async def mb_record_session_log(
+    *,
+    client,  # AsyncAnthropic | None
+    device_slug: str,
+    repair_id: str,
+    conv_id: str,
+    symptom: str,
+    outcome: str,
+    memory_root: Path,
+    tested: list[dict[str, str]] | None = None,
+    hypotheses: list[dict[str, str]] | None = None,
+    findings: list[str] | None = None,
+    next_steps: str | None = None,
+    lesson: str | None = None,
+) -> dict[str, Any]:
+    """Write a per-conversation narrative log for cross-repair recall.
+
+    Per-conv idempotent: re-call on the same (repair_id, conv_id) overwrites.
+    JSON-first to `memory/{slug}/conversation_log/{repair}_{conv}.md`,
+    flag-gated mirror to MA at `/conversation_log/{repair}_{conv}.md`.
+    """
+    return await record_session_log(
+        client=client,
+        device_slug=device_slug,
+        repair_id=repair_id,
+        conv_id=conv_id,
+        symptom=symptom,
+        outcome=outcome,
+        tested=tested,
+        hypotheses=hypotheses,
+        findings=findings,
+        next_steps=next_steps,
+        lesson=lesson,
         memory_root=memory_root,
     )
 

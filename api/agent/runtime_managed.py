@@ -731,6 +731,23 @@ async def _dispatch_tool(
             notes=payload.get("notes"),
             session_id=session_id,
         )
+    if name == "mb_record_session_log":
+        from api.agent.tools import mb_record_session_log as _mb_session_log
+
+        return await _mb_session_log(
+            client=client,
+            device_slug=device_slug,
+            repair_id=repair_id or "",
+            conv_id=conv_id or "",
+            symptom=payload.get("symptom", ""),
+            outcome=payload.get("outcome", "unresolved"),
+            memory_root=memory_root,
+            tested=payload.get("tested"),
+            hypotheses=payload.get("hypotheses"),
+            findings=payload.get("findings"),
+            next_steps=payload.get("next_steps"),
+            lesson=payload.get("lesson"),
+        )
     if name == "mb_schematic_graph":
         return mb_schematic_graph(
             device_slug=device_slug,

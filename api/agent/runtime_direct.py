@@ -230,6 +230,8 @@ async def _run_agent_turn(
                     client,
                     session,
                     session_id=repair_id,
+                    repair_id=repair_id,
+                    conv_id=conv_id,
                 )
             # Tools may return either `event` (single) for atomic ops or
             # `events` (list) for composites like bv_scene. Both paths fan
@@ -493,6 +495,8 @@ async def _dispatch_mb_tool(
     client: AsyncAnthropic,
     session: SessionState,
     session_id: str | None = None,
+    repair_id: str | None = None,
+    conv_id: str | None = None,
 ) -> dict:
     """Run one of the mb_* memory-bank tools. Passes `session` so mb_get_component can aggregate."""
     if name == "mb_get_component":
@@ -521,6 +525,23 @@ async def _dispatch_mb_tool(
             mechanism=payload.get("mechanism"),
             notes=payload.get("notes"),
             session_id=session_id,
+        )
+    if name == "mb_record_session_log":
+        from api.agent.tools import mb_record_session_log as _mb_session_log
+
+        return await _mb_session_log(
+            client=client,
+            device_slug=device_slug,
+            repair_id=repair_id or session_id or "",
+            conv_id=conv_id or "",
+            symptom=payload.get("symptom", ""),
+            outcome=payload.get("outcome", "unresolved"),
+            memory_root=memory_root,
+            tested=payload.get("tested"),
+            hypotheses=payload.get("hypotheses"),
+            findings=payload.get("findings"),
+            next_steps=payload.get("next_steps"),
+            lesson=payload.get("lesson"),
         )
     if name == "mb_schematic_graph":
         return mb_schematic_graph(

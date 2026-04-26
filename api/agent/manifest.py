@@ -75,6 +75,90 @@ MB_TOOLS: list[dict] = [
     },
     {
         "type": "custom",
+        "name": "mb_record_session_log",
+        "description": (
+            "Write a narrative summary of THIS conversation to the device's "
+            "cross-repair log so future sessions on the same device can grep "
+            "what was tested / hypothesised / concluded. Distinct from "
+            "mb_record_finding (component-grain, only on confirmed cause): "
+            "this is conversation-grain and should be called when wrapping "
+            "up — user pauses, fix is confirmed, escalates, or session ends "
+            "without conclusion. Idempotent on (repair_id, conv_id): "
+            "re-calls overwrite. Mirrored to "
+            "/mnt/memory/wrench-board-{slug}/conversation_log/."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symptom": {
+                    "type": "string",
+                    "description": "1-line restatement of the user-reported symptom that drove this session.",
+                },
+                "outcome": {
+                    "type": "string",
+                    "enum": ["resolved", "unresolved", "paused", "escalated"],
+                    "description": (
+                        "resolved = fix confirmed; unresolved = ended without "
+                        "conclusion; paused = user will resume; escalated = "
+                        "beyond bench scope (board-replace, vendor RMA)."
+                    ),
+                },
+                "tested": {
+                    "type": "array",
+                    "description": "Probes/inspections done. Empty list OK.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "description": "'rail:<label>' | 'comp:<refdes>' | 'pin:<refdes>:<pin>'",
+                            },
+                            "result": {
+                                "type": "string",
+                                "description": "Free-form short verdict: 'normal', 'dead', '0V', 'shorted', 'open', 'hot', 'noisy', '3.27V (nom 3.30V)', …",
+                            },
+                        },
+                        "required": ["target", "result"],
+                    },
+                },
+                "hypotheses": {
+                    "type": "array",
+                    "description": "Suspect refdes considered during the session, with verdict.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "refdes": {"type": "string"},
+                            "verdict": {
+                                "type": "string",
+                                "enum": ["confirmed", "rejected", "inconclusive"],
+                            },
+                            "evidence": {
+                                "type": "string",
+                                "description": "One short sentence — the measurement or reasoning that drove the verdict.",
+                            },
+                        },
+                        "required": ["refdes", "verdict"],
+                    },
+                },
+                "findings": {
+                    "type": "array",
+                    "description": "report_id values returned by mb_record_finding during this session — link them so the narrative cross-references the canonical findings.",
+                    "items": {"type": "string"},
+                },
+                "next_steps": {
+                    "type": "string",
+                    "description": "If outcome=unresolved or paused: what the next session should pick up.",
+                },
+                "lesson": {
+                    "type": "string",
+                    "description": "One-line takeaway for future repairs on this device. Most useful field for grep-based recall.",
+                },
+            },
+            "required": ["symptom", "outcome"],
+        },
+    },
+    {
+        "type": "custom",
         "name": "mb_schematic_graph",
         "description": (
             "Interrogate the compiled electrical graph (rails, ICs, enable "
@@ -915,7 +999,7 @@ Device courant : {device_slug}.
 {technician_block}
 
 Capabilities for this session:
-  - memory bank ✅ (mb_get_component, mb_get_rules_for_symptoms, mb_record_finding, mb_expand_knowledge)
+  - memory bank ✅ (mb_get_component, mb_get_rules_for_symptoms, mb_record_finding, mb_record_session_log, mb_expand_knowledge)
   - profile ✅ (profile_get, profile_check_skills, profile_track_skill)
   - filesystem ✅ (read, write, edit, grep, glob — for the /mnt/memory/ mounts)
   - boardview {boardview_status}

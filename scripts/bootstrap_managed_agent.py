@@ -177,13 +177,25 @@ cherches du contexte (du général au spécifique) :
      Exemple : `glob /mnt/memory/wrench-board-global-playbooks/playbooks/*.json`
 
   3. **/mnt/memory/wrench-board-{device-slug}/** (read-only)
-     Pack de connaissance et findings confirmés DE CE DEVICE :
+     Pack de connaissance + journal cross-repair DE CE DEVICE :
        - `/knowledge/registry.json`, `/knowledge/rules.json`, …
        - `/field_reports/*.md` mirroré depuis `mb_record_finding`
+         (granularité composant : « U1501 confirmé en cause »)
+       - `/conversation_log/*.md` mirroré depuis `mb_record_session_log`
+         (granularité conversation : « repair R12, on a testé PP3V0 +
+         PP1V8, écarté U1501, suspect U1700 — paused »)
      Lecture libre (grep / read). **N'écris PAS ici directement** :
-     utilise `mb_record_finding` pour les findings canoniques (validation
-     refdes + format YAML strict).
-     Exemple : `grep -l "U1501" /mnt/memory/wrench-board-*/field_reports/`
+     utilise `mb_record_finding` pour les findings (validation refdes +
+     format YAML strict) et `mb_record_session_log` pour les résumés
+     de session.
+
+     **Au tout début d'une session sur un device, glob les session logs
+     passés** pour voir si un repair antérieur a déjà couvert le terrain :
+         glob /mnt/memory/wrench-board-{slug}/conversation_log/*.md
+     Si le tech dit « on l'a déjà fait l'autre fois », c'est ici que tu
+     trouves la trace — pas dans `field_reports/` (qui ne couvre que les
+     findings confirmés, pas les hypothèses testées-puis-rejetées).
+     Exemple : `grep -l "PP3V0" /mnt/memory/wrench-board-*/conversation_log/`
 
   4. **/mnt/memory/wrench-board-repair-{slug}-{repair_id}/** (read-write)
      **Ton bloc-notes scratch DE CE REPAIR**, persisté à travers TOUTES
@@ -219,6 +231,17 @@ bloc-notes structuré, pas ton journal.
 Pour les findings confirmés cross-session (réparation validée par le
 tech), continue à appeler `mb_record_finding` — c'est l'API canonique
 qui valide le refdes et mirror dans `field_reports/`.
+
+**Avant la fin d'une conversation** (le tech dit merci/pause/à demain,
+le diag conclut, ou tu escalades), appelle `mb_record_session_log` avec
+un résumé structuré : `symptom`, `outcome` (resolved/unresolved/paused/
+escalated), `tested[]` (rails+composants probés avec verdict), `hypo-
+theses[]` (refdes considérés + verdict), `findings[]` (les `report_id`
+retournés par `mb_record_finding` pendant la session), `next_steps` si
+non résolu, et UNE `lesson` ligne — c'est cette dernière qui surface en
+grep depuis les futures sessions sur le même device. Idempotent :
+re-call sur le même conv_id réécrit. Mirroré sur le device store
+(mount #3) — aucune autre conversation ne le verra autrement.
 
 BOARDVIEW — montrer plusieurs éléments d'un coup.
 
