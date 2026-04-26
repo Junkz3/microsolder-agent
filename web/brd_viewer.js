@@ -1,7 +1,14 @@
 // Board fixture selection. Reads `?device=<slug>` first (matches the WS
 // device_slug the backend uses) so navigating from a repair card stays in
-// sync, then falls back to `?board=<slug>` (legacy dev override). Unknown
-// slugs fall back to DEFAULT_BOARD.
+// sync, then falls back to `?board=<slug>` (legacy dev override).
+//
+// Behaviour:
+//   - No slug at all in the URL  → DEFAULT_BOARD (dev/local mode).
+//   - Explicit slug, in fixtures → that fixture.
+//   - Explicit slug, NOT in      → null  (caller renders an empty-state
+//     fixtures                     instead of silently showing the wrong
+//                                  device's PCB — that fallback was the
+//                                  source of "iPhone 13 shows MNT board").
 const BOARD_FIXTURES = {
   // Backend slug (same string used by /ws/diagnostic/{device_slug}).
   'mnt-reform-motherboard': '/boards/mnt-reform-motherboard.kicad_pcb',
@@ -14,13 +21,40 @@ const BOARD_FIXTURES = {
   'whitequark':             '/boards/whitequark-example.brd',
 };
 const DEFAULT_BOARD = 'mnt-reform-motherboard';
-function resolveBoardUrl() {
+function resolveBoardSlug() {
   const qs = new URLSearchParams(window.location.search);
-  const slug = qs.get('device') || qs.get('board');
-  return BOARD_FIXTURES[slug] || BOARD_FIXTURES[DEFAULT_BOARD];
+  return qs.get('device') || qs.get('board') || null;
 }
 
-const BRD_URL  = resolveBoardUrl();
+// Probe the backend boardview endpoint for this slug. Returns the URL if
+// the server has a file on disk (active pin / board_assets / uploads),
+// or null on 404 / network error. Done as HEAD so we don't pay the
+// 16MB transfer just to test for existence.
+async function probeBackendBoardview(slug) {
+  if (!slug) return null;
+  const url = `/pipeline/packs/${encodeURIComponent(slug)}/boardview`;
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    if (res.ok) return url;
+  } catch (_) { /* fall through to fixtures */ }
+  return null;
+}
+
+// Resolve order:
+//   - No slug in URL  → DEFAULT_BOARD (dev/local mode)
+//   - Backend has a file for the slug → use it (real uploads in memory/)
+//   - Slug matches a hardcoded fixture → use it (dev fixtures)
+//   - Otherwise → null (loader renders the empty-state)
+async function resolveBoardUrl() {
+  const slug = resolveBoardSlug();
+  if (!slug) return BOARD_FIXTURES[DEFAULT_BOARD];
+  const backend = await probeBackendBoardview(slug);
+  if (backend) return backend;
+  return BOARD_FIXTURES[slug] || null;
+}
+
+let BRD_URL = null;          // populated by load() before the first fetch
+const BRD_SLUG = resolveBoardSlug();
 const PARSE_URL = '/api/board/parse';
 
 const state = {
@@ -1326,6 +1360,23 @@ function renderError(root, detail) {
     </div>`;
 }
 
+// Empty-state — no boardview fixture exists for the current ?device= slug.
+// Shown instead of silently falling back to a wrong device's PCB. Reuses
+// the .error-card chrome (same dark-bg + centered text grammar) so styling
+// stays consistent with the existing error path; the copy explains how to
+// upload one.
+function renderEmpty(root, slug) {
+  const code = t('brd.empty.code');
+  const msg  = slug
+    ? t('brd.empty.msg_with_slug', { slug })
+    : t('brd.empty.msg_no_slug');
+  root.innerHTML = `
+    <div class="error-card">
+      <div class="ec-code">${code}</div>
+      <div class="ec-msg">${msg}</div>
+    </div>`;
+}
+
 // --- main canvas setup ---
 function mountCanvas(containerEl, board) {
   containerEl.innerHTML = '';
@@ -1454,12 +1505,35 @@ export async function initBoardview(containerEl) {
   }
   if (!containerEl) return;
 
+  // Late URL resolution — async because we probe the backend boardview
+  // endpoint (memory/{slug}/uploads/) before falling back to the
+  // hardcoded BOARD_FIXTURES. Done here (not at module load) so the
+  // initial empty-state render isn't blocked on a network round-trip.
+  if (BRD_URL === null) {
+    BRD_URL = await resolveBoardUrl();
+  }
+
+  // Still null → no fixture, no upload, no canonical asset for this slug.
+  // Render empty-state. The user can upload a boardview from the repair
+  // page; reload then reveals the new file via the backend endpoint.
+  if (BRD_URL === null) {
+    renderEmpty(containerEl, BRD_SLUG);
+    return;
+  }
+
   renderSkeleton(containerEl);
 
   let blob;
+  let serverFilename = null;
   try {
     const res = await fetch(BRD_URL);
     if (!res.ok) throw { detail: 'FETCH_FAILED', message: t('brd.error.fetch_failed_msg', { status: res.status, url: BRD_URL }) };
+    // Pull the filename out of Content-Disposition when the backend
+    // boardview endpoint serves it — the URL itself
+    // (`/pipeline/packs/{slug}/boardview`) carries no extension.
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = /filename="([^"]+)"/.exec(cd);
+    if (m) serverFilename = m[1];
     blob = await res.blob();
   } catch (err) {
     renderError(containerEl, err.detail ? err : { detail: 'FETCH_FAILED', message: String(err) });
@@ -1468,8 +1542,9 @@ export async function initBoardview(containerEl) {
 
   // Preserve the original filename (extension drives parser dispatch in
   // the backend — .kicad_pcb must not become .brd here or content-sniffing
-  // will route to the wrong parser).
-  const filename = BRD_URL.split('/').pop() || 'upload.brd';
+  // will route to the wrong parser). Prefer the server-supplied name when
+  // present; otherwise fall back to the URL basename (works for fixtures).
+  const filename = serverFilename || BRD_URL.split('/').pop() || 'upload.brd';
   const form = new FormData();
   form.append('file', blob, filename);
 

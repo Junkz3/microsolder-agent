@@ -40,7 +40,7 @@ import { mountMascot, setMascotState } from './mascot.js';
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;  // 5MB raw, mirrors backend cap
 
 let ws = null;
-let currentTier = "fast";
+let currentTier = "deep";
 // Cached <svg.mascot> mounted into #llmMascot at panel-fragment init time.
 // `setPanelMascot()` is the single chokepoint for animating it from WS events
 // and form submission — null-safe when the fragment hasn't loaded yet.
@@ -60,8 +60,8 @@ function setPanelMascot(state) {
 // True once the tech has explicitly chosen a tier this page-load (clicked
 // the popover, or any path that calls switchTier). Until that happens,
 // session_ready may auto-realign currentTier with the resumed conv's
-// preferred tier — opening a Sonnet conv shouldn't silently land on its
-// almost-empty Haiku thread because the URL default was `fast`.
+// preferred tier — opening a Sonnet/Haiku conv shouldn't silently land on
+// its almost-empty Opus thread because the URL default was `deep`.
 let userPickedTier = false;
 // Multi-conversation state. `currentConvId` is captured from session_ready.
 // `conversationsCache` backs the popover render. `pendingConvParam` is the
@@ -1217,6 +1217,19 @@ function closePanel() {
   el("llmToggle").classList.remove("on");
 }
 
+// Force-close the chat panel and tear down the live WS when the conversation
+// it points at has just been deleted from the dashboard. Prevents the panel
+// from sitting on a dead conv_id and trying to send to a now-404 session.
+export function closePanelIfConv(convId) {
+  if (!convId || convId !== currentConvId) return;
+  if (ws && ws.readyState <= 1) {
+    try { ws.close(); } catch (_) { /* ignore */ }
+  }
+  ws = null;
+  currentConvId = null;
+  if (el("llmPanel").classList.contains("open")) closePanel();
+}
+
 function togglePanel() {
   if (el("llmPanel").classList.contains("open")) closePanel();
   else openPanel();
@@ -1275,6 +1288,41 @@ async function loadConversations() {
   }
 }
 
+async function deleteConvFromPanel(convId) {
+  const rid = currentRepairId();
+  if (!rid || !convId) return;
+  let res;
+  try {
+    res = await fetch(
+      `/pipeline/repairs/${encodeURIComponent(rid)}/conversations/${encodeURIComponent(convId)}`,
+      { method: "DELETE" },
+    );
+  } catch (_) {
+    logSys(t('chat.conv.delete_failed'));
+    return;
+  }
+  if (!res.ok) {
+    logSys(t('chat.conv.delete_failed'));
+    return;
+  }
+  const wasCurrent = convId === currentConvId;
+  conversationsCache = conversationsCache.filter(c => c.id !== convId);
+
+  if (wasCurrent) {
+    if (ws && ws.readyState <= 1) {
+      try { ws.close(); } catch (_) { /* ignore */ }
+    }
+    ws = null;
+    currentConvId = null;
+    const fallback = conversationsCache[0]?.id || "new";
+    pendingConvParam = fallback;
+    if (el("llmPanel").classList.contains("open")) {
+      connect();
+    }
+  }
+  await loadConversations();
+}
+
 function renderConvItems() {
   const list = el("llmConvList");
   const label = el("llmConvLabel");
@@ -1287,18 +1335,21 @@ function renderConvItems() {
   const activeIdx = Math.max(0, conversationsCache.findIndex(c => c.id === currentConvId));
   label.textContent = t('chat.conv.label_count', { idx: activeIdx + 1, total: conversationsCache.length });
   conversationsCache.forEach((c, idx) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "conv-item" + (c.id === currentConvId ? " active" : "");
-    btn.dataset.convId = c.id;
-    const tier = (c.tier || "fast").toLowerCase();
+    const row = document.createElement("div");
+    row.className = "conv-item" + (c.id === currentConvId ? " active" : "");
+    row.dataset.convId = c.id;
+    const tier = (c.tier || "deep").toLowerCase();
     const fallbackTitle = t('chat.conv.default_title', { idx: idx + 1 });
     const title = escapeHTML((c.title || fallbackTitle).slice(0, 80));
     const cost = Number(c.cost_usd || 0);
     const ago = c.last_turn_at ? humanAgo(c.last_turn_at) : t('chat.conv.ago_unknown');
     const turnsCount = c.turns || 0;
     const turnsLabel = t(turnsCount === 1 ? 'chat.conv.turns_one' : 'chat.conv.turns_many', { n: turnsCount });
-    btn.innerHTML =
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "conv-item-open";
+    open.innerHTML =
       `<span class="conv-item-head">` +
         `<span class="conv-item-tier t-${tier}">${tier.toUpperCase()}</span>` +
         `<span class="conv-item-title">${title}</span>` +
@@ -1310,12 +1361,31 @@ function renderConvItems() {
         `<span class="conv-item-sep">·</span>` +
         `<span>${escapeHTML(ago)}</span>` +
       `</span>`;
-    btn.addEventListener("click", () => {
+    open.addEventListener("click", () => {
       if (c.id === currentConvId) { closeConvPopover(); return; }
       switchConv(c.id);
       closeConvPopover();
     });
-    list.appendChild(btn);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "conv-item-delete";
+    del.title = t('chat.conv.delete_aria');
+    del.setAttribute("aria-label", t('chat.conv.delete_aria'));
+    del.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 9a1 1 0 001 1h3a1 1 0 001-1l.5-9"/>' +
+      '<path d="M7 7v5M9 7v5"/></svg>';
+    del.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!confirm(t('chat.conv.delete_confirm'))) return;
+      await deleteConvFromPanel(c.id);
+    });
+
+    row.appendChild(open);
+    row.appendChild(del);
+    list.appendChild(row);
   });
 }
 

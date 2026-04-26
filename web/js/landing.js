@@ -165,6 +165,7 @@ export function showLanding() {
     setLandingMascot("idle");
   }
   loadAndRenderSidebar();
+  loadPacksForSuggest();
   setTimeout(() => document.getElementById("landingDevice")?.focus(), 50);
 }
 
@@ -285,10 +286,15 @@ async function onSubmit(ev) {
   resetTimeline();
 
   try {
+    // If the tech picked a known device from the autocomplete, send the
+    // canonical slug so the backend skips re-slugification and lands on
+    // the right pack — sidesteps near-but-not-identical spellings.
+    const payload = { device_label: device, symptom };
+    if (_selectedDeviceSlug) payload.device_slug = _selectedDeviceSlug;
     const res = await fetch("/pipeline/repairs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_label: device, symptom }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
@@ -326,18 +332,20 @@ async function onSubmit(ev) {
       return;
     }
 
-    // Branch 3 — pack exists but the symptom is new: targeted enrich
-    // (~3 min). Show a simplified "enrichment" timeline rather than the
-    // full 5-phase pipeline layout.
+    // Branch 3 — pack exists but the symptom is new: the backend kicked
+    // a real targeted expand in background. We play the same fake-timeline
+    // as branch 2 (pack is on disk, agent works from existing rules even
+    // if the expand hasn't finished). The expand runs silently — harmless.
     if (repair.pipeline_kind === "expand") {
       setStatus(
-        t("landing.status.expand", { device: repair.device_label }),
+        t("landing.status.device_known", { device: repair.device_label }),
         STATUS_NEUTRAL,
       );
-      showTimeline();
-      setTimelineTitle(t("landing.timeline.title_expand", { device: repair.device_label }));
-      setExpandMode();
-      subscribeToProgress(slug, rid);
+      playCachedPipelineTimeline(slug, rid, repair.device_label || slug)
+        .catch((err) => {
+          console.warn("[landing] cached timeline (expand) failed, falling back", err);
+          goToWorkspace(rid, slug, "#home");
+        });
       return;
     }
 
@@ -548,6 +556,9 @@ function onChipClick(ev) {
   if (!btn) return;
   const dev = document.getElementById("landingDevice");
   const sym = document.getElementById("landingSymptom");
+  // Chips don't carry a canonical slug; clearing here prevents a stale
+  // _selectedDeviceSlug from the autocomplete leaking onto a chip submit.
+  _selectedDeviceSlug = null;
   if (dev && btn.dataset.device) dev.value = btn.dataset.device;
   if (sym) {
     // Prefer the i18n key if present so the chip's symptom matches the active
@@ -560,9 +571,213 @@ function onChipClick(ev) {
   sym?.focus();
 }
 
+// ============================================================
+// Device autocomplete — surfaces devices already known under the device
+// input as the technician types. Sourced from /pipeline/taxonomy so the
+// list is deduplicated to ONE entry per (brand, model) — no
+// "iPhone X" / "iPhone X logic board" / "iPhone X bench" noise.
+// Cached for the session in `_devicesCache`. Keyboard nav: ↑/↓/Enter/Esc.
+//
+// At selection, we store the canonical slug of the chosen pack on the
+// form so onSubmit can pass `device_slug` to the backend explicitly,
+// guaranteeing a cache hit on the right pack rather than re-slugifying
+// the label and risking a miss on a near-but-not-identical spelling.
+// ============================================================
+
+let _devicesCache = null;
+let _suggestActiveIdx = -1;
+let _selectedDeviceSlug = null;
+
+function _escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Flatten a TaxonomyTree into a plain list with one entry per
+// (brand, model) — picks the most-complete pack as the canonical
+// representative. Uncategorized packs become individual entries.
+function _flattenTaxonomy(tree) {
+  const out = [];
+  const brands = (tree && tree.brands) || {};
+  for (const [brand, models] of Object.entries(brands)) {
+    for (const [model, packs] of Object.entries(models || {})) {
+      if (!Array.isArray(packs) || packs.length === 0) continue;
+      // Prefer a complete pack; fall back to the first one.
+      const canonical = packs.find((p) => p && p.complete) || packs[0];
+      out.push({
+        label: model,
+        subtitle: brand,
+        slug: canonical.device_slug,
+        device_label: canonical.device_label || model,
+        complete: Boolean(canonical.complete),
+      });
+    }
+  }
+  for (const p of (tree && tree.uncategorized) || []) {
+    if (!p || !p.device_slug) continue;
+    out.push({
+      label: p.device_label || prettifySlug(p.device_slug),
+      subtitle: null,
+      slug: p.device_slug,
+      device_label: p.device_label || prettifySlug(p.device_slug),
+      complete: Boolean(p.complete),
+    });
+  }
+  // Sort: complete first, then alphabetical by label.
+  out.sort((a, b) => {
+    if (a.complete !== b.complete) return a.complete ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+  return out;
+}
+
+async function loadPacksForSuggest() {
+  try {
+    const res = await fetch("/pipeline/taxonomy");
+    if (res.ok) {
+      const tree = await res.json();
+      _devicesCache = _flattenTaxonomy(tree);
+    } else {
+      _devicesCache = [];
+    }
+  } catch (err) {
+    console.warn("[landing] loadPacksForSuggest failed", err);
+    _devicesCache = [];
+  }
+}
+
+function _matchDevices(query) {
+  if (!_devicesCache || _devicesCache.length === 0) return [];
+  const q = (query || "").trim().toLowerCase();
+  if (q.length < 1) return [];
+  return _devicesCache
+    .filter((d) => {
+      const label = (d.label || "").toLowerCase();
+      const sub = (d.subtitle || "").toLowerCase();
+      const slug = (d.slug || "").toLowerCase();
+      return label.includes(q) || sub.includes(q) || slug.includes(q);
+    })
+    .slice(0, 6);
+}
+
+function _renderSuggest(query) {
+  const box = document.getElementById("landingSuggest");
+  if (!box) return;
+  const matches = _matchDevices(query);
+  if (matches.length === 0) {
+    box.hidden = true;
+    box.innerHTML = "";
+    _suggestActiveIdx = -1;
+    return;
+  }
+  const tFn = window.t || ((k) => k);
+  const draftLabel = tFn("landing.suggest.draft");
+  box.innerHTML = matches.map((d, i) => {
+    const safeLabel = _escapeHtml(d.label);
+    const safeSub = d.subtitle ? _escapeHtml(d.subtitle) : "";
+    const safeSlug = _escapeHtml(d.slug);
+    const iconClass = d.complete ? "is-complete" : "is-partial";
+    const iconText = d.complete ? "✓" : "•";
+    const meta = d.complete ? safeSub : (safeSub ? `${safeSub} · ${draftLabel}` : draftLabel);
+    // data-label = the short model name (e.g. "iPhone 12") that lands in
+    // the input on selection. NOT d.device_label, which is the raw
+    // registry label (e.g. "Apple iPhone 12 logic board") and would
+    // pollute the input with brand + form-factor noise.
+    return `<div class="landing-suggest-item" role="option" `
+      + `data-slug="${safeSlug}" data-label="${safeLabel}" data-index="${i}">`
+      + `<span class="landing-suggest-icon ${iconClass}" aria-hidden="true">${iconText}</span>`
+      + `<span class="landing-suggest-label">${safeLabel}</span>`
+      + `<span class="landing-suggest-meta">${meta}</span>`
+      + `</div>`;
+  }).join("");
+  box.hidden = false;
+  _suggestActiveIdx = -1;
+}
+
+function _setSuggestActive(idx) {
+  const items = document.querySelectorAll(".landing-suggest-item");
+  if (items.length === 0) return;
+  const clamped = Math.max(0, Math.min(idx, items.length - 1));
+  items.forEach((el, i) => el.classList.toggle("is-active", i === clamped));
+  _suggestActiveIdx = clamped;
+  items[clamped].scrollIntoView({ block: "nearest" });
+}
+
+function _selectSuggest(label, slug) {
+  const dev = document.getElementById("landingDevice");
+  const sym = document.getElementById("landingSymptom");
+  if (dev) dev.value = label;
+  // Pin the canonical slug so onSubmit sends device_slug to the backend
+  // (skips re-slugification of the label and guarantees the cache hit
+  // on the right pack — defends against near-but-not-identical spellings).
+  _selectedDeviceSlug = slug || null;
+  _hideSuggest();
+  if (sym) sym.focus();
+}
+
+function _hideSuggest() {
+  const box = document.getElementById("landingSuggest");
+  if (box) {
+    box.hidden = true;
+    box.innerHTML = "";
+  }
+  _suggestActiveIdx = -1;
+}
+
+function _initSuggest() {
+  const dev = document.getElementById("landingDevice");
+  const box = document.getElementById("landingSuggest");
+  if (!dev || !box) return;
+
+  dev.addEventListener("input", () => {
+    // Free-text editing invalidates the previously-selected slug — the
+    // tech may now be heading toward a different (or unknown) device.
+    _selectedDeviceSlug = null;
+    _renderSuggest(dev.value);
+  });
+
+  dev.addEventListener("focus", () => {
+    if (dev.value && dev.value.length >= 1) _renderSuggest(dev.value);
+  });
+
+  dev.addEventListener("keydown", (ev) => {
+    const items = document.querySelectorAll(".landing-suggest-item");
+    if (items.length === 0) return;
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      _setSuggestActive(_suggestActiveIdx < 0 ? 0 : _suggestActiveIdx + 1);
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      _setSuggestActive(_suggestActiveIdx <= 0 ? items.length - 1 : _suggestActiveIdx - 1);
+    } else if (ev.key === "Enter" && _suggestActiveIdx >= 0) {
+      // Only intercept Enter when the user has explicitly highlighted a
+      // suggestion via arrows. Otherwise let the form submit naturally.
+      ev.preventDefault();
+      const item = items[_suggestActiveIdx];
+      if (item) _selectSuggest(item.dataset.label, item.dataset.slug);
+    } else if (ev.key === "Escape") {
+      _hideSuggest();
+    }
+  });
+
+  // Hide on blur, but with a small delay so a click on a suggestion
+  // (which fires after blur) gets processed first.
+  dev.addEventListener("blur", () => setTimeout(_hideSuggest, 150));
+
+  box.addEventListener("mousedown", (ev) => {
+    // Use mousedown (not click) so it fires before blur on the input.
+    const item = ev.target.closest(".landing-suggest-item");
+    if (item && item.dataset.label) {
+      ev.preventDefault();
+      _selectSuggest(item.dataset.label, item.dataset.slug);
+    }
+  });
+}
+
 export function initLanding() {
   const form = document.getElementById("landingForm");
   if (form) form.addEventListener("submit", onSubmit);
   const chips = document.getElementById("landingChips");
   if (chips) chips.addEventListener("click", onChipClick);
+  _initSuggest();
 }

@@ -143,7 +143,10 @@
       "empty": "No conversation — start a discussion with the agent.",
       "untitled": "Conversation {id}",
       "turns_meta": "{turns} turns · {cost} · {ago}",
-      "new": "+ New conversation"
+      "new": "+ New conversation",
+      "delete_aria": "Delete conversation",
+      "delete_confirm": "Delete this conversation?\nMessage history and the linked agent session will be erased. This cannot be undone.",
+      "delete_failed": "Delete failed — try again."
     },
     "findings": {
       "tag": "field_reports/",

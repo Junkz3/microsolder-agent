@@ -37,7 +37,10 @@
     "ago_hours": "il y a {n} h",
     "ago_days": "il y a {n} j",
     "ago_unknown": "—",
-    "switching": "→ changement de conversation : {id}"
+    "switching": "→ changement de conversation : {id}",
+    "delete_aria": "Supprimer la conversation",
+    "delete_confirm": "Supprimer cette conversation ?\nL'historique des messages et la session agent associée seront effacés. Cette action est irréversible.",
+    "delete_failed": "Échec de la suppression — réessaie."
   },
   "input": {
     "placeholder": "Pose ta question à l'agent… (Enter pour envoyer, Shift+Enter pour un retour à la ligne)",

@@ -143,7 +143,10 @@
       "empty": "Aucune conversation — démarre une discussion avec l'agent.",
       "untitled": "Conversation {id}",
       "turns_meta": "{turns} turns · {cost} · {ago}",
-      "new": "+ Nouvelle conversation"
+      "new": "+ Nouvelle conversation",
+      "delete_aria": "Supprimer la conversation",
+      "delete_confirm": "Supprimer cette conversation ?\nL'historique des messages et la session agent associée seront effacés. Cette action est irréversible.",
+      "delete_failed": "Échec de la suppression — réessaie."
     },
     "findings": {
       "tag": "field_reports/",

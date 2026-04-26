@@ -18,6 +18,13 @@
   padding-left: 300px;
 }
 
+/* When there are no recent repairs, landing.js hides the sidebar
+   (sets `hidden`). Drop the reservation so the hero is centered in
+   the full viewport instead of pushed +150px right of true center. */
+.landing:has(.landing-sidebar[hidden]) {
+  padding-left: 0;
+}
+
 /* The sidebar lives at the viewport's left edge (position: absolute on
    .landing); the .landing-shell wrapper is layout-transparent so the hero
    participates in .landing's centering grid as a direct child. */
@@ -95,8 +102,14 @@
   align-items: stretch;
 }
 .landing-form--stack .landing-submit {
-  align-self: flex-end;
-  padding: 12px 20px;
+  /* Full-width primary CTA in the stack form — visually anchors the
+     hero (matches the inputs above) and reads as a clear next-step
+     instead of a small button floating right of the form. */
+  align-self: stretch;
+  justify-content: center;
+  padding: 14px 20px;
+  font-size: 15px;
+  margin-top: 4px;
 }
 
 .landing-input {
@@ -118,6 +131,87 @@
 }
 
 .landing-input::placeholder { color: var(--text-3); }
+
+/* ============ Device autocomplete ============
+ * Lazy-loaded list of packs already on disk, surfaced under the device
+ * input as the tech types. Glass panel style matching the rest of the
+ * floating overlays (inspector, legend, tooltip — see CLAUDE.md
+ * "Interaction vocabulary"). */
+.landing-input-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.landing-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(20, 32, 48, 0.96);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.landing-suggest[hidden] { display: none; }
+.landing-suggest::-webkit-scrollbar { width: 6px; }
+.landing-suggest::-webkit-scrollbar-track { background: transparent; }
+.landing-suggest::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.landing-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-soft);
+  transition: background .15s;
+}
+.landing-suggest-item:last-child { border-bottom: none; }
+.landing-suggest-item:hover,
+.landing-suggest-item.is-active {
+  background: var(--panel-2);
+}
+
+/* ✓ for complete packs (4 writers present), • for partial.
+   Cyan = component-status semantic accent; amber = the project's warning
+   grammar (see tokens.css / pipeline_progress.css). */
+.landing-suggest-icon {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.landing-suggest-icon.is-complete { color: var(--cyan); }
+.landing-suggest-icon.is-partial  { color: var(--amber); }
+
+.landing-suggest-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.landing-suggest-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
 
 .landing-submit {
   background: var(--cyan);

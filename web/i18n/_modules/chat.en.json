@@ -37,7 +37,10 @@
     "ago_hours": "{n}h ago",
     "ago_days": "{n}d ago",
     "ago_unknown": "—",
-    "switching": "→ switching conversation: {id}"
+    "switching": "→ switching conversation: {id}",
+    "delete_aria": "Delete conversation",
+    "delete_confirm": "Delete this conversation?\nMessage history and the linked agent session will be erased. This cannot be undone.",
+    "delete_failed": "Delete failed — try again."
   },
   "input": {
     "placeholder": "Ask the agent… (Enter to send, Shift+Enter for newline)",

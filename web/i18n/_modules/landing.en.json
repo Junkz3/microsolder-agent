@@ -58,5 +58,9 @@
   },
   "delete": {
     "confirm": "Delete this repair? The conversation and the agent's notes will be permanently erased."
+  },
+  "suggest": {
+    "aria": "Device suggestions",
+    "draft": "draft"
   }
 }

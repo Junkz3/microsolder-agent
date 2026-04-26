@@ -779,15 +779,11 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
 /* Conversations rows ───────────────────────────────────────── */
 .rd-conv-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  align-items: stretch;
+  gap: 0;
   background: var(--bg-2);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
-  text-align: left;
-  cursor: pointer;
   color: var(--text);
   font-family: inherit;
   font-size: 13px;
@@ -795,6 +791,32 @@ body.llm-open .rd-body { grid-template-columns: 1fr; }
 }
 .rd-conv-row:hover { background: var(--panel-2); border-color: var(--cyan); }
 .rd-conv-row.active { border-color: var(--cyan); box-shadow: inset 2px 0 0 var(--cyan); }
+.rd-conv-open {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.rd-conv-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--border-soft);
+  cursor: pointer;
+  color: var(--text-3);
+  transition: color .15s, background .15s;
+}
+.rd-conv-delete:hover { color: var(--amber); background: var(--panel-2); }
 .rd-conv-tier {
   font-family: var(--mono);
   font-size: 10px;

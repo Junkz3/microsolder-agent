@@ -41,17 +41,17 @@
           <circle cx="12" cy="12" r="3"/>
         </svg>
       </button>
-      <button class="llm-tier-chip" id="llmTierChip" data-tier="fast"
+      <button class="llm-tier-chip" id="llmTierChip" data-tier="deep"
               aria-haspopup="menu" aria-expanded="false"
               data-i18n-attr="title:chat.header.tier_title"
               title="Model tier">
-        <span class="tier-label">FAST</span>
+        <span class="tier-label">DEEP</span>
         <svg class="chevron-down" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="llm-tier-popover" id="llmTierPopover" role="menu" hidden>
-        <button role="menuitem" data-tier="fast" class="on" data-i18n="chat.header.tier_fast">Fast · Haiku 4.5</button>
+        <button role="menuitem" data-tier="fast" data-i18n="chat.header.tier_fast">Fast · Haiku 4.5</button>
         <button role="menuitem" data-tier="normal" data-i18n="chat.header.tier_normal">Normal · Sonnet 4.6</button>
-        <button role="menuitem" data-tier="deep" data-i18n="chat.header.tier_deep">Deep · Opus 4.7</button>
+        <button role="menuitem" data-tier="deep" class="on" data-i18n="chat.header.tier_deep">Deep · Opus 4.7</button>
       </div>
       <button class="close-x" id="llmClose"
               data-i18n-attr="aria-label:chat.header.close_aria"

@@ -75,6 +75,11 @@
     "default_msg": "Erreur inconnue",
     "fetch_failed_msg": "HTTP {status} sur {url}"
   },
+  "empty": {
+    "code": "AUCUN BOARDVIEW",
+    "msg_with_slug": "Aucun boardview n'est chargé pour {slug}. Téléverse un fichier .brd / .kicad_pcb / .fz depuis la fiche repair pour activer la vue PCB.",
+    "msg_no_slug": "Aucun boardview chargé. Téléverse un fichier .brd / .kicad_pcb / .fz depuis la fiche repair pour activer la vue PCB."
+  },
   "toolbar": {
     "side_top": "Top",
     "side_bottom": "Bottom",

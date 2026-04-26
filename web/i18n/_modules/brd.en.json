@@ -75,6 +75,11 @@
     "default_msg": "Unknown error",
     "fetch_failed_msg": "HTTP {status} on {url}"
   },
+  "empty": {
+    "code": "NO BOARDVIEW",
+    "msg_with_slug": "No boardview is loaded for {slug}. Upload a .brd / .kicad_pcb / .fz file from the repair page to enable the PCB view.",
+    "msg_no_slug": "No boardview loaded. Upload a .brd / .kicad_pcb / .fz file from the repair page to enable the PCB view."
+  },
   "toolbar": {
     "side_top": "Top",
     "side_bottom": "Bottom",

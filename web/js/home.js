@@ -12,7 +12,7 @@
 
 import { openPipelineProgress } from './pipeline_progress.js';
 import { leaveSession } from './router.js';
-import { openPanel } from './llm.js';
+import { openPanel, closePanelIfConv } from './llm.js';
 import { ICON_CHECK } from './icons.js';
 
 export async function loadTaxonomy() {
@@ -283,6 +283,13 @@ async function refreshDashboardData(slug, rid) {
   ]);
   renderDashboardData(slug, rid, pack, sourcesData);
   renderCapabilities(pack);
+  // After an upload of a schematic_pdf, the backend kicks the vision
+  // pipeline in `asyncio.create_task` but doesn't push WS events for
+  // it. Resume the polling watcher here so the spinner / ETA / final
+  // toast all happen without a manual reload. No-op when (a) a watcher
+  // is already running, (b) no PDF on disk, or (c) electrical_graph
+  // already compiled.
+  maybeAutoResumeBuildWatch(slug, rid, pack);
   renderDashboardPack(pack, slug, rid);
 }
 
@@ -701,6 +708,37 @@ function formatRemaining(sec) {
   return t("home.dashboard.build.remaining_sec", { n: sec });
 }
 
+// Demo cache-hit animation for schematic re-imports. Fired by
+// handleUpload when `has_electrical_graph` was already true BEFORE
+// the POST — typical when the tech re-uploads the same PDF during a
+// demo run. We fake the visible pipeline side (spinner + ETA on
+// Schematic + Electrical cards) for ~12s, then refreshDashboardData
+// syncs reality. Boardview is intentionally NOT covered here:
+// re-import is cheap (no pipeline) and the instant flip is fine.
+async function playFakeIngestTimeline(slug, rid) {
+  const TOTAL_SEC = 12;
+  setCardState("rdCardSchematic", "building");
+  setCardState("rdCardElectrical", "building");
+  // Reuse the real watcher's renderer so the visible chrome
+  // (spinner + ETA text) is identical to a true rebuild.
+  const fakeState = {
+    slug, rid,
+    pageCount: null,
+    remaining: TOTAL_SEC,
+    countdownId: null,
+    pollId: null,
+  };
+  renderBuildIndicators(fakeState);
+  fakeState.countdownId = setInterval(() => {
+    fakeState.remaining = Math.max(0, fakeState.remaining - 1);
+    renderBuildIndicators(fakeState);
+  }, 1000);
+  await new Promise((r) => setTimeout(r, TOTAL_SEC * 1000));
+  clearInterval(fakeState.countdownId);
+  document.querySelectorAll(".rd-build-eta").forEach((el) => el.remove());
+  await refreshDashboardData(slug, rid);
+}
+
 // Auto-resume: if we land on the dashboard while the schematic PDF exists
 // but the electrical graph is missing, a rebuild is in flight from a prior
 // session — start the watcher with no countdown (just polling).
@@ -871,6 +909,20 @@ async function handleUpload(slug, rid, file, kind) {
   const card = document.getElementById(cardId);
   if (card) card.dataset.state = "building";
 
+  // Snapshot `has_electrical_graph` BEFORE the upload — used to detect
+  // a "fake import" (re-upload of a schematic PDF on a device that
+  // already has the derived graph) so the demo plays an animated
+  // rebuild instead of an instant flip. Boardview has no derived
+  // artefact that survives a source delete, and a re-import is cheap
+  // anyway (no pipeline behind it), so we skip the fake path for it.
+  let preExisting = false;
+  if (kind === "schematic_pdf") {
+    try {
+      const pre = await fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null);
+      if (pre) preExisting = Boolean(pre.has_electrical_graph);
+    } catch (_) { /* fall through to normal flow */ }
+  }
+
   const kindLabel = kind === "schematic_pdf"
     ? t("home.toast.kind_schematic")
     : t("home.toast.kind_boardview");
@@ -903,7 +955,14 @@ async function handleUpload(slug, rid, file, kind) {
     showToast("ok",
       t("home.toast.import_done"),
       `${file.name} · ${fmtBytes(file.size)}`);
-    await refreshDashboardData(slug, rid);
+    if (preExisting) {
+      // Demo cache-hit path: backend short-circuits (cache-hashed PDF)
+      // and we simulate ~12s of visible vision-pipeline activity on
+      // the Schematic + Electrical cards before refreshing.
+      await playFakeIngestTimeline(slug, rid);
+    } else {
+      await refreshDashboardData(slug, rid);
+    }
   } catch (err) {
     console.error("upload failed", err);
     showToast("warn",
@@ -936,6 +995,29 @@ function showToast(tone, title, sub) {
   }
 }
 
+async function deleteConversation(rid, convId) {
+  let res;
+  try {
+    res = await fetch(
+      `/pipeline/repairs/${encodeURIComponent(rid)}/conversations/${encodeURIComponent(convId)}`,
+      { method: "DELETE" },
+    );
+  } catch (_) {
+    showToast("warn", t("home.dashboard.convs.delete_failed"));
+    return;
+  }
+  if (!res.ok) {
+    showToast("warn", t("home.dashboard.convs.delete_failed"));
+    return;
+  }
+  closePanelIfConv(convId);
+  const fresh = await fetchJSON(
+    `/pipeline/repairs/${encodeURIComponent(rid)}/conversations`,
+    { conversations: [] },
+  );
+  renderDashboardConvs(fresh.conversations || [], rid);
+}
+
 function renderDashboardConvs(conversations, rid) {
   const body = document.getElementById("rdConvBody");
   const count = document.getElementById("rdConvCount");
@@ -946,8 +1028,7 @@ function renderDashboardConvs(conversations, rid) {
     body.innerHTML = `<div class="rd-block-empty">${escapeHtml(t("home.dashboard.convs.empty"))}</div>`;
   } else {
     for (const c of conversations) {
-      const row = document.createElement("button");
-      row.type = "button";
+      const row = document.createElement("div");
       row.className = "rd-conv-row";
       row.dataset.convId = c.id;
       const tier = (c.tier || "fast").toLowerCase();
@@ -960,13 +1041,36 @@ function renderDashboardConvs(conversations, rid) {
         cost,
         ago,
       });
-      row.innerHTML =
+
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "rd-conv-open";
+      open.innerHTML =
         `<span class="rd-conv-tier t-${tier}">${tier.toUpperCase()}</span>` +
         `<span class="rd-conv-title">${title}</span>` +
         `<span class="rd-conv-meta">${escapeHtml(meta)}</span>`;
-      row.addEventListener("click", () => {
+      open.addEventListener("click", () => {
         openPanel(c.id);  // single connect targeting the right conv
       });
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "rd-conv-delete";
+      del.title = t("home.dashboard.convs.delete_aria");
+      del.setAttribute("aria-label", t("home.dashboard.convs.delete_aria"));
+      del.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 9a1 1 0 001 1h3a1 1 0 001-1l.5-9"/>' +
+        '<path d="M7 7v5M9 7v5"/></svg>';
+      del.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (!confirm(t("home.dashboard.convs.delete_confirm"))) return;
+        await deleteConversation(rid, c.id);
+      });
+
+      row.appendChild(open);
+      row.appendChild(del);
       body.appendChild(row);
     }
   }
