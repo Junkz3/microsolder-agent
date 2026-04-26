@@ -536,6 +536,147 @@ body.llm-open .rd-data-grid-4 { grid-template-columns: repeat(2, 1fr); }
 }
 .rd-data-card.is-dragover::before { background: var(--cyan); }
 
+/* Build watcher — pinned mini status row inside a card while a schematic
+ * recompile runs. Spinner + ETA countdown that decreases each second.
+ * Polling lives in home.js; this is purely the visual surface. */
+.rd-build-eta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 7px 10px;
+  background: color-mix(in oklch, var(--cyan) 8%, var(--bg-2));
+  border: 1px solid color-mix(in oklch, var(--cyan) 35%, var(--border-soft));
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .2px;
+  color: var(--cyan);
+}
+.rd-build-spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.rd-build-spinner svg {
+  width: 14px; height: 14px;
+  stroke: currentColor;
+  fill: none;
+  animation: rd-build-spin 1.1s linear infinite;
+}
+@keyframes rd-build-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.rd-build-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Versioned source list — appended inside a card when 2+ versions exist
+ * for that kind. Active row is locked (radio filled, can't click). Other
+ * rows are clickable; click → PUT /sources/{kind} (handled in home.js). */
+.rd-versions {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rd-versions-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.rd-versions-tag {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.rd-versions-count {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+  padding: 1px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-2);
+}
+.rd-version-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+  width: 100%;
+}
+.rd-version-row:hover:not(:disabled) {
+  border-color: var(--cyan);
+  background: var(--panel-2);
+  color: var(--text);
+}
+.rd-version-row:disabled {
+  cursor: default;
+  opacity: 1;
+  border-color: color-mix(in oklch, var(--emerald) 35%, var(--border-soft));
+  background: color-mix(in oklch, var(--emerald) 6%, var(--bg-2));
+  color: var(--text);
+}
+.rd-version-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-3);
+  flex-shrink: 0;
+  position: relative;
+  background: transparent;
+  transition: border-color .15s, background .15s;
+}
+.rd-version-row:hover:not(:disabled) .rd-version-dot { border-color: var(--cyan); }
+.rd-version-row.is-active .rd-version-dot {
+  border-color: var(--emerald);
+  background: var(--emerald);
+  box-shadow: 0 0 6px color-mix(in oklch, var(--emerald) 60%, transparent);
+}
+.rd-version-row.is-active .rd-version-dot::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--bg-2);
+}
+.rd-version-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .2px;
+  color: var(--text);
+}
+.rd-version-row:not(.is-active) .rd-version-name { color: var(--text-2); }
+.rd-version-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: .3px;
+  flex-shrink: 0;
+}
+
 /* Toast for upload progress / success. */
 .rd-toast {
   position: fixed;

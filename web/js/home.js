@@ -232,19 +232,20 @@ export async function renderRepairDashboard(session) {
   document.querySelector("#homeSection .home-head")?.classList.add("hidden");
 
   // Fetch in parallel — list of Promise results, each tolerates failure.
-  const [repair, convs, pack, findings, taxonomy] = await Promise.all([
+  const [repair, convs, pack, findings, taxonomy, sourcesData] = await Promise.all([
     fetchJSON(`/pipeline/repairs/${encodeURIComponent(rid)}`, null),
     fetchJSON(`/pipeline/repairs/${encodeURIComponent(rid)}/conversations`, { conversations: [] }),
     fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null),
     fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}/findings`, []),
     loadTaxonomy(),
+    fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}/sources`, null),
   ]);
 
   const taxIndex = indexTaxonomyBySlug(taxonomy);
   const taxEntry = taxIndex.get(slug) || null;
 
   renderDashboardHeader(repair, taxEntry, slug, rid);
-  renderDashboardData(slug, rid, pack);
+  renderDashboardData(slug, rid, pack, sourcesData);
   renderCapabilities(pack);
   renderDashboardConvs(convs.conversations || [], rid);
   renderDashboardFindings(findings, rid);
@@ -253,14 +254,18 @@ export async function renderRepairDashboard(session) {
   wireDashboardHandlers();
   wireUploadHandlers(slug, rid);
   wireFixButton(slug, rid);
+  maybeAutoResumeBuildWatch(slug, rid, pack);
 }
 
 // Mid-dashboard re-render after an upload completes — same payload as the
 // initial mount, but we don't touch conversations / findings / timeline
 // because those are unaffected by a boardview/schematic upload.
 async function refreshDashboardData(slug, rid) {
-  const pack = await fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null);
-  renderDashboardData(slug, rid, pack);
+  const [pack, sourcesData] = await Promise.all([
+    fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null),
+    fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}/sources`, null),
+  ]);
+  renderDashboardData(slug, rid, pack, sourcesData);
   renderCapabilities(pack);
   renderDashboardPack(pack, slug, rid);
 }
@@ -329,18 +334,23 @@ function fmtBytes(n) {
 // Each card boils down to one of: on / off / building / loading / error.
 // ───────────────────────────────────────────────────────────────
 
-function renderDashboardData(slug, rid, pack) {
+function renderDashboardData(slug, rid, pack, sourcesData) {
   const qs = `?device=${encodeURIComponent(slug)}&repair=${encodeURIComponent(rid)}`;
+  const schemVersions = sourcesData?.schematic_pdf?.versions || [];
+  const bvVersions = sourcesData?.boardview?.versions || [];
 
   // ── INPUT 1 — Schematic PDF ────────────────────────────────────────
   setCardState("rdCardSchematic", pack?.has_schematic_pdf ? "on" : "off");
   setCardField("rdCardSchematicState", pack?.has_schematic_pdf
-    ? (pack.has_electrical_graph ? "compilé" : "importé")
+    ? (pack.has_electrical_graph ? "compilé" : "compilation")
     : "à importer");
+  const schemMetaSuffix = schemVersions.length > 1
+    ? ` · ${schemVersions.length} versions`
+    : "";
   setCardField("rdCardSchematicMeta", pack?.has_schematic_pdf
-    ? (pack.has_electrical_graph
-        ? "PDF + electrical_graph.json — l'agent peut simuler & hypothétiser."
-        : "PDF importé. Compilation en cours ou en attente.")
+    ? ((pack.has_electrical_graph
+        ? "PDF + electrical_graph — l'agent peut simuler & hypothétiser."
+        : "PDF importé. Compilation en cours.") + schemMetaSuffix)
     : "Aucun PDF — l'agent travaille à l'aveugle sur le hardware.");
   toggleEl("rdCardSchematicLoss", !pack?.has_schematic_pdf);
 
@@ -350,7 +360,7 @@ function renderDashboardData(slug, rid, pack) {
     if (pack?.has_schematic_pdf) {
       schemActions.appendChild(linkButton(`${qs}#schematic`,
         ICONS.arrowRight + " Ouvrir", "is-primary"));
-      schemActions.appendChild(actionButton(ICONS.upload + " Remplacer", () => {
+      schemActions.appendChild(actionButton(ICONS.upload + " Importer une version", () => {
         document.getElementById("rdUploadSchematic")?.click();
       }));
     } else {
@@ -360,6 +370,7 @@ function renderDashboardData(slug, rid, pack) {
         }, "is-warn"));
     }
   }
+  renderVersionList("rdCardSchematic", "schematic_pdf", schemVersions, slug, rid);
 
   // ── INPUT 2 — Boardview ─────────────────────────────────────────────
   setCardState("rdCardBoardview", pack?.has_boardview ? "on" : "off");
@@ -367,8 +378,11 @@ function renderDashboardData(slug, rid, pack) {
   setCardField("rdCardBoardviewFmt", pack?.boardview_format
     ? `format ${pack.boardview_format}`
     : ".brd / .kicad_pcb / .fz / .tvw…");
+  const bvMetaSuffix = bvVersions.length > 1
+    ? ` · ${bvVersions.length} versions`
+    : "";
   setCardField("rdCardBoardviewMeta", pack?.has_boardview
-    ? `12 outils visuels disponibles · format ${pack.boardview_format || "détecté"}.`
+    ? `12 outils visuels disponibles · format ${pack.boardview_format || "détecté"}${bvMetaSuffix}.`
     : "L'agent ne peut pas pointer un composant ni mesurer une distance.");
   toggleEl("rdCardBoardviewLoss", !pack?.has_boardview);
 
@@ -378,7 +392,7 @@ function renderDashboardData(slug, rid, pack) {
     if (pack?.has_boardview) {
       bvActions.appendChild(linkButton(`${qs}#pcb`,
         ICONS.arrowRight + " Ouvrir", "is-primary"));
-      bvActions.appendChild(actionButton(ICONS.upload + " Remplacer", () => {
+      bvActions.appendChild(actionButton(ICONS.upload + " Importer une version", () => {
         document.getElementById("rdUploadBoardview")?.click();
       }));
     } else {
@@ -388,6 +402,7 @@ function renderDashboardData(slug, rid, pack) {
         }, "is-warn"));
     }
   }
+  renderVersionList("rdCardBoardview", "boardview", bvVersions, slug, rid);
 
   // ── DERIVED 1 — Knowledge graph (causal pack) ──────────────────────
   const packComplete = !!(pack && pack.has_registry && pack.has_knowledge_graph
@@ -510,6 +525,199 @@ function renderCapabilities(pack) {
       <span class="rd-cap-pill-tag">${escapeHtml(on ? r.on : r.off)}</span>
     </li>`;
   }).join("");
+}
+
+// Render the list of uploaded versions inside a card (only when 2+ exist).
+// One row per version: radio + filename · timestamp · size. Click a non-active
+// row to switch the active pin via PUT /sources/{kind}.
+function renderVersionList(cardId, kind, versions, slug, rid) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  let host = card.querySelector(".rd-versions");
+  if (!host) {
+    host = document.createElement("div");
+    host.className = "rd-versions";
+    card.appendChild(host);
+  }
+  if (!versions || versions.length < 2) {
+    host.remove();
+    return;
+  }
+  host.innerHTML = `<div class="rd-versions-head">
+    <span class="rd-versions-tag">versions</span>
+    <span class="rd-versions-count">${versions.length}</span>
+  </div>`;
+  for (const v of versions) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "rd-version-row" + (v.is_active ? " is-active" : "");
+    row.disabled = !!v.is_active;
+    const dateLabel = formatVersionDate(v.timestamp);
+    row.innerHTML = `
+      <span class="rd-version-dot" aria-hidden="true"></span>
+      <span class="rd-version-name">${escapeHtml(v.original_name)}</span>
+      <span class="rd-version-meta">${escapeHtml(dateLabel)} · ${escapeHtml(fmtBytes(v.size_bytes))}</span>
+    `;
+    if (!v.is_active) {
+      row.addEventListener("click", () => switchSource(slug, rid, kind, v));
+    }
+    host.appendChild(row);
+  }
+}
+
+// Parse the ISO-like upload timestamp `20260424T130000Z` into a short
+// fr-locale label `24 avr · 13:00`. Falls back to the raw string on parse fail.
+function formatVersionDate(ts) {
+  if (!ts) return "—";
+  const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!m) return ts;
+  const [, y, mo, d, h, mi] = m;
+  const dt = new Date(`${y}-${mo}-${d}T${h}:${mi}:00Z`);
+  if (isNaN(dt)) return ts;
+  return dt.toLocaleString("fr-FR", {
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  }).replace(",", " ·");
+}
+
+// ─── Build watcher (schematic recompile spinner + ETA + polling) ───────
+// One global state because at most one schematic rebuild can run on a
+// device at a time (the backend serialises). Frontend keeps a 1-second
+// countdown for ETA display, and a slower 8s poll on /pipeline/packs/{slug}
+// to detect completion (has_electrical_graph flips back to true).
+let _buildState = null;
+
+function startBuildWatch(slug, rid, etaSeconds, pageCount) {
+  stopBuildWatch();
+  _buildState = {
+    slug, rid,
+    pageCount,
+    remaining: etaSeconds || 0,
+    countdownId: null,
+    pollId: null,
+  };
+  renderBuildIndicators(_buildState);
+  _buildState.countdownId = setInterval(() => {
+    if (!_buildState) return;
+    _buildState.remaining = Math.max(0, _buildState.remaining - 1);
+    renderBuildIndicators(_buildState);
+  }, 1000);
+  _buildState.pollId = setInterval(async () => {
+    if (!_buildState) return;
+    const pack = await fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null);
+    if (pack?.has_electrical_graph) {
+      stopBuildWatch();
+      showToast("ok", "Compilation terminée",
+        "Graphe électrique disponible — la version est cachée.");
+      await refreshDashboardData(slug, rid);
+    }
+  }, 8000);
+}
+
+function stopBuildWatch() {
+  if (!_buildState) return;
+  if (_buildState.countdownId) clearInterval(_buildState.countdownId);
+  if (_buildState.pollId) clearInterval(_buildState.pollId);
+  _buildState = null;
+  document.querySelectorAll(".rd-build-eta").forEach(el => el.remove());
+}
+
+function renderBuildIndicators(state) {
+  for (const cardId of ["rdCardSchematic", "rdCardElectrical"]) {
+    const card = document.getElementById(cardId);
+    if (!card) continue;
+    let eta = card.querySelector(".rd-build-eta");
+    if (!eta) {
+      eta = document.createElement("div");
+      eta.className = "rd-build-eta";
+      eta.innerHTML =
+        '<span class="rd-build-spinner" aria-hidden="true">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">' +
+            '<circle cx="12" cy="12" r="9" opacity=".25"/>' +
+            '<path d="M21 12a9 9 0 00-9-9"/>' +
+          '</svg>' +
+        '</span>' +
+        '<span class="rd-build-text"></span>';
+      card.appendChild(eta);
+    }
+    const txt = eta.querySelector(".rd-build-text");
+    const pages = state.pageCount ? ` (${state.pageCount} pages)` : "";
+    if (state.remaining > 0) {
+      txt.textContent = `Vision pipeline${pages} · ~${formatRemaining(state.remaining)} restantes`;
+    } else if (state.remaining === 0 && state.pageCount) {
+      txt.textContent = `Vision pipeline${pages} · finalisation…`;
+    } else {
+      txt.textContent = "Vision pipeline en cours…";
+    }
+  }
+}
+
+function formatRemaining(sec) {
+  if (sec >= 60) {
+    const min = Math.ceil(sec / 60);
+    return `${min} min`;
+  }
+  return `${sec}s`;
+}
+
+// Auto-resume: if we land on the dashboard while the schematic PDF exists
+// but the electrical graph is missing, a rebuild is in flight from a prior
+// session — start the watcher with no countdown (just polling).
+function maybeAutoResumeBuildWatch(slug, rid, pack) {
+  if (_buildState) return; // already watching
+  if (!pack?.has_schematic_pdf) return;
+  if (pack.has_electrical_graph) return;
+  startBuildWatch(slug, rid, 0, null);
+}
+
+async function switchSource(slug, rid, kind, version) {
+  const label = kind === "schematic_pdf" ? "schematic" : "boardview";
+  showToast("info", `Activation ${label}…`,
+    `${version.original_name} · ${fmtBytes(version.size_bytes)}`);
+
+  // Pre-flight UX: flip the relevant card to building so the technician
+  // sees something happening even before the PUT response lands.
+  if (kind === "schematic_pdf") {
+    setCardState("rdCardSchematic", "building");
+    setCardState("rdCardElectrical", "building");
+  }
+
+  try {
+    const res = await fetch(
+      `/pipeline/packs/${encodeURIComponent(slug)}/sources/${kind}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: version.filename }),
+      },
+    );
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      showToast("warn", "Échec du switch",
+        `${res.status} ${detail || "réessaie"}`);
+      await refreshDashboardData(slug, rid);
+      return;
+    }
+    const body = await res.json();
+    if (body.status === "cached") {
+      showToast("ok", "Version activée (cache)",
+        `${version.original_name} — graphe restauré instantanément.`);
+    } else if (body.status === "rebuilding") {
+      const pages = body.page_count ? ` · ${body.page_count} pages` : "";
+      const eta = body.eta_seconds ? ` · ~${formatRemaining(body.eta_seconds)}` : "";
+      showToast("info", "Recompilation en cours",
+        `${version.original_name}${pages}${eta}`);
+      startBuildWatch(slug, rid, body.eta_seconds || 0, body.page_count || null);
+    } else {
+      showToast("ok", "Pin mis à jour",
+        `${version.original_name} — effectif au prochain ouverture de session.`);
+    }
+    await refreshDashboardData(slug, rid);
+  } catch (err) {
+    console.error("switchSource failed", err);
+    showToast("warn", "Réseau", "impossible de joindre le backend.");
+    await refreshDashboardData(slug, rid);
+  }
 }
 
 // Helpers ───────────────────────────────────────────────────────
