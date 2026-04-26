@@ -6,9 +6,28 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from api.board.validator import is_valid_refdes, resolve_net, resolve_part, resolve_pin, suggest_similar
+from api.board.validator import (
+    is_valid_refdes,
+    resolve_net,
+    resolve_part,
+    resolve_pin,
+    suggest_similar,
+)
 from api.session.state import SessionState
-from api.tools.ws_events import Annotate as AnnotateEvent, DimUnrelated, DrawArrow, Filter, Flip, Focus, Highlight, HighlightNet, LayerVisibility, Measure, ResetView, ShowPin
+from api.tools.ws_events import Annotate as AnnotateEvent
+from api.tools.ws_events import (
+    DimUnrelated,
+    DrawArrow,
+    Filter,
+    Flip,
+    Focus,
+    Highlight,
+    HighlightNet,
+    LayerVisibility,
+    Measure,
+    ResetView,
+    ShowPin,
+)
 
 
 def _no_board(session: SessionState) -> dict[str, Any] | None:

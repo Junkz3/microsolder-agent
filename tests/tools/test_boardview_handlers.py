@@ -4,7 +4,21 @@ import pytest
 
 from api.board.parser.test_link import BRDParser
 from api.session.state import SessionState
-from api.tools.boardview import annotate, compose_scene, dim_unrelated, draw_arrow, filter_by_type, flip_board, focus_component, highlight_component, highlight_net, layer_visibility, measure_distance, reset_view, show_pin
+from api.tools.boardview import (
+    annotate,
+    compose_scene,
+    dim_unrelated,
+    draw_arrow,
+    filter_by_type,
+    flip_board,
+    focus_component,
+    highlight_component,
+    highlight_net,
+    layer_visibility,
+    measure_distance,
+    reset_view,
+    show_pin,
+)
 
 FIXTURE_DIR = Path(__file__).parent.parent / "board" / "fixtures"
 

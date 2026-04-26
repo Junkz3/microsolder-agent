@@ -1,17 +1,7 @@
 from api.tools.ws_events import (
-    BoardLoaded,
+    DrawArrow,
     Highlight,
     HighlightNet,
-    Focus,
-    Flip,
-    Annotate,
-    ResetView,
-    DimUnrelated,
-    LayerVisibility,
-    Filter,
-    DrawArrow,
-    Measure,
-    ShowPin,
     UploadError,
 )
 

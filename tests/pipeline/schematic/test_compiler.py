@@ -383,7 +383,11 @@ def test_compile_populates_passive_kind_and_role():
     (or null) on the ComponentNode."""
     from api.pipeline.schematic.compiler import compile_electrical_graph
     from api.pipeline.schematic.schemas import (
-        ComponentNode, NetNode, PagePin, SchematicGraph, TypedEdge,
+        ComponentNode,
+        NetNode,
+        PagePin,
+        SchematicGraph,
+        TypedEdge,
     )
 
     graph = SchematicGraph(

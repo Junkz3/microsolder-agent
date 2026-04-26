@@ -1,5 +1,5 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 
 def test_phase_token_stats_accumulates():
@@ -16,7 +16,9 @@ def test_phase_token_stats_accumulates():
 
 def test_write_and_read_token_stats(tmp_path: Path):
     from api.pipeline.telemetry.token_stats import (
-        PhaseTokenStats, write_token_stats, read_token_stats,
+        PhaseTokenStats,
+        read_token_stats,
+        write_token_stats,
     )
     stats = [
         PhaseTokenStats(phase="scout", input_tokens=500, output_tokens=4000),

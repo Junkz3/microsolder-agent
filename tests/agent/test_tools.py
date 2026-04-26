@@ -99,8 +99,8 @@ def test_mb_get_rules_for_symptoms_max_results(seeded_memory_root):
 
 def test_pack_cache_hits_on_repeated_calls(tmp_path: Path, monkeypatch):
     """Second mb_get_component call on same slug must not re-read pack files."""
-    from api.session.state import SessionState
     from api.agent.tools import mb_get_component
+    from api.session.state import SessionState
 
     slug = "demo"
     pack_dir = tmp_path / slug
@@ -127,8 +127,8 @@ def test_pack_cache_hits_on_repeated_calls(tmp_path: Path, monkeypatch):
 
 
 def test_mb_get_component_lru_skips_pack_reload(tmp_path: Path, monkeypatch):
-    from api.session.state import SessionState
     from api.agent.tools import mb_get_component
+    from api.session.state import SessionState
 
     slug = "demo"
     pack_dir = tmp_path / slug
@@ -155,8 +155,8 @@ def test_mb_get_component_lru_skips_pack_reload(tmp_path: Path, monkeypatch):
 
 def test_mb_get_component_lru_evicts_oldest_when_full(tmp_path: Path):
     """Exceeding COMPONENT_CACHE_MAX entries must evict the oldest (LRU) entry."""
-    from api.session.state import SessionState
     from api.agent.tools import mb_get_component
+    from api.session.state import SessionState
 
     slug = "demo"
     pack_dir = tmp_path / slug
@@ -192,9 +192,9 @@ def test_mb_get_component_lru_evicts_oldest_when_full(tmp_path: Path):
 
 def test_mb_get_component_caches_not_found(tmp_path: Path, monkeypatch):
     """Not-found results must also be cached — second query for unknown refdes skips _load_pack."""
-    from api.session.state import SessionState
-    from api.agent.tools import mb_get_component
     from api.agent import tools as tools_mod
+    from api.agent.tools import mb_get_component
+    from api.session.state import SessionState
 
     slug = "demo"
     pack_dir = tmp_path / slug
@@ -225,8 +225,8 @@ def test_mb_get_component_caches_not_found(tmp_path: Path, monkeypatch):
 
 def test_invalidate_pack_cache_drops_component_entries(tmp_path: Path):
     """After invalidate_pack_cache, no component_cache entry for that slug survives."""
-    from api.session.state import SessionState
     from api.agent.tools import mb_get_component
+    from api.session.state import SessionState
 
     slug = "demo"
     pack_dir = tmp_path / slug

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from api.board.model import Board, Layer, Part, Pin, Point
+from api.board.model import Board, Layer, Part, Point
 from api.pipeline.prompts import SCOUT_RETRY_SUFFIX, SCOUT_USER_TEMPLATE
 from api.pipeline.schematic.schemas import (
     ComponentNode,

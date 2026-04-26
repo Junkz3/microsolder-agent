@@ -15,8 +15,12 @@ from api.pipeline.schematic.passive_classifier import (
     classify_passives_llm,
 )
 from api.pipeline.schematic.schemas import (
-    ComponentNode, ComponentValue, ElectricalGraph, NetNode, PagePin,
-    PowerRail, SchematicQualityReport,
+    ComponentNode,
+    ElectricalGraph,
+    NetNode,
+    PagePin,
+    PowerRail,
+    SchematicQualityReport,
 )
 
 

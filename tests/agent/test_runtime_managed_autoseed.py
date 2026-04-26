@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -9,8 +8,8 @@ import pytest
 @pytest.mark.asyncio
 async def test_auto_seed_triggered_when_pack_drifted(tmp_path, monkeypatch):
     """When stale_files_for_pack returns non-empty, runtime must launch a seed task."""
-    from api.agent import runtime_managed as rm
     from api.agent import memory_seed as ms
+    from api.agent import runtime_managed as rm
 
     slug = "demo"
     pack = tmp_path / slug
@@ -42,8 +41,8 @@ async def test_auto_seed_triggered_when_pack_drifted(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_auto_seed_noop_when_pack_clean(tmp_path, monkeypatch):
     """Marker matches disk → no seed call."""
-    from api.agent import runtime_managed as rm
     from api.agent import memory_seed as ms
+    from api.agent import runtime_managed as rm
 
     slug = "demo"
     pack = tmp_path / slug
@@ -76,8 +75,8 @@ async def test_auto_seed_noop_when_pack_clean(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_auto_seed_uses_session_mirrors_when_provided(tmp_path, monkeypatch):
     """When session_mirrors is passed, the task registers there for draining."""
-    from api.agent import runtime_managed as rm
     from api.agent import memory_seed as ms
+    from api.agent import runtime_managed as rm
 
     slug = "demo"
     pack = tmp_path / slug
@@ -110,8 +109,8 @@ async def test_auto_seed_uses_session_mirrors_when_provided(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_auto_seed_noop_when_flag_disabled(tmp_path, monkeypatch):
     """When ma_memory_store_enabled is False, maybe_auto_seed returns None without spawning."""
-    from api.agent import runtime_managed as rm
     from api.agent import memory_seed as ms
+    from api.agent import runtime_managed as rm
 
     slug = "demo"
     pack = tmp_path / slug
@@ -141,8 +140,8 @@ async def test_auto_seed_noop_when_flag_disabled(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_auto_seed_noop_when_pack_dir_missing(tmp_path, monkeypatch):
     """When pack_dir doesn't exist, maybe_auto_seed returns None without spawning."""
-    from api.agent import runtime_managed as rm
     from api.agent import memory_seed as ms
+    from api.agent import runtime_managed as rm
 
     class FakeSettings:
         anthropic_api_key = "sk-test"

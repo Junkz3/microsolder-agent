@@ -93,7 +93,7 @@ async def test_replay_buffer_caps_at_history_max():
     while True:
         try:
             drained.append(await asyncio.wait_for(q.get(), timeout=0.05))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             break
     assert len(drained) == cap
     # Most recent events kept (oldest dropped)

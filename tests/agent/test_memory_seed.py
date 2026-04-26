@@ -180,11 +180,11 @@ async def test_seed_records_per_file_upsert_failure(pack_dir, monkeypatch):
 # ---------------------------------------------------------------------------
 
 from api.agent.memory_seed import (  # noqa: E402
+    _SEED_FILES,
     MARKER_FILENAME,
     read_seed_marker,
-    write_seed_marker,
     stale_files_for_pack,
-    _SEED_FILES,
+    write_seed_marker,
 )
 
 
@@ -265,8 +265,9 @@ def test_stale_files_partial_drift(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_seed_only_files_uploads_subset(tmp_path: Path, monkeypatch):
     """only_files=['rules.json'] must upsert exactly one path and update the marker."""
-    from api.agent import memory_seed as ms_mod
     from unittest.mock import AsyncMock
+
+    from api.agent import memory_seed as ms_mod
 
     pack = tmp_path / "demo"
     pack.mkdir()
@@ -309,8 +310,9 @@ async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, mo
     `merged.update(...)`) would drop the three other entries from the
     marker, triggering re-seed-all on the next session open forever.
     """
-    from api.agent import memory_seed as ms_mod
     from unittest.mock import AsyncMock
+
+    from api.agent import memory_seed as ms_mod
 
     pack = tmp_path / "demo"
     pack.mkdir()
@@ -383,8 +385,9 @@ def test_stale_files_handles_legacy_marker_without_files_key(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_seed_merges_into_legacy_marker(tmp_path: Path, monkeypatch):
     """Partial seed against a legacy marker writes a well-formed marker back."""
-    from api.agent import memory_seed as ms_mod
     from unittest.mock import AsyncMock
+
+    from api.agent import memory_seed as ms_mod
 
     pack = tmp_path / "demo"
     pack.mkdir()

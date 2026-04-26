@@ -16,7 +16,6 @@ from api.agent.chat_history import (
     touch_conversation,
 )
 
-
 SLUG = "test-device"
 REPAIR = "r-123"
 

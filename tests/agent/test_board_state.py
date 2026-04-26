@@ -14,7 +14,6 @@ from api.agent.board_state import (
 )
 from api.session.state import SessionState
 
-
 SLUG = "test-device"
 REPAIR = "r-board-state"
 

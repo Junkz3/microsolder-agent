@@ -371,8 +371,13 @@ def test_cascade_transitive_dead_rails_via_dead_source():
     """Rail B sourced by a consumer of rail A: if rail A's source dies,
     the consumer never powers on, so rail B is transitively dead too."""
     from api.pipeline.schematic.schemas import (
-        ComponentNode, ElectricalGraph, NetNode, PagePin, PowerRail,
-        SchematicQualityReport, BootPhase,
+        BootPhase,
+        ComponentNode,
+        ElectricalGraph,
+        NetNode,
+        PagePin,
+        PowerRail,
+        SchematicQualityReport,
     )
     from api.pipeline.schematic.simulator import SimulationEngine
 

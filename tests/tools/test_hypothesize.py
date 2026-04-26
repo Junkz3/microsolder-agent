@@ -208,6 +208,7 @@ def test_load_pack_caches_and_invalidates_on_mtime(
     of an unchanged pack — so the per-graph memo in hypothesize.py fires —
     and invalidates automatically when the graph file's mtime advances."""
     import os
+
     from api.tools.hypothesize import _PACK_CACHE, _load_pack
 
     _PACK_CACHE.clear()

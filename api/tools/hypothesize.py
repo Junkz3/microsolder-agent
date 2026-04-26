@@ -13,7 +13,6 @@ from api.pipeline.schematic.hypothesize import (
 )
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 
-
 # Module-level pack cache: keeps parsed ElectricalGraph + AnalyzedBootSequence
 # across repeated mb_hypothesize invocations so that the per-graph memo in
 # api.pipeline.schematic.hypothesize fires on call 2+ of the same session.
@@ -21,13 +20,13 @@ from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 # invalidates automatically without needing a server restart.
 _PACK_CACHE: dict[
     tuple[str, int, int],
-    tuple[ElectricalGraph, "AnalyzedBootSequence | None"],
+    tuple[ElectricalGraph, AnalyzedBootSequence | None],
 ] = {}
 
 
 def _load_pack(
     pack: Path,
-) -> tuple[ElectricalGraph | None, "AnalyzedBootSequence | None", str | None]:
+) -> tuple[ElectricalGraph | None, AnalyzedBootSequence | None, str | None]:
     """Return (eg, ab, error_reason). `error_reason` is None on success;
     on failure it is the machine-readable reason string that mb_hypothesize
     surfaces to the caller."""

@@ -43,7 +43,7 @@ def _skills_summary(profile) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def profile_get(session: "SessionState | None" = None) -> dict[str, Any]:
+def profile_get(session: SessionState | None = None) -> dict[str, Any]:
     from api.profile.store import profile_path
     path = profile_path()
     try:
