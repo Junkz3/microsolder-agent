@@ -1907,7 +1907,7 @@ async def _dispatch_cam_capture(
 
         try:
             response = await asyncio.wait_for(fut, timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await client.beta.sessions.events.send(
                 session_id=ma_session_id,
                 events=[{
