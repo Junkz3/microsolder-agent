@@ -18,9 +18,24 @@ logger = logging.getLogger("wrench_board.session")
 
 Side = Literal["top", "bottom"]
 
-# Extension priority: richer formats first. If both exist for a slug,
-# .kicad_pcb wins.
-_BOARD_EXT_PRIORITY = (".kicad_pcb", ".brd")
+# Extension priority: richer formats first. .kicad_pcb wins, then .brd
+# (Test_Link / BRD2), then the legacy text-format dialects in roughly the
+# order their parsers landed. Any format not listed here cannot auto-load
+# even if its parser is registered — add it here when fixtures stabilise.
+_BOARD_EXT_PRIORITY = (
+    ".kicad_pcb",
+    ".brd",
+    ".brd2",
+    ".asc",
+    ".bdv",
+    ".bv",
+    ".cad",
+    ".cst",
+    ".f2b",
+    ".fz",
+    ".gr",
+    ".tvw",
+)
 
 
 def _board_assets_root() -> Path:
@@ -30,6 +45,41 @@ def _board_assets_root() -> Path:
         return Path(override)
     # api/session/state.py → ../../board_assets
     return Path(__file__).resolve().parents[2] / "board_assets"
+
+
+def _memory_root() -> Path:
+    """Root of memory/. Overridable via WRENCH_BOARD_MEMORY_ROOT for tests."""
+    override = os.environ.get("WRENCH_BOARD_MEMORY_ROOT")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[2] / "memory"
+
+
+def _candidate_boardview_paths(device_slug: str) -> list[Path]:
+    """Ordered candidate boardview files for a slug — first match wins.
+
+    Built from the priority list (board_assets first, by richest format)
+    plus any technician upload landing under `memory/{slug}/uploads/` with
+    the `-boardview-` marker. The upload list is sorted newest-first so a
+    re-uploaded file supersedes an older one.
+    """
+    candidates: list[Path] = []
+    assets_root = _board_assets_root()
+    for ext in _BOARD_EXT_PRIORITY:
+        candidates.append(assets_root / f"{device_slug}{ext}")
+
+    uploads_dir = _memory_root() / device_slug / "uploads"
+    if uploads_dir.exists():
+        bv_uploads = [
+            p for p in uploads_dir.iterdir()
+            if p.is_file() and "-boardview-" in p.name
+        ]
+        # Filename layout: {timestamp}-boardview-{original}. Sort by
+        # filename desc → newest timestamp first.
+        bv_uploads.sort(key=lambda p: p.name, reverse=True)
+        candidates.extend(bv_uploads)
+
+    return candidates
 
 
 @dataclass
@@ -193,13 +243,16 @@ class SessionState:
     def from_device(cls, device_slug: str) -> SessionState:
         """Build a session for a device, auto-loading the board if available.
 
-        Priority: .kicad_pcb first, then .brd. If no file is found or parsing
-        fails, returns an empty SessionState — the agent will simply not get
-        the `bv_*` tool family in its manifest.
+        Lookup order:
+          1. `board_assets/{slug}.<ext>` for every extension in
+             `_BOARD_EXT_PRIORITY` (priority list, richer formats first).
+          2. `memory/{slug}/uploads/*-boardview-*` — newest upload wins,
+             used when the technician uploaded their own boardview from
+             the Journal dashboard.
+        Falls back to an empty SessionState if no file is found or parsing
+        fails — the agent then simply does not get the `bv_*` tool family.
         """
-        root = _board_assets_root()
-        for ext in _BOARD_EXT_PRIORITY:
-            candidate = root / f"{device_slug}{ext}"
+        for candidate in _candidate_boardview_paths(device_slug):
             if not candidate.exists():
                 continue
             try:
