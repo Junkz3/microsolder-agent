@@ -94,11 +94,18 @@
     <p class="landing-sub" data-i18n="landing.hero.sub">Give me your device and the symptom — I'll build the knowledge and open the diagnostic.</p>
 
     <form class="landing-form landing-form--stack" id="landingForm" autocomplete="off">
-      <input class="landing-input" id="landingDevice" type="text"
-             data-i18n-attr="placeholder:landing.hero.device_placeholder,aria-label:landing.hero.device_aria"
-             placeholder="Device (e.g. MNT Reform motherboard, iPhone 11, Framework 13)"
-             aria-label="Which device"
-             maxlength="200" required />
+      <div class="landing-input-wrap">
+        <input class="landing-input" id="landingDevice" type="text"
+               data-i18n-attr="placeholder:landing.hero.device_placeholder,aria-label:landing.hero.device_aria"
+               placeholder="Device (e.g. MNT Reform motherboard, iPhone 11, Framework 13)"
+               aria-label="Which device"
+               aria-autocomplete="list"
+               aria-controls="landingSuggest"
+               maxlength="200" required />
+        <div class="landing-suggest" id="landingSuggest" role="listbox"
+             data-i18n-attr="aria-label:landing.suggest.aria"
+             aria-label="Device suggestions" hidden></div>
+      </div>
       <input class="landing-input" id="landingSymptom" type="text"
              data-i18n-attr="placeholder:landing.hero.symptom_placeholder,aria-label:landing.hero.symptom_aria"
              placeholder="Symptom (e.g. won't power on, no charge, black screen)"
@@ -143,7 +150,7 @@
 <div class="topbar">
   <div class="brand">
     <span class="brand-mascot" id="brandMascot" aria-hidden="true"></span>
-    <div><span data-i18n="common.topbar.brand">wrench-board</span><span class="sub" id="appVersion"></span></div>
+    <div><span data-i18n="common.topbar.brand">wrench-board</span></div>
   </div>
   <div class="crumbs" id="crumbs"><span class="active" data-i18n="common.topbar.repair_log">Repair log</span></div>
   <div class="spacer"></div>

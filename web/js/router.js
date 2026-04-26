@@ -2,8 +2,6 @@
 // Owns navigation between the 8 app sections and refreshes the chrome when
 // the active section or current device changes.
 
-export const APP_VERSION = "v0.5.0";
-
 export const SECTIONS = ["home", "pcb", "schematic", "graphe", "profile"];
 
 // SECTION_META holds i18n keys instead of literal strings — resolved at

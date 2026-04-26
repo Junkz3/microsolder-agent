@@ -3,7 +3,7 @@
 // and a section-agnostic wiring block for the Tweaks panel + boardview
 // colour pickers.
 
-import { APP_VERSION, currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode } from './router.js';
+import { currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode } from './router.js';
 import { loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
 import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
@@ -65,8 +65,6 @@ if (!window.Boardview) {
 (async function bootstrap() {
   // Wait for i18n dictionaries before any module renders dynamic strings.
   if (window.i18n && window.i18n.ready) await window.i18n.ready;
-  // Stamp the static version once — chrome state is then handled by navigate().
-  document.getElementById("appVersion").textContent = APP_VERSION;
   mountMascot(document.getElementById("brandMascot"), { size: "xs", state: "idle" });
   wireRouter();
   initNewRepairModal();
