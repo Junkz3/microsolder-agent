@@ -73,7 +73,6 @@
 .edge-item .rel.resolves{color:var(--violet);border-color:rgba(192,132,252,.3)}
 .edge-item .edge-target{flex:1;font-size:12px}
 .edge-item .edge-sub{font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
-.insp-actions{display:flex;gap:8px;margin-top:4px}
 .btn{flex:1;padding:8px 10px;border-radius:6px;background:var(--panel);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn:hover{border-color:oklch(0.55 0.10 210);background:var(--panel-2)}
 .btn.primary{background:rgba(56,189,248,.12);color:var(--cyan);border-color:rgba(56,189,248,.35)}
