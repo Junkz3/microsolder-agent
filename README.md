@@ -1,10 +1,16 @@
+<p align="center">
+  <img src="docs/assets/wrench-mascot.svg" alt="Wrench Board mascot" width="160" />
+</p>
+
 # Wrench Board
 
-> Agent-native diagnostic workbench for board-level electronics repair, powered by Claude Opus 4.7.
-
-<!-- [Logo / mascot — drop into web/assets/ and link here] -->
+> Agent-native diagnostic workbench for board-level electronics repair,
+> powered by Claude Opus 4.7. **Right-to-repair, built in the open, by the
+> people who actually do the repairs.**
 
 **📺 Demo video (3 min):** https://youtu.be/OZ2D_p82z6w
+
+![Wrench Board — boardview + diagnostic agent on an MNT Reform motherboard](docs/assets/screenshot-workbench.png)
 
 ## What it is
 
@@ -131,7 +137,7 @@ who actually do the repairs.
 ## Quickstart
 
 ```bash
-git clone https://github.com/<you>/wrench-board
+git clone https://github.com/Junkz3/wrench-board
 cd wrench-board
 make install          # create .venv and install deps (incl. [dev])
 cp .env.example .env  # then fill in ANTHROPIC_API_KEY
