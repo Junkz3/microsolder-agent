@@ -66,6 +66,8 @@ Four orthogonal workflows feed a single on-disk corpus per device under
   keeps them (`evolve:`-prefixed commit) or reverts. The loops have
   been running and shipping improvements while I work on other things.
 
+![Wrench Board — repair dashboard with knowledge artefacts and diagnostic threads](docs/assets/screenshot-dashboard.png)
+
 ### Files + Vision — the agent can ask to see
 
 A microsoldering diagnosis lives or dies on what the probe is touching
