@@ -33,7 +33,16 @@
     }
   },
   "abandon": {
-    "confirm": "Abandon the running protocol?"
+    "confirm": "Abandon the running protocol?",
+    "modal": {
+      "badge": "Abandon protocol",
+      "title": "Abandon the running protocol?",
+      "body": "The agent will be notified and the diagnostic sequence will be marked as abandoned. Step results already recorded are kept in the repair history.",
+      "reason_label": "Reason (optional, surfaced to the agent)",
+      "reason_placeholder": "Why abandon — wrong hypothesis, dead end, customer left, …",
+      "cancel": "Cancel",
+      "confirm": "Yes, abandon"
+    }
   },
   "confirm": {
     "badge": "Proposed protocol",

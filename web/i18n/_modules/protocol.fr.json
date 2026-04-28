@@ -33,7 +33,16 @@
     }
   },
   "abandon": {
-    "confirm": "Abandonner le protocole en cours ?"
+    "confirm": "Abandonner le protocole en cours ?",
+    "modal": {
+      "badge": "Abandon du protocole",
+      "title": "Abandonner le protocole en cours ?",
+      "body": "L'agent sera notifié et la séquence de diagnostic sera marquée comme abandonnée. Les résultats d'étapes déjà enregistrés restent dans l'historique du repair.",
+      "reason_label": "Raison (optionnelle, transmise à l'agent)",
+      "reason_placeholder": "Pourquoi abandonner — mauvaise hypothèse, impasse, client parti, …",
+      "cancel": "Annuler",
+      "confirm": "Oui, abandonner"
+    }
   },
   "confirm": {
     "badge": "Protocole proposé",

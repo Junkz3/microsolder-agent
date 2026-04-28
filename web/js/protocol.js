@@ -263,13 +263,69 @@ export function skipStep({ stepId, reason }) {
   });
 }
 
-export function abandonProtocol() {
+export function abandonProtocol(reason) {
   if (!state.proto || !state.send) return;
   state.send({
     type: "protocol_abandon",
     protocol_id: state.proto.protocol_id,
-    reason: "tech_dismiss",
+    reason: (reason && reason.trim()) || "tech_dismiss",
   });
+}
+
+// --- Abandon confirmation modal ----------------------------------------------
+// Mirrors the showConfirmation/hideConfirmation pattern (initial proposal),
+// but for the in-flight abandon path: the static markup lives in
+// web/index.html under #protocolAbandonBackdrop, lazy-wired on first show.
+
+let _abandonWired = false;
+
+function _wireAbandonModal() {
+  if (_abandonWired) return;
+  const backdrop = document.getElementById("protocolAbandonBackdrop");
+  if (!backdrop) return;
+  const cancelBtn = document.getElementById("protocolAbandonCancel");
+  const confirmBtn = document.getElementById("protocolAbandonConfirm");
+  const reasonInput = document.getElementById("protocolAbandonReason");
+
+  cancelBtn?.addEventListener("click", () => {
+    hideAbandonModal();
+  });
+
+  confirmBtn?.addEventListener("click", () => {
+    const reason = reasonInput ? reasonInput.value : "";
+    abandonProtocol(reason);
+    hideAbandonModal();
+  });
+
+  // Close on Escape and on backdrop click (outside the dialog).
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) hideAbandonModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && backdrop.classList.contains("open")) {
+      hideAbandonModal();
+    }
+  });
+
+  _abandonWired = true;
+}
+
+export function showAbandonModal() {
+  _wireAbandonModal();
+  const backdrop = document.getElementById("protocolAbandonBackdrop");
+  if (!backdrop) return;
+  // Reset the reason field every time so a previous abandon doesn't leak in.
+  const reasonInput = document.getElementById("protocolAbandonReason");
+  if (reasonInput) reasonInput.value = "";
+  backdrop.classList.add("open");
+  backdrop.setAttribute("aria-hidden", "false");
+}
+
+export function hideAbandonModal() {
+  const backdrop = document.getElementById("protocolAbandonBackdrop");
+  if (!backdrop) return;
+  backdrop.classList.remove("open");
+  backdrop.setAttribute("aria-hidden", "true");
 }
 
 // --- Wizard renderer + form builders -----------------------------------------
@@ -463,7 +519,7 @@ const bindChrome = () => {
   const btn = document.getElementById("protocolAbandonBtn");
   if (btn && !btn.dataset.bound) {
     btn.addEventListener("click", () => {
-      if (window.confirm(t("protocol.abandon.confirm"))) abandonProtocol();
+      showAbandonModal();
     });
     btn.dataset.bound = "1";
   }

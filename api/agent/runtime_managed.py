@@ -2415,6 +2415,54 @@ async def _forward_ws_to_session(
                                      "text": res.get("reason", "unknown")})
             continue
 
+        # Tech pressed Abandon on the running quest panel — mark the protocol
+        # as abandoned in the on-disk store, broadcast a protocol_updated WS
+        # event so the UI cleans its state, and forward a synthetic
+        # user.message so the agent stops acting on the dead protocol.
+        if payload.get("type") == "protocol_abandon":
+            from api.tools.protocol import (
+                load_active_protocol,
+                update_protocol as _update_protocol,
+            )
+            reason = (payload.get("reason") or "tech_dismiss").strip() or "tech_dismiss"
+            res = _update_protocol(
+                memory_root=memory_root,
+                device_slug=device_slug,
+                repair_id=repair_id or "",
+                action="abandon_protocol",
+                reason=reason,
+                conv_id=conv_id,
+            )
+            if res.get("ok"):
+                proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=conv_id)
+                history_tail = proto.history[-3:] if proto is not None else []
+                await ws.send_json({
+                    "type": "protocol_updated",
+                    "protocol_id": res.get("protocol_id"),
+                    "action": "abandoned",
+                    "current_step_id": None,
+                    "steps": [s.model_dump(mode="json") for s in (proto.steps if proto else [])],
+                    "history_tail": [h.model_dump(mode="json") for h in history_tail],
+                    "status": "abandoned",
+                })
+                synthetic = (
+                    f"[protocol_abandoned] The technician abandoned the "
+                    f"running protocol. Reason: {reason}. Stop acting on "
+                    f"this protocol; propose a fresh approach if relevant."
+                )
+                await client.beta.sessions.events.send(
+                    session_id,
+                    events=[{"type": "user.message",
+                             "content": [{"type": "text", "text": synthetic}]}],
+                )
+            else:
+                await ws.send_json({
+                    "type": "error",
+                    "code": "protocol_abandon_rejected",
+                    "text": res.get("reason", "unknown"),
+                })
+            continue
+
         # Intercept validation trigger events before they reach the agent as
         # ordinary messages. Synthesise a user-role prompt that asks the agent
         # to summarise fixes and call mb_validate_finding.

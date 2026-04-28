@@ -918,6 +918,40 @@
   </div>
 </div>
 
+<!-- Protocol abandon confirmation modal — opened when the technician clicks
+     the "Abandon" button on the running quest panel. Wired by
+     web/js/protocol.js (showAbandonModal / hideAbandonModal). -->
+<div class="modal-backdrop" id="protocolAbandonBackdrop" aria-hidden="true">
+  <div class="modal protocol-confirm-modal" role="dialog" aria-modal="true"
+       aria-labelledby="protocolAbandonTitle">
+    <header class="modal-head">
+      <div class="type-row">
+        <span class="type-badge action" data-i18n="protocol.abandon.modal.badge">Abandon protocol</span>
+      </div>
+      <h2 id="protocolAbandonTitle" data-i18n="protocol.abandon.modal.title">Abandon the running protocol?</h2>
+    </header>
+    <div class="modal-body">
+      <div class="modal-field">
+        <p class="protocol-confirm-rationale" id="protocolAbandonBody"
+           data-i18n="protocol.abandon.modal.body">
+          The agent will be notified and the diagnostic sequence will be marked as abandoned.
+        </p>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label" for="protocolAbandonReason"
+               data-i18n="protocol.abandon.modal.reason_label">Reason (optional, surfaced to the agent)</label>
+        <textarea class="modal-textarea" id="protocolAbandonReason" rows="2"
+                  data-i18n-placeholder="protocol.abandon.modal.reason_placeholder"
+                  placeholder="Why abandon — wrong hypothesis, dead end, customer left, …"></textarea>
+      </div>
+      <footer class="modal-actions">
+        <button type="button" class="btn" id="protocolAbandonCancel" data-i18n="protocol.abandon.modal.cancel">Cancel</button>
+        <button type="button" class="btn primary" id="protocolAbandonConfirm" data-i18n="protocol.abandon.modal.confirm">Yes, abandon</button>
+      </footer>
+    </div>
+  </div>
+</div>
+
 <!-- ============ TWEAKS ============ -->
 <div class="tweaks" id="tweaksPanel">
   <h5><span data-i18n="common.tweaks.title">Tweaks</span> <button class="close-x" id="tweaksClose" data-i18n-attr="aria-label:common.tweaks.close" aria-label="Close" style="background:transparent;border:0;color:var(--text-3);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg></button></h5>

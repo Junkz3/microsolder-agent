@@ -1038,6 +1038,74 @@ async def run_diagnostic_session_direct(
                                          "text": res.get("reason", "unknown")})
                 continue
 
+            # Tech pressed Abandon on the running quest panel — mark the
+            # protocol as abandoned in the on-disk store, broadcast a
+            # protocol_updated WS event so the UI cleans its state, and
+            # inject a synthetic user message so the agent stops acting on
+            # the dead protocol.
+            if isinstance(incoming, dict) and incoming.get("type") == "protocol_abandon":
+                from api.tools.protocol import (
+                    load_active_protocol,
+                    update_protocol as _update_protocol,
+                )
+                reason = (incoming.get("reason") or "tech_dismiss").strip() or "tech_dismiss"
+                res = _update_protocol(
+                    memory_root=memory_root,
+                    device_slug=device_slug,
+                    repair_id=repair_id or "",
+                    action="abandon_protocol",
+                    reason=reason,
+                    conv_id=resolved_conv_id,
+                )
+                if res.get("ok"):
+                    proto = load_active_protocol(memory_root, device_slug, repair_id or "", conv_id=resolved_conv_id)
+                    history_tail = proto.history[-3:] if proto is not None else []
+                    await ws.send_json({
+                        "type": "protocol_updated",
+                        "protocol_id": res.get("protocol_id"),
+                        "action": "abandoned",
+                        "current_step_id": None,
+                        "steps": [s.model_dump(mode="json") for s in (proto.steps if proto else [])],
+                        "history_tail": [h.model_dump(mode="json") for h in history_tail],
+                        "status": "abandoned",
+                    })
+                    synthetic = (
+                        f"[protocol_abandoned] The technician abandoned the "
+                        f"running protocol. Reason: {reason}. Stop acting on "
+                        f"this protocol; propose a fresh approach if relevant."
+                    )
+                    user_msg = {"role": "user", "content": synthetic}
+                    messages.append(user_msg)
+                    if resolved_conv_id:
+                        _materialize_and_flush_intro()
+                        append_event(
+                            device_slug=device_slug,
+                            repair_id=repair_id,
+                            conv_id=resolved_conv_id,
+                            event=user_msg,
+                            memory_root=memory_root,
+                        )
+                    await _run_agent_turn(
+                        ws=ws,
+                        client=client,
+                        model=model,
+                        system_prompt=system_prompt,
+                        tools=tools,
+                        messages=messages,
+                        session=session,
+                        device_slug=device_slug,
+                        repair_id=repair_id,
+                        conv_id=resolved_conv_id,
+                        memory_root=memory_root,
+                    )
+                else:
+                    await ws.send_json({
+                        "type": "error",
+                        "code": "protocol_abandon_rejected",
+                        "text": res.get("reason", "unknown"),
+                    })
+                continue
+
             # Intercept validation trigger events before they reach the agent
             # as ordinary messages. Synthesise a user-role prompt that asks
             # the agent to summarise fixes and call mb_validate_finding. The
