@@ -8,6 +8,8 @@
 > powered by Claude Opus 4.7. **Right-to-repair, built in the open, by the
 > people who actually do the repairs.**
 
+🥈 **2nd place** at Anthropic's *Build with Opus 4.7* hackathon — April 2026.
+
 **📺 Demo video (3 min):** https://youtu.be/OZ2D_p82z6w
 
 ![Wrench Board — boardview + diagnostic agent on an MNT Reform motherboard](docs/assets/screenshot-workbench.png)
@@ -104,9 +106,14 @@ on the technician's cue, on the technician's optics.
   by extension: KiCad `.kicad_pcb`, OpenBoardView Test_Link `.brd`,
   KiCad-boardview BRD2, plus `.asc` `.bdv` `.bv` `.cad` `.cst` `.f2b`
   `.fz` `.gr` `.tvw`. Adding a format = one new file.
-- **Tests** — ~1100 functions across 133 files, including 10 deterministic
-  invariants on the simulator + hypothesize engines and frozen-oracle
-  accuracy gates marked `@slow`.
+- **Tests** — 1 429 fast tests (~30 s) plus a `@slow` accuracy-gate suite,
+  including 10 deterministic invariants on the simulator + hypothesize
+  engines and frozen-oracle gates.
+- **Tooling** — `make doctor` runs 8 local health checks (env, packs,
+  parsers, camera) for atelier deployment. `make eval-all` orchestrates
+  the four eval surfaces (simulator, pipeline, vision, agent) with
+  cross-skill regression detection. `make tools-inventory` regenerates
+  `docs/tools.md` from the agent manifest.
 - **Anti-hallucination** — defense in depth, two layers. (1) Tools return
   `{found: false, closest_matches: [...]}` for unknown refdes; the system
   prompt instructs the agent to pick from suggestions or ask the user.
