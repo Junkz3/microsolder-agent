@@ -2425,8 +2425,8 @@ async def get_measurements(
     """Return the measurement journal for a repair, newest-first.
 
     Optional `?target=rail:+3V3` and `?since=<ISO-ts>` query filters.
-    Always returns `{found, events}` — `events` is empty when the journal
-    has no matching entries.
+    Always returns `{found, measurements}` — `measurements` is empty when
+    the journal has no matching entries.
     """
     settings = get_settings()
     safe_repair_id = _validate_repair_id(repair_id)

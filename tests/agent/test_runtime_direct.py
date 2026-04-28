@@ -354,12 +354,14 @@ async def test_mb_tool_dispatch_feeds_result_back_into_next_turn(
     ]
     assert tool_result_blocks, "tool_result was never appended to the next turn"
     decoded = json.loads(tool_result_blocks[0]["content"])
-    # mb_list_measurements returns {"found": True, "events": []} on an empty
-    # repair — proves the tool actually ran rather than being short-circuited.
-    # NB: the runtime strips top-level 'event'/'events' keys before sending
-    # to the agent (those are reserved for the WS-emit channel) so we only
-    # assert on `found` here.
+    # mb_list_measurements returns {"found": True, "measurements": []} on
+    # an empty repair — proves the tool actually ran rather than being
+    # short-circuited. The runtime still strips top-level 'event'/'events'
+    # keys before forwarding to the agent (those are reserved for WS-emit);
+    # 'measurements' is intentionally not in that reserved set so it makes
+    # it through.
     assert decoded.get("found") is True
+    assert decoded.get("measurements") == []
     # tool_use_id must round-trip so the agent can correlate the result.
     assert tool_result_blocks[0]["tool_use_id"] == "toolu_meas1"
     # The tool_use frame must also have hit the WS for the frontend to

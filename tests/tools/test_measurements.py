@@ -53,8 +53,8 @@ def test_list_measurements_returns_all(mr: Path):
         memory_root=mr, device_slug=SLUG, repair_id=REPAIR,
     )
     assert result["found"] is True
-    assert len(result["events"]) == 2
-    assert result["events"][0]["value"] == 2.87
+    assert len(result["measurements"]) == 2
+    assert result["measurements"][0]["value"] == 2.87
 
 
 def test_list_measurements_filter_target(mr: Path):
@@ -69,7 +69,7 @@ def test_list_measurements_filter_target(mr: Path):
     rail = mb_list_measurements(
         memory_root=mr, device_slug=SLUG, repair_id=REPAIR, target="rail:+3V3",
     )
-    assert len(rail["events"]) == 1
+    assert len(rail["measurements"]) == 1
 
 
 def test_compare_measurements_happy(mr: Path):

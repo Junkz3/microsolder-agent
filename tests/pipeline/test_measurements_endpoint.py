@@ -41,14 +41,14 @@ def test_post_measurement_records(tmp_memory: Path, client: TestClient):
     assert payload["auto_classified_mode"] == "anomalous"
 
 
-def test_get_measurements_returns_events(tmp_memory: Path, client: TestClient):
+def test_get_measurements_returns_journal(tmp_memory: Path, client: TestClient):
     client.post(
         f"/pipeline/packs/{SLUG}/repairs/{REPAIR}/measurements",
         json={"target": "rail:+3V3", "value": 2.87, "unit": "V", "nominal": 3.3},
     )
     r = client.get(f"/pipeline/packs/{SLUG}/repairs/{REPAIR}/measurements")
     assert r.status_code == 200
-    assert len(r.json()["events"]) == 1
+    assert len(r.json()["measurements"]) == 1
 
 
 def test_get_measurements_filter_target(tmp_memory: Path, client: TestClient):
@@ -63,5 +63,5 @@ def test_get_measurements_filter_target(tmp_memory: Path, client: TestClient):
     r = client.get(
         f"/pipeline/packs/{SLUG}/repairs/{REPAIR}/measurements?target=comp:Q17",
     )
-    assert len(r.json()["events"]) == 1
-    assert r.json()["events"][0]["target"] == "comp:Q17"
+    assert len(r.json()["measurements"]) == 1
+    assert r.json()["measurements"][0]["target"] == "comp:Q17"

@@ -125,7 +125,7 @@ def mb_list_measurements(
     )
     return {
         "found": True,
-        "events": [e.model_dump() for e in events],
+        "measurements": [e.model_dump() for e in events],
     }
 
 
