@@ -2416,15 +2416,15 @@ async def _forward_ws_to_session(
             continue
 
         # Tech pressed Abandon on the running quest panel — mark the protocol
-        # as abandoned in the on-disk store and broadcast a protocol_updated
-        # WS event so the UI cleans its state. We deliberately do NOT inject
-        # a synthetic user.message into the MA session: the state machine
-        # rejects out-of-order user events (after replay or mid-stream)
-        # with a generic "internal service error", surfaced to the tech as
-        # noise. The on-disk transition (proto.status="abandoned" and
-        # cleared active_pointer) is enough — any subsequent protocol-aware
-        # tool call will return "no_active_protocol" and the agent will
-        # learn naturally on the next user turn.
+        # as abandoned in the on-disk store, broadcast a protocol_updated WS
+        # event so the UI cleans its state, and forward a synthetic
+        # user.message so the agent stops acting on the dead protocol. The
+        # session.events.send call is wrapped in try/except: if the MA
+        # state machine rejects the synthetic (rare, was previously masked
+        # by the now-fixed oversized seed bug), the protocol is still
+        # abandoned cleanly on disk and the UI panel cleans up — only the
+        # agent stays oblivious until its next protocol-aware tool call
+        # gets a "no_active_protocol" return.
         if payload.get("type") == "protocol_abandon":
             from api.tools.protocol import (
                 load_active_protocol,
@@ -2451,6 +2451,25 @@ async def _forward_ws_to_session(
                     "history_tail": [h.model_dump(mode="json") for h in history_tail],
                     "status": "abandoned",
                 })
+                synthetic = (
+                    f"[protocol_abandoned] The technician abandoned the "
+                    f"running protocol. Reason: {reason}. Stop acting on "
+                    f"this protocol; do not re-emit it; if relevant, "
+                    f"propose a fresh approach or ask a clarifying question."
+                )
+                try:
+                    await client.beta.sessions.events.send(
+                        session_id,
+                        events=[{"type": "user.message",
+                                 "content": [{"type": "text", "text": synthetic}]}],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[Diag-MA] protocol_abandoned synthetic forward failed "
+                        "session=%s exc=%s — UI cleaned up, agent will learn on "
+                        "next tool call (no_active_protocol)",
+                        session_id, type(exc).__name__,
+                    )
             else:
                 await ws.send_json({
                     "type": "error",
