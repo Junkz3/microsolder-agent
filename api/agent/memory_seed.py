@@ -81,14 +81,20 @@ def write_seed_marker(
 # Files we push into the store and the memory path they land on. Path scheme
 # `/knowledge/*` is reserved for pipeline-authored memories; `/field_reports/*`
 # is for write-backs from diagnostic sessions (see record_field_report).
+#
+# `electrical_graph.json` and `nets_classified.json` are deliberately NOT
+# seeded: both regularly exceed the MA per-memory cap (102_400 bytes — the
+# minified electrical graph for a real motherboard hits ~390 KiB). They are
+# instead surfaced via the `mb_schematic_graph` tool (api/tools/schematic.py)
+# which reads them server-side and projects per-query slices, so the agent
+# never needs the raw blob inside its memory store. Re-adding them here would
+# revert to the 400-on-every-WS-open noise we saw on 2026-04-28.
 _SEED_FILES = (
     ("registry.json", "/knowledge/registry.json"),
     ("knowledge_graph.json", "/knowledge/knowledge_graph.json"),
     ("rules.json", "/knowledge/rules.json"),
     ("dictionary.json", "/knowledge/dictionary.json"),
-    ("electrical_graph.json", "/knowledge/electrical_graph.json"),
     ("boot_sequence_analyzed.json", "/knowledge/boot_sequence_analyzed.json"),
-    ("nets_classified.json", "/knowledge/nets_classified.json"),
     ("simulator_reliability.json", "/knowledge/simulator_reliability.json"),
 )
 

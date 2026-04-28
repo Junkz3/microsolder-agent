@@ -3194,4 +3194,26 @@ async def _forward_session_to_ws(
             elif etype == "session.error":
                 err = getattr(event, "error", None)
                 msg = getattr(err, "message", None) if err is not None else None
+                # Dump the full event so the next "An internal service error
+                # occurred." surfaces with enough context to act on (MA error
+                # type, request_id if present, the raw event payload). Without
+                # this, the frontend shows the user a wall and we have no log
+                # to bisect transient-MA-hiccup vs. our-own-bug.
+                err_type = getattr(err, "type", None) if err is not None else None
+                request_id = getattr(event, "request_id", None) or (
+                    getattr(err, "request_id", None) if err is not None else None
+                )
+                try:
+                    raw = event.model_dump() if hasattr(event, "model_dump") else repr(event)
+                except Exception:  # noqa: BLE001
+                    raw = repr(event)
+                logger.error(
+                    "[Diag-MA] session.error session=%s err_type=%s msg=%s "
+                    "request_id=%s raw=%s",
+                    session_id,
+                    err_type,
+                    msg,
+                    request_id,
+                    raw,
+                )
                 await ws.send_json({"type": "error", "text": msg or "session error"})
