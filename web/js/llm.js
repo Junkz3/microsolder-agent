@@ -435,6 +435,38 @@ function escapeHTML(s) {
     .replaceAll("'", "&#39;");
 }
 
+// Append a small terminal-state chip to the chat log (abandoned / completed).
+// Distinct visual from agent/user messages — centered, muted, mono — so the
+// tech can scroll back through the conv and see when a sequence was dropped
+// or finished, and why. Idempotent on protocol_id+kind to avoid duplicates
+// when the same event arrives twice (replay race, double-emit, etc.).
+function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
+  const log = el("llmLog");
+  if (!log) return;
+  const dedupeKey = `${kind}:${protocol_id || "none"}`;
+  if (log.querySelector(`.protocol-system-event[data-key="${dedupeKey}"]`)) return;
+  const chip = document.createElement("div");
+  chip.className = `protocol-system-event is-${kind}`;
+  chip.dataset.key = dedupeKey;
+  const label = kind === "abandoned"
+    ? (window.t?.("protocol.system_event.abandoned") || "Protocol abandoned")
+    : (window.t?.("protocol.system_event.completed") || "Protocol completed");
+  // Inline SVG matches the project's icon convention (16/12 px,
+  // stroke="currentColor", stroke-width=1.6) — no font icon dependency.
+  const icon = kind === "abandoned"
+    ? `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg>`
+    : `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
+  chip.innerHTML = icon + `<span>${escapeHTML(label)}</span>`;
+  if (reason && reason !== "tech_dismiss") {
+    const r = document.createElement("span");
+    r.className = "pse-reason";
+    r.textContent = `· ${reason}`;
+    chip.appendChild(r);
+  }
+  log.appendChild(chip);
+  log.scrollTop = log.scrollHeight;
+}
+
 // Mode C — inline protocol step card in the chat stream when no board is loaded.
 // Renders only the active step (past steps are summarized in the wizard).
 // One card per active step id; subsequent events for the same id no-op.
@@ -969,6 +1001,26 @@ function connect() {
     // the wizard column visible.
     if (typeof payload.type === "string" && payload.type.startsWith("protocol_")) {
       window.Protocol?.applyEvent(payload);
+      // Surface terminal-state chips in the chat stream regardless of board
+      // mode — abandon and completion are session-level events the tech
+      // should see in their scrollback. Reason is the human-supplied
+      // textarea entry from the abandon modal (or "tech_dismiss" default).
+      if (payload.type === "protocol_updated") {
+        if (payload.action === "abandoned" || payload.status === "abandoned") {
+          appendProtocolSystemEvent("abandoned", {
+            protocol_id: payload.protocol_id,
+            reason: payload.reason || payload.history_tail?.slice(-1)?.[0]?.reason,
+          });
+        } else if (payload.status === "completed") {
+          appendProtocolSystemEvent("completed", {
+            protocol_id: payload.protocol_id,
+          });
+        }
+      } else if (payload.type === "protocol_completed") {
+        appendProtocolSystemEvent("completed", {
+          protocol_id: payload.protocol_id,
+        });
+      }
       // Pending confirmation + timeout drive the modal only — do not render
       // an inline card in the chat stream (the modal is a global blocker).
       const isModalOnly = (

@@ -44,6 +44,10 @@
       "confirm": "Yes, abandon"
     }
   },
+  "system_event": {
+    "abandoned": "Protocol abandoned",
+    "completed": "Protocol completed"
+  },
   "confirm": {
     "badge": "Proposed protocol",
     "step_count_placeholder": "— steps",

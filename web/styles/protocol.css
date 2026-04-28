@@ -302,3 +302,43 @@ body.has-protocol-quest .brd-inspector { right: 332px; }
 .protocol-inline-card .protocol-step-rationale {
   font-size: 11px; color: var(--text-3); margin: 2px 0 0;
 }
+
+/* Inline chip surfaced in the chat stream when a protocol reaches a
+   terminal state (abandoned, completed). Distinct from agent/user
+   messages — centered, muted, mono — so the technician can scroll
+   back and see when the sequence was dropped/finished and why. */
+.protocol-system-event {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 8px auto;
+  padding: 6px 10px;
+  max-width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-3);
+  font: 500 10.5px 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.protocol-system-event .pse-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+.protocol-system-event.is-abandoned {
+  color: var(--violet);
+  border-color: color-mix(in oklch, var(--violet) 35%, var(--border));
+}
+.protocol-system-event.is-completed {
+  color: var(--emerald);
+  border-color: color-mix(in oklch, var(--emerald) 35%, var(--border));
+}
+.protocol-system-event .pse-reason {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--text-2);
+}

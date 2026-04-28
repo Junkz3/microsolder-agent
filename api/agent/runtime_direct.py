@@ -1068,6 +1068,7 @@ async def run_diagnostic_session_direct(
                         "steps": [s.model_dump(mode="json") for s in (proto.steps if proto else [])],
                         "history_tail": [h.model_dump(mode="json") for h in history_tail],
                         "status": "abandoned",
+                        "reason": reason,
                     })
                     synthetic = (
                         f"[protocol_abandoned] The technician abandoned the "
