@@ -70,6 +70,15 @@ export function applyEvent(ev) {
       break;
     case "protocol_updated":
       if (!state.proto || state.proto.protocol_id !== ev.protocol_id) break;
+      // Abandon (or any terminal status) clears the quest panel entirely
+      // — same effect as protocol_completed. Without this, the panel stays
+      // pinned in an empty/zombie state because state.proto is still
+      // truthy and renderQuest only hides on null.
+      if (ev.action === "abandoned" || ev.status === "abandoned"
+          || ev.status === "completed") {
+        state.proto = null;
+        break;
+      }
       state.proto.steps = ev.steps ? ev.steps.map(cleanStep) : state.proto.steps;
       state.proto.current_step_id = ev.current_step_id;
       if (Array.isArray(ev.history_tail)) {
