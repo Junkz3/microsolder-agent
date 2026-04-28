@@ -1,4 +1,4 @@
-.PHONY: install run test test-all test-fast test-eval lint format clean help build-field-corpus demo-fallback pin-cdn
+.PHONY: install run test test-all test-fast test-eval lint format clean help build-field-corpus demo-fallback pin-cdn tools-inventory
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -25,6 +25,7 @@ help:
 	@echo "  make lint      Run ruff check"
 	@echo "  make format    Run ruff format"
 	@echo "  make clean     Remove caches (keeps .venv)"
+	@echo "  make tools-inventory  Regenerate docs/tools.md from api/agent/manifest.py"
 
 install:
 	$(PYTHON) -m venv $(VENV)
@@ -88,6 +89,13 @@ demo-fallback:
 # Vendored files are gitignored (re-fetched on demand).
 pin-cdn:
 	bash scripts/pin_cdn.sh
+
+# Re-generate docs/tools.md from api/agent/manifest.py. Idempotent: the
+# script writes only when the rendered body actually changed. Run after
+# adding / editing / removing any tool in MB_TOOLS, BV_TOOLS, etc., and
+# commit docs/tools.md alongside the manifest change.
+tools-inventory:
+	$(PY) scripts/dump_tools_inventory.py
 
 # --- Evolve (overnight self-improvement loop) ---
 

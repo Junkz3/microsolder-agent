@@ -1,9 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tool manifest + system prompt builders for the diagnostic agent.
 
-- MB_TOOLS: the always-on memory-bank family (4 tools).
-- BV_TOOLS: the boardview control family (12 tools), exposed only when
-  a board is loaded in the session.
+Tool families (counts kept in sync with the lists below — the
+`tests/agent/test_dump_tools_inventory.py` regression test reads them
+back from this module and fails if the docstring drifts):
+
+- MB_TOOLS: 14 memory-bank + board aggregation + schematic engines
+  (always-on).
+- BV_TOOLS: 13 boardview controls (exposed only when a board is loaded
+  in the session).
+- PROFILE_TOOLS: 3 technician-profile tools (always-on).
+- PROTOCOL_TOOLS: 4 guided-protocol tools (always-on).
+- CAM_TOOLS: 1 camera capture tool (exposed only when the frontend
+  reported a camera available on session open).
+- CONSULT_TOOLS: 1 cross-tier escalation tool (Managed-Agents runtime
+  only — see `build_tools_manifest` for the rationale).
+
+Auto-generated reference: `docs/tools.md` (regenerate via
+`make tools-inventory`).
+
 - build_tools_manifest(session): produces the per-session manifest
   passed to Anthropic's messages.create or the Managed Agent definition.
 - render_system_prompt(session, device_slug): DIRECT-runtime only; the
