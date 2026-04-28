@@ -1,4 +1,4 @@
-.PHONY: install run test test-all test-fast test-eval lint format clean help build-field-corpus demo-fallback pin-cdn tools-inventory doctor
+.PHONY: install run test test-all test-fast test-eval eval-all lint format clean help build-field-corpus demo-fallback pin-cdn tools-inventory doctor
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -67,6 +67,13 @@ test-eval:
 	@SCORE=$$($(PY) -m scripts.eval_simulator --device mnt-reform-motherboard | $(PY) -c "import json, sys; print(json.loads(sys.stdin.read())['score'])"); \
 		echo "simulator score = $$SCORE"; \
 		$(PY) -c "import sys; sys.exit(0 if float('$$SCORE') >= 0.5 else 1)" || (echo "FAIL: score below 0.5 floor" && exit 1)
+
+# Composite eval suite — runs eval_simulator by default (free, deterministic).
+# Add --include-pipeline / --include-vision / --include-agent (or --include-all)
+# to opt into the real-API evals. Writes a JSON report under
+# benchmark/eval_runs/ and compares against the previous run for regressions.
+eval-all:
+	$(PY) scripts/eval_all.py
 
 lint:
 	$(RUFF) check api/ tests/
