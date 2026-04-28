@@ -357,7 +357,7 @@ const SimulationController = {
       );
       if (!res.ok) return;
       const payload = await res.json();
-      const events = payload.events || [];
+      const events = payload.measurements || [];
       // Keep the latest event per target (events are stored in insertion order).
       const latest = new Map();
       for (const ev of events) latest.set(ev.target, ev);
@@ -403,7 +403,7 @@ const SimulationController = {
       );
       if (!res.ok) return [];
       const payload = await res.json();
-      return payload.events || [];
+      return payload.measurements || [];
     } catch (err) {
       console.warn("[measurements] GET failed", err);
       return [];
