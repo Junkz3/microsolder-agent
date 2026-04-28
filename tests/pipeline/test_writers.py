@@ -191,6 +191,54 @@ async def test_cache_warmup_sleep_is_awaited_between_writer1_and_writers_2_3(
     assert 0.5 in sleep_calls, f"Expected cache_warmup_seconds=0.5 to be awaited, got {sleep_calls}"
 
 
+async def test_default_cache_warmup_falls_back_to_settings(
+    monkeypatch, registry, dummy_outputs
+):
+    """When cache_warmup_seconds is omitted, the function reads
+    `Settings.pipeline_cache_warmup_seconds`. Pinning this prevents the
+    drift the previous `1.0` literal default introduced — that value is
+    exactly the one the settings comment documents as having caused
+    cache misses, so any caller who forgot the kwarg got the worst of
+    both worlds.
+    """
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        writers_mod,
+        "call_with_forced_tool",
+        _make_fake_call(captured, dummy_outputs),
+    )
+
+    sleep_calls: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def spy_sleep(seconds: float):
+        sleep_calls.append(seconds)
+        await real_sleep(seconds)
+
+    monkeypatch.setattr(writers_mod.asyncio, "sleep", spy_sleep)
+    monkeypatch.setattr(
+        writers_mod,
+        "get_settings",
+        lambda: type("S", (), {"pipeline_cache_warmup_seconds": 0.42})(),
+    )
+
+    # cache_warmup_seconds intentionally omitted — must come from settings.
+    await writers_mod.run_writers_parallel(
+        client=MagicMock(),
+        cartographe_model="opus",
+        clinicien_model="opus",
+        lexicographe_model="haiku",
+        device_label="Demo",
+        raw_dump="# dump",
+        registry=registry,
+    )
+
+    assert 0.42 in sleep_calls, (
+        f"Expected fallback to settings.pipeline_cache_warmup_seconds=0.42, "
+        f"got sleep_calls={sleep_calls}"
+    )
+
+
 async def test_clinicien_and_lexicographe_run_in_parallel(
     monkeypatch, registry, dummy_outputs
 ):

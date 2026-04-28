@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from anthropic import AsyncAnthropic
 
+from api.config import get_settings
 from api.pipeline.prompts import (
     CARTOGRAPHE_TASK,
     CLINICIEN_TASK,
@@ -150,7 +151,7 @@ async def run_writers_parallel(
     device_label: str,
     raw_dump: str,
     registry: Registry,
-    cache_warmup_seconds: float = 1.0,
+    cache_warmup_seconds: float | None = None,
     writer_stats: dict[str, PhaseTokenStats] | None = None,
 ) -> tuple[KnowledgeGraph, RulesSet, Dictionary]:
     """Launch the 3 writers with a staggered start for cache warming.
@@ -162,7 +163,14 @@ async def run_writers_parallel(
     cache entry, while Lexicographe — typically a cheaper model — writes its own.
     That split costs one extra cache_creation per run but saves far more on the
     per-component extraction tokens.
+
+    `cache_warmup_seconds` falls back to `Settings.pipeline_cache_warmup_seconds`
+    when None — that setting is the single source of truth for the empirically
+    tuned warmup window (3.0s, see `api/config.py`); the param exists only so
+    tests can drop it to 0 without monkeypatching settings.
     """
+    if cache_warmup_seconds is None:
+        cache_warmup_seconds = get_settings().pipeline_cache_warmup_seconds
     logger.info(
         "[Writers] Starting parallel writers "
         "(cart=%s clin=%s lex=%s · cache_warmup=%.1fs) for device=%r",
