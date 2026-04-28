@@ -6,27 +6,7 @@ import json
 import shutil
 from pathlib import Path
 
-import pytest
-from fastapi.testclient import TestClient
-
-from api import config as config_mod
-from api.main import app
-
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "demo-pack"
-
-
-@pytest.fixture
-def memory_root(tmp_path, monkeypatch):
-    """Redirect settings.memory_root to an isolated tmp dir per test."""
-    monkeypatch.setattr(config_mod, "_settings", None)
-    monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    yield tmp_path
-    monkeypatch.setattr(config_mod, "_settings", None)
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 def _copy_demo_pack(memory_root: Path, slug: str = "demo-pi") -> Path:

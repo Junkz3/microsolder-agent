@@ -69,13 +69,13 @@ class _FakeStream:
         self._final = final_message
         self._snapshot_content: list = []
 
-    async def __aenter__(self) -> "_FakeStream":
+    async def __aenter__(self) -> _FakeStream:
         return self
 
     async def __aexit__(self, *exc_info) -> bool:
         return False
 
-    def __aiter__(self) -> "_FakeStream":
+    def __aiter__(self) -> _FakeStream:
         return self
 
     async def __anext__(self):

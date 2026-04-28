@@ -7,24 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
-
-from api import config as config_mod
-from api.main import app
-
-
-@pytest.fixture
-def memory_root(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(config_mod, "_settings", None)
-    monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    yield tmp_path
-    monkeypatch.setattr(config_mod, "_settings", None)
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
 
 
 def test_post_document_writes_file_to_uploads(memory_root: Path, client: TestClient) -> None:

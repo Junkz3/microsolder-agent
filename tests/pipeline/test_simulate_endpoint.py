@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api.config as config_mod
-from api.main import app
 from api.pipeline.schematic.schemas import (
     BootPhase,
     ComponentNode,
@@ -67,11 +66,6 @@ def tmp_memory(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MEMORY_ROOT", str(memory_root))
     yield memory_root
     monkeypatch.setattr(config_mod, "_settings", None)
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
 
 
 def test_simulate_normal_boot_returns_full_timeline(tmp_memory: Path, client: TestClient):

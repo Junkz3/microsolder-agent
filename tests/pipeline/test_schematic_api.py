@@ -17,10 +17,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api import config as config_mod
-from api.main import app
 
 
 @pytest.fixture
@@ -30,11 +28,6 @@ def memory_root(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")  # AsyncAnthropic ctor
     yield tmp_path
     monkeypatch.setattr(config_mod, "_settings", None)
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 @pytest.fixture

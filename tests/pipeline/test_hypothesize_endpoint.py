@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api import config as config_mod
-from api.main import app
 from api.pipeline.schematic.schemas import (
     ComponentNode,
     ElectricalGraph,
@@ -57,11 +56,6 @@ def tmp_memory(tmp_path: Path, monkeypatch):
     (pack / "electrical_graph.json").write_text(_build_graph().model_dump_json(indent=2))
     yield tmp_path
     monkeypatch.setattr(config_mod, "_settings", None)
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
 
 
 def test_hypothesize_happy_schema_b(tmp_memory: Path, client: TestClient):

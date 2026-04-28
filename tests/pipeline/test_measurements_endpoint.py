@@ -9,15 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api import config
-from api.main import app
 
 SLUG = "demo"
 REPAIR = "r1"
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
 
 
 @pytest.fixture

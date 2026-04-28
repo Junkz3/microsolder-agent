@@ -12,19 +12,9 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api import config as config_mod
-from api.main import app
 from api.pipeline import events
-
-
-@pytest.fixture
-def memory_root(tmp_path, monkeypatch):
-    monkeypatch.setattr(config_mod, "_settings", None)
-    monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    yield tmp_path
-    monkeypatch.setattr(config_mod, "_settings", None)
 
 
 @pytest.fixture(autouse=True)
@@ -32,11 +22,6 @@ def _reset_bus():
     events.reset()
     yield
     events.reset()
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 async def _fake_pipeline(device_label, **kwargs):
