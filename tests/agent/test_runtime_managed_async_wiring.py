@@ -14,6 +14,13 @@ from pathlib import Path
 import pytest
 
 RUNTIME_PATH = Path(__file__).parent.parent.parent / "api" / "agent" / "runtime_managed.py"
+# After the runtime decomposition the wire-flow patterns live across the
+# ``api.agent.runtime`` sub-package files. The wiring tests still look for
+# the same source markers (`def _emit`, `cam_capture` branch, the
+# post-cancel block); to keep them honest the fixture concatenates every
+# runtime file so a future refactor that drops one of the patterns from
+# ANY of them still trips the assertion.
+RUNTIME_DIR = Path(__file__).parent.parent.parent / "api" / "agent" / "runtime"
 # `_SessionMirrors` was lifted out of ``runtime_managed.py`` into its own
 # module when the dispatch refactor landed (see ``tool_dispatch.py``), so
 # the AST contract test below has to inspect that module directly. The
@@ -27,7 +34,10 @@ SESSION_MIRRORS_PATH = (
 
 @pytest.fixture(scope="module")
 def runtime_source() -> str:
-    return RUNTIME_PATH.read_text()
+    parts = [RUNTIME_PATH.read_text()]
+    for child in sorted(RUNTIME_DIR.glob("*.py")):
+        parts.append(child.read_text())
+    return "\n".join(parts)
 
 
 @pytest.fixture(scope="module")
