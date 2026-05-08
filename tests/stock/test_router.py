@@ -18,6 +18,7 @@ def client(tmp_path, monkeypatch):
     # The router uses get_settings().memory_root in two places (parts list + has_pi check).
     # Patch the helper functions in router.py too:
     monkeypatch.setattr("api.stock.router._memory_root", lambda: memory, raising=False)
+    monkeypatch.setattr("api.stock.tools._memory_root", lambda: memory, raising=False)
 
     idx = PartsIndex(
         schema_version="1.0", device_slug="iphone-x",
@@ -111,3 +112,21 @@ def test_list_donor_parts(client):
     r = client.get(f"/api/stock/donors/{donor_id}/parts")
     body = r.json()
     assert body["parts"][0]["available"] is False
+
+
+def test_tool_stock_list_donors_shape(client):
+    client.post("/api/stock/donors", json={"device_slug": "iphone-x", "label": "A"})
+    from api.stock.tools import stock_list_donors as tool
+    out = tool()
+    assert "donors" in out
+    assert len(out["donors"]) == 1
+    assert "parts_available" in out["donors"][0]
+
+
+def test_tool_stock_search_shape(client):
+    client.post("/api/stock/donors", json={"device_slug": "iphone-x", "label": "A"})
+    from api.stock.tools import stock_search as tool
+    out = tool({"type": "capacitor", "value_canonical": "0.1uF",
+                "package": "0402", "requested_role": "decoupling"})
+    assert "exact_matches" in out
+    assert len(out["exact_matches"]) == 1
