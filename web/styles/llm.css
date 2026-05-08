@@ -317,6 +317,19 @@ body.llm-open .stub{right:420px}
   box-shadow: 0 0 0 2px rgba(148,163,184,.15);
 }
 .step.mem .step-icon { color: var(--text-3); }
+/* STOCK = donor inventory queries (stock_search / stock_consume / …). Uses
+   the emerald accent: net/rail family in the semantic ontology, which fits
+   "physical resource you can use" better than cyan (component) or amber
+   (symptom). */
+.step.stock {
+  color: var(--emerald);
+}
+.step.stock .node {
+  background: var(--emerald);
+  box-shadow: 0 0 0 2px rgba(52,211,153,.15);
+}
+.step.stock .step-icon { color: var(--emerald); }
+.step.stock .refdes { color: var(--emerald); }
 .step .step-phrase {
   flex: 1;
   /* min-width:0 is mandatory here — without it, `flex:1` + `white-space:nowrap`

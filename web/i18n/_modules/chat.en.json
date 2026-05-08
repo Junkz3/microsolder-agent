@@ -99,7 +99,13 @@
     "scene_arrow_many": "{n} arrows",
     "scene_focus": "focus <span class=\"refdes\">{refdes}</span>",
     "scene_dim": "dim",
-    "scene_reset": "reset"
+    "scene_reset": "reset",
+    "stock_search": "Searching stock for <span class=\"refdes\">{type} {value}</span>",
+    "stock_search_minimal": "Searching stock",
+    "stock_consume": "Consuming <span class=\"refdes\">{refdes}</span> from <span class=\"refdes\">{donor_id}</span>",
+    "stock_mark_donor": "Marking <span class=\"refdes\">{device_slug}</span> as donor",
+    "stock_unmark_donor": "Removing donor <span class=\"refdes\">{donor_id}</span>",
+    "stock_list_donors": "Listing donors in stock"
   },
   "memtool": {
     "read": "Memory read — {path}",

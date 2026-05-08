@@ -107,6 +107,14 @@ const ICON_MEM =
   'aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="2.5"/>' +
   '<path d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"/>' +
   '<path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>';
+// STOCK = donor inventory + parts harvest. Box / crate metaphor matches
+// the rail icon for #stock so the chat step is recognisable as the same
+// surface the technician sees in the workspace section.
+const ICON_STOCK =
+  '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+  'aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="1.5"/>' +
+  '<path d="M3 10h18M8 6v4M16 6v4"/></svg>';
 
 // Localized paraphrase + family icon for each known tool name. Each entry
 // is a function receiving the tool input object and returning
@@ -226,6 +234,37 @@ const TOOL_PHRASES = {
       phraseHTML: parts.length ? t('chat.tool.bv_scene', { parts: parts.join(", ") }) : t('chat.tool.bv_scene_empty'),
     };
   },
+
+  // --- Stock (donor inventory + part harvest) ---
+  stock_search: (i) => {
+    const tp = i?.type || "";
+    const v = i?.value_canonical || i?.mpn || "";
+    return {
+      icon: ICON_STOCK,
+      phraseHTML: (tp || v)
+        ? t('chat.tool.stock_search', { type: escapeHTML(tp), value: escapeHTML(v) })
+        : t('chat.tool.stock_search_minimal'),
+    };
+  },
+  stock_consume: (i) => ({
+    icon: ICON_STOCK,
+    phraseHTML: t('chat.tool.stock_consume', {
+      refdes: escapeHTML(i?.refdes || "?"),
+      donor_id: escapeHTML(i?.donor_id || "?"),
+    }),
+  }),
+  stock_mark_donor: (i) => ({
+    icon: ICON_STOCK,
+    phraseHTML: t('chat.tool.stock_mark_donor', { device_slug: escapeHTML(i?.device_slug || "?") }),
+  }),
+  stock_unmark_donor: (i) => ({
+    icon: ICON_STOCK,
+    phraseHTML: t('chat.tool.stock_unmark_donor', { donor_id: escapeHTML(i?.donor_id || "?") }),
+  }),
+  stock_list_donors: () => ({
+    icon: ICON_STOCK,
+    phraseHTML: t('chat.tool.stock_list_donors'),
+  }),
 };
 
 function toolFallback(name) {
@@ -1154,6 +1193,7 @@ function connect() {
         const turn = ensureTurn();
         const name = payload.name || "?";
         const kind = name.startsWith("bv_") ? "bv" :
+                     name.startsWith("stock_") ? "stock" :
                      name.startsWith("mb_") ? "mb" : "mb";
         const renderer = TOOL_PHRASES[name];
         const { icon, phraseHTML } = renderer ? renderer(payload.input || {}) : toolFallback(name);
