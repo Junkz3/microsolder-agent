@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import tempfile
@@ -123,6 +124,15 @@ def main() -> None:
              "existing electrical_graph.json (no recompile). Fast — seconds. "
              "Use after upgrading from a Phase 1 graph to Phase 4.",
     )
+    parser.add_argument(
+        "--build-parts-index",
+        type=str,
+        metavar="SLUG",
+        help="Re-build memory/{SLUG}/parts_index.json from the existing "
+             "electrical_graph + classifications (no schematic ingestion). "
+             "Useful when safety rules change or passive_classification was "
+             "edited by hand.",
+    )
     parser.add_argument("pdf", nargs="?", type=Path, help="Path to the schematic PDF.")
     parser.add_argument("page", nargs="?", type=int, help="1-based page number to analyse.")
     parser.add_argument(
@@ -175,9 +185,41 @@ def main() -> None:
         )
         return 0
 
+    # Handle --build-parts-index mode (early return)
+    if args.build_parts_index:
+        from api.stock.parts_index import build_parts_index
+
+        slug = args.build_parts_index
+        memory_dir = Path(settings.memory_root) / slug
+        if not memory_dir.exists():
+            print(f"error: memory/{slug}/ does not exist", file=sys.stderr)
+            return 1
+        eg_path = memory_dir / "electrical_graph.json"
+        if not eg_path.exists():
+            print(
+                f"error: {eg_path} does not exist — run full ingestion first",
+                file=sys.stderr,
+            )
+            return 1
+
+        eg = json.loads(eg_path.read_text(encoding="utf-8"))
+        pc_path = memory_dir / "passive_classification_llm.json"
+        nc_path = memory_dir / "nets_classified.json"
+        pc = json.loads(pc_path.read_text(encoding="utf-8")) if pc_path.exists() else None
+        nc = json.loads(nc_path.read_text(encoding="utf-8")) if nc_path.exists() else None
+
+        idx = build_parts_index(
+            slug=slug, electrical_graph=eg,
+            passive_classification=pc, nets_classified=nc,
+        )
+        out = memory_dir / "parts_index.json"
+        out.write_text(idx.model_dump_json(indent=2), encoding="utf-8")
+        print(f"wrote {out} ({len(idx.entries)} entries)")
+        return 0
+
     # Normal vision mode (requires pdf and page args)
     if args.pdf is None or args.page is None:
-        parser.error("either --classify-passives or (pdf + page) required")
+        parser.error("either --classify-passives, --build-parts-index, or (pdf + page) required")
 
     output = args.output or Path(
         f"/tmp/schematic_page_{args.page}_{args.model.replace('-', '_')}.json"
