@@ -50,6 +50,12 @@ GROUPS: list[tuple[str, str, str]] = [
         "inventory.",
     ),
     (
+        "STOCK_TOOLS",
+        "Stock & donor salvage",
+        "Always-on. Search across donor boards for replacement parts with "
+        "a hard safety filter, mark donors, mark parts consumed.",
+    ),
+    (
         "PROTOCOL_TOOLS",
         "Diagnostic protocol",
         "Always-on. Emit and steer a typed, stepwise diagnostic protocol "
@@ -175,6 +181,7 @@ def render_inventory() -> str:
         "MB_TOOLS": "always",
         "BV_TOOLS": "session has a board",
         "PROFILE_TOOLS": "always",
+        "STOCK_TOOLS": "always",
         "PROTOCOL_TOOLS": "always",
         "CAM_TOOLS": "session reports a camera",
         "CONSULT_TOOLS": "Managed-Agents runtime only",

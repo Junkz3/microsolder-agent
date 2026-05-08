@@ -9,6 +9,8 @@ back from this module and fails if the docstring drifts):
 - BV_TOOLS: 13 boardview controls (exposed only when a board is loaded
   in the session).
 - PROFILE_TOOLS: 3 technician-profile tools (always-on).
+- STOCK_TOOLS: 5 stock & donor salvage tools (always-on). Search the
+  technician's donor inventory, mark/unmark donors, mark parts consumed.
 - PROTOCOL_TOOLS: 4 guided-protocol tools (always-on).
 - CAM_TOOLS: 1 camera capture tool (exposed only when the frontend
   reported a camera available on session open).
@@ -781,6 +783,114 @@ PROFILE_TOOLS: list[dict] = [
 ]
 
 
+STOCK_TOOLS: list[dict] = [
+    {
+        "type": "custom",
+        "name": "stock_search",
+        "description": (
+            "Search the technician's donor stock for a part matching the given "
+            "electrical signature. Returns exact_matches (safe to use), "
+            "tolerant_matches (acceptable substitutions with explicit warnings), "
+            "and blocked_substitutes (refused for safety — do not mention these to "
+            "the user). Call this proactively after confirming a cause that "
+            "requires component replacement, BEFORE recommending where to source "
+            "the part."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["capacitor", "resistor", "inductor", "diode", "ic",
+                             "transistor", "ferrite", "connector"],
+                },
+                "value_canonical": {"type": "string",
+                                    "description": "e.g. '0.1uF', '10k', or full MPN for ICs"},
+                "package": {"type": "string", "description": "e.g. '0402', 'QFN-24'"},
+                "mpn": {"type": "string", "description": "exact MPN (required for ICs)"},
+                "voltage_min": {"type": "number",
+                                "description": "minimum voltage_rating (caps only)"},
+                "requested_role": {
+                    "type": "string",
+                    "description": (
+                        "Functional role of the part in the *target* repair (board being fixed). "
+                        "Use the canonical role taxonomy: decoupling, bulk, filter, "
+                        "ac_coupling, tank, bypass, feedback, pull_up, pull_down, "
+                        "current_sense, damping, series, load_switch, level_shifter, "
+                        "inrush_limiter, flyback_switch, ic, connector. If unsure, "
+                        "omit — a missing role disables tolerant substitution (fail-safe)."
+                    ),
+                },
+                "exclude_donors": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["type"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "stock_consume",
+        "description": (
+            "Mark a component as harvested from a donor (no longer available for "
+            "future searches). Call this when the technician confirms they took a "
+            "part out of a stocked donor board."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "donor_id": {"type": "string"},
+                "refdes": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["donor_id", "refdes"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "stock_mark_donor",
+        "description": (
+            "Declare a board as a donor in the technician's physical stock. Use "
+            "ONLY when the technician explicitly says they have this board on "
+            "their bench as a donor. Returns the generated donor_id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "device_slug": {"type": "string",
+                                "description": "must match an existing memory/{slug}/ directory"},
+                "label": {"type": "string"},
+                "condition": {"type": "string",
+                              "enum": ["donor_only", "potentially_repairable"],
+                              "default": "donor_only"},
+            },
+            "required": ["device_slug", "label"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "stock_unmark_donor",
+        "description": (
+            "Remove a donor from physical stock (e.g., the tech repaired it or "
+            "threw it out)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"donor_id": {"type": "string"}},
+            "required": ["donor_id"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "stock_list_donors",
+        "description": (
+            "List all donors currently in physical stock with their availability "
+            "summary. Use when the technician asks 'what do I have in stock' or "
+            "to inform a search strategy."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
+
 PROTOCOL_TOOLS: list[dict] = [
     {
         "type": "custom",
@@ -1002,7 +1112,7 @@ def build_tools_manifest(session: SessionState) -> list[dict]:
     tool would let the agent call something with no dispatcher behind it.
     The MA runtime bakes CONSULT_TOOLS into each tier-scoped agent at
     bootstrap time (see `scripts/bootstrap_managed_agent.py`)."""
-    manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS) + list(PROTOCOL_TOOLS)
+    manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS) + list(STOCK_TOOLS) + list(PROTOCOL_TOOLS)
     if session.board is not None:
         manifest.extend(BV_TOOLS)
     if session.has_camera:
@@ -1233,6 +1343,23 @@ insert / skip / reorder.
 
 If the tech says "no protocol" / "let's chat" / "no steps" or
 similar, do not emit. Stay in free chat mode as before.
+
+STOCK AWARENESS — always check local stock before external sourcing.
+When you confirm a root cause that requires replacing a specific component
+(refdes + value), ALWAYS call `stock_search` before recommending where the
+technician should source the part. Pass the part's functional role
+(`requested_role`) so the safety filter knows whether tolerant substitutions
+are acceptable.
+
+If exact matches exist in stock, surface them first with the donor label,
+refdes, and schematic page. If only tolerant matches exist, surface them
+with the warnings provided by the tool. If `blocked_substitutes` are
+returned, do NOT mention them to the user — they are unsafe substitutions
+filtered out for their protection. If no matches exist, recommend external
+sourcing as fallback.
+
+Never invent stock entries. Never recommend a substitution outside what
+`stock_search` returns.
 
 TIER. When you are running on tier=fast (Haiku), you are
 under-sized for complex diagnostics (long tail, dense schematic).

@@ -85,6 +85,7 @@ from api.agent.manifest import (
     MB_TOOLS,
     PROFILE_TOOLS,
     PROTOCOL_TOOLS,
+    STOCK_TOOLS,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -481,7 +482,7 @@ _CURATOR_TOOLSET = {
 # tier, so escalation from it would either be a no-op (Opus → Opus) or a
 # downgrade (Opus → Sonnet). The escalation graph is therefore strictly
 # ascending: a tier may spawn a deeper one, never a shallower one.
-_BASE_TOOLS = MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + PROTOCOL_TOOLS + CAM_TOOLS
+_BASE_TOOLS = MB_TOOLS + BV_TOOLS + PROFILE_TOOLS + STOCK_TOOLS + PROTOCOL_TOOLS + CAM_TOOLS
 
 TOOLS_WITH_CONSULT = _ma_filter(_BASE_TOOLS + CONSULT_TOOLS) + [_AGENT_TOOLSET]
 TOOLS_NO_CONSULT = _ma_filter(_BASE_TOOLS) + [_AGENT_TOOLSET]
