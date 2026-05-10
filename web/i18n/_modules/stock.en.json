@@ -21,7 +21,6 @@
   "type_ferrite": "Ferrite",
   "type_connector": "Connector",
   "exact_matches": "Exact matches",
-  "tolerant_matches": "Tolerant matches",
   "col_refdes": "Refdes",
   "col_type": "Type",
   "col_value": "Value",

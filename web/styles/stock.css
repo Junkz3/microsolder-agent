@@ -112,7 +112,6 @@ body.standalone-tool #stockBackBtn { display: inline-flex; }
   color: var(--text-2); font-family: 'JetBrains Mono', monospace;
 }
 .result-exact h3 { border-left: 3px solid var(--emerald); }
-.result-tolerant h3 { border-left: 3px solid var(--amber); }
 .result-list { list-style: none; padding: 0; margin: 0; }
 .result-list li {
   display: grid;

@@ -341,18 +341,13 @@ function renderSearchResults(res) {
                             data-donor="${escapeHtml(m.donor_id)}"
                             data-refdes="${escapeHtml(m.refdes)}">${t("stock.mark_consumed")}</button></td>
               </tr>
-              ${m.substitution_warnings.length ? `
-                <tr class="warnings-row">
-                  <td colspan="8">${m.substitution_warnings.map(w => `· ${escapeHtml(w)}`).join("<br>")}</td>
-                </tr>` : ""}
             `).join("")}
           </tbody>
         </table>
       </div>
     `;
   };
-  out.innerHTML = section("stock.exact_matches", res.exact_matches, "exact")
-                + section("stock.tolerant_matches", res.tolerant_matches, "tolerant");
+  out.innerHTML = section("stock.exact_matches", res.exact_matches, "exact");
   out.onclick = async (ev) => {
     const btn = ev.target.closest("[data-mark-consumed]");
     if (!btn) return;
