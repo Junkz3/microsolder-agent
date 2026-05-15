@@ -142,22 +142,10 @@ async function setLocale(lang) {
 function onChange(fn) { changeListeners.add(fn); return () => changeListeners.delete(fn); }
 function onReady(fn) { ready.then(fn); }
 
-function wireSwitcher() {
-  const buttons = document.querySelectorAll('.lang-switch .lang-btn');
-  if (!buttons.length) return;
-  const refresh = () => buttons.forEach((b) => b.setAttribute('aria-pressed', b.dataset.lang === currentLocale ? 'true' : 'false'));
-  buttons.forEach((btn) => {
-    btn.addEventListener('click', () => { setLocale(btn.dataset.lang); });
-  });
-  refresh();
-  onChange(refresh);
-}
-
 async function init() {
   await loadLocale(currentLocale);
   if (currentLocale !== DEFAULT_LOCALE) await loadLocale(DEFAULT_LOCALE);
   applyDom();
-  wireSwitcher();
   readyResolve();
 }
 

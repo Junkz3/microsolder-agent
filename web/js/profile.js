@@ -238,6 +238,9 @@ async function changePref(key, value) {
     body: JSON.stringify(next),
   });
   _state = fresh;
+  if (key === "language" && window.i18n && value !== window.i18n.locale) {
+    await window.i18n.setLocale(value);
+  }
   renderPrefs();
   renderHead();
   renderRibbon();

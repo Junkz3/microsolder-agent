@@ -66,6 +66,20 @@ if (!window.Boardview) {
 (async function bootstrap() {
   // Wait for i18n dictionaries before any module renders dynamic strings.
   if (window.i18n && window.i18n.ready) await window.i18n.ready;
+  // Profile is the source of truth for the user's language. localStorage is
+  // just a paint-hint cache. Fire-and-forget reconcile after i18n is ready;
+  // any module subscribed via i18n.onChange re-renders if the profile differs.
+  (async () => {
+    try {
+      const r = await fetch("/profile");
+      if (!r.ok) return;
+      const data = await r.json();
+      const pref = data?.profile?.preferences?.language;
+      if (pref && pref !== window.i18n.locale && window.i18n.SUPPORTED.includes(pref)) {
+        await window.i18n.setLocale(pref);
+      }
+    } catch {}
+  })();
   mountMascot(document.getElementById("brandMascot"), { size: "xs", state: "idle" });
   wireRouter();
   initNewRepairModal();
