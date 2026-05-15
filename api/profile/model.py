@@ -33,7 +33,7 @@ class Preferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     verbosity: VerbosityValue = "auto"
-    language: LanguageValue = "fr"
+    language: LanguageValue = "en"
 
 
 class ToolInventory(BaseModel):

@@ -18,9 +18,13 @@ def _group_skill_ids_with_usages(
     return out
 
 
+_LANG_LABEL = {"fr": "French", "en": "English"}
+
+
 def render_technician_block(profile: TechnicianProfile) -> str:
     level = global_level(profile)
     verbosity = effective_verbosity(profile)
+    language = _LANG_LABEL.get(profile.preferences.language, "English")
     buckets = skills_by_status(profile)
 
     tools_have = [t.value for t in ToolId if getattr(profile.tools, t.value)]
@@ -45,6 +49,8 @@ def render_technician_block(profile: TechnicianProfile) -> str:
         f"Name: {name} · {years} years XP · Level: {level}\n"
         f"Target verbosity: {verbosity} "
         "(adjust if the tech asks for more/less detail)\n"
+        f"Reply language: {language} "
+        "(switch only if the tech writes in another language or asks)\n"
         f"Specialties: {specs}\n"
         f"Tools available: {tools_have_str}\n"
         f"Tools NOT available: {tools_missing_str}\n"
@@ -52,6 +58,9 @@ def render_technician_block(profile: TechnicianProfile) -> str:
         f"Skills practiced (3-9×): {practiced_str}\n"
         f"Skills learning (1-2×): {learning_str}\n"
         "Rules:\n"
+        "  - Reply in the declared language by default. Mirror the tech "
+        "if they consistently write in another language, or switch when "
+        "they explicitly ask.\n"
         "  - NEVER propose an action that requires an unavailable tool "
         "— propose a workaround or ask.\n"
         "  - For mastered skills, get straight to the point "

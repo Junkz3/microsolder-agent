@@ -19,7 +19,7 @@ def test_default_profile_valid_and_empty():
     assert p.identity.name == ""
     assert p.identity.level_override is None
     assert p.preferences.verbosity == "auto"
-    assert p.preferences.language == "fr"
+    assert p.preferences.language == "en"
     # Every tool key present, all False.
     for tool in ToolId:
         assert getattr(p.tools, tool.value) is False

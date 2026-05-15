@@ -47,6 +47,20 @@ def test_block_always_contains_rules_preamble():
     assert "profile_track_skill" in block
 
 
+def test_default_profile_declares_english_reply_language():
+    p = TechnicianProfile.default()
+    block = render_technician_block(p)
+    assert "Reply language: English" in block
+
+
+def test_french_pref_declares_french_reply_language():
+    p = TechnicianProfile.default()
+    p.preferences.language = "fr"
+    block = render_technician_block(p)
+    assert "Reply language: French" in block
+    assert "Reply language: English" not in block
+
+
 def test_system_prompt_includes_technician_block():
     from api.agent.manifest import render_system_prompt
     from api.session.state import SessionState
