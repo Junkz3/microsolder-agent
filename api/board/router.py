@@ -24,6 +24,18 @@ router = APIRouter(prefix="/api/board", tags=["board"])
 
 _UPLOAD_CHUNK = 1 << 20  # 1 MB
 
+# Process-local cache for /render. Boardview parsing is the heaviest
+# synchronous work the API does (a 5 MB .tvw takes ~5 s to parse +
+# serialise on a 5700X3D), and `renderDashboardData` hits this endpoint
+# every time the user opens a repair dashboard — just to count
+# net_diagnostics for the "diagnostic-ready" badge. Caching by
+# (resolved file path, mtime) gives byte-exact invalidation: if the
+# tech swaps the active pin or re-uploads a board, the new file has a
+# new path or mtime and misses the cache. Bounded to MAX_ENTRIES so a
+# long-running process doesn't grow unbounded under heavy device churn.
+_RENDER_CACHE_MAX_ENTRIES = 16
+_render_cache: dict[tuple[str, float], dict] = {}
+
 
 @router.post("/parse")
 async def parse_board(file: UploadFile = File(...)) -> dict:  # noqa: B008
@@ -160,6 +172,17 @@ async def render_board(slug: str) -> dict:
             },
         )
     try:
+        mtime = path.stat().st_mtime
+    except OSError as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"detail": "io-error", "message": str(e)},
+        ) from e
+    cache_key = (str(path), mtime)
+    cached = _render_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
         parser = parser_for(path)
         board = parser.parse_file(path)
     except UnsupportedFormatError as e:
@@ -184,4 +207,11 @@ async def render_board(slug: str) -> dict:
             status_code=500,
             detail={"detail": "io-error", "message": str(e)},
         ) from e
-    return to_render_payload(board)
+    payload = to_render_payload(board)
+    # Bound the cache before inserting. FIFO-style trim is enough here —
+    # workloads alternate between a few active devices, not random churn.
+    if len(_render_cache) >= _RENDER_CACHE_MAX_ENTRIES:
+        # Drop the oldest entry; dict preserves insertion order.
+        _render_cache.pop(next(iter(_render_cache)))
+    _render_cache[cache_key] = payload
+    return payload

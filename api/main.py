@@ -28,9 +28,64 @@ logger = logging.getLogger("wrench_board.main")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
+async def _prewarm_active_boardviews(memory_root: Path) -> None:
+    """Parse every device's active boardview into the /render cache.
+
+    Boardview parsing is the heaviest sync work the API does (a 5 MB .tvw
+    is ~5 s of CPU); without warming, the first dashboard open for each
+    device pays that 5 s up front. Runs in a background task so the
+    server is answering requests during the warm — each parse is offloaded
+    to a worker thread so the event loop stays responsive.
+
+    Resolution mirrors `_find_boardview`: `active_sources.json` pin first,
+    then `board_assets/{slug}.<ext>`, then any `uploads/*-boardview-*`.
+    """
+    import asyncio  # local — keep startup imports cheap
+
+    from api.board.parser.base import parser_for
+    from api.board.render import to_render_payload
+    from api.board.router import _RENDER_CACHE_MAX_ENTRIES, _render_cache
+    from api.pipeline.routes.packs import _find_boardview
+
+    if not memory_root.exists():
+        return
+
+    parsed = 0
+    failed = 0
+    for pack_dir in sorted(memory_root.iterdir()):
+        if not pack_dir.is_dir() or pack_dir.name.startswith("_"):
+            continue
+        if len(_render_cache) >= _RENDER_CACHE_MAX_ENTRIES:
+            logger.info("[prewarm] cache full, stopping after %d", parsed)
+            break
+        slug = pack_dir.name
+        path = _find_boardview(slug, pack_dir)
+        if path is None:
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        cache_key = (str(path), mtime)
+        if cache_key in _render_cache:
+            continue
+        try:
+            board = await asyncio.to_thread(parser_for(path).parse_file, path)
+            payload = await asyncio.to_thread(to_render_payload, board)
+            _render_cache[cache_key] = payload
+            parsed += 1
+            logger.info("[prewarm] %s cached (%s)", slug, path.name)
+        except Exception:  # noqa: BLE001 — fire-and-forget; any failure logs + skips
+            failed += 1
+            logger.warning("[prewarm] failed for %s (%s)", slug, path.name, exc_info=True)
+    logger.info("[prewarm] done: %d cached, %d failed", parsed, failed)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup / shutdown hooks."""
+    import asyncio  # local — only needed for the prewarm task
+
     settings = get_settings()
     configure_logging(settings.log_level)
     logger.info("wrench-board v%s starting up", __version__)
@@ -43,6 +98,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "every request until it's set in .env. Pure-data endpoints "
             "(/health, /pipeline/packs read, board parsing) keep working."
         )
+    # Kick off boardview pre-warm in background — don't await. The server
+    # is answering requests immediately; per-thread parse populates the
+    # /render cache so the first dashboard open for each device is instant.
+    asyncio.create_task(_prewarm_active_boardviews(Path(settings.memory_root)))
     yield
     logger.info("wrench-board shutting down")
 
