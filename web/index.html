@@ -67,6 +67,33 @@
 </head>
 <body>
 
+<!-- Pre-paint chrome-hiding gate. Runs synchronously during HTML parse so
+     the topbar / rail / metabar / statusbar are masked BEFORE the
+     browser's first paint in two cases that hard-reload into a screen
+     that doesn't want them visible:
+       1. `?tool=stock` → standalone stock tool. main.js later adds the
+          same body classes; this inline application is idempotent.
+       2. No `?repair=`, `?device=`, `?tool=` and no hash → landing mode.
+          The landing overlay (z-index 1000, inset 0) covers everything
+          once showLanding() runs, but it stays `hidden` until then —
+          without the pending-landing class, the chrome flashes for one
+          frame between paint and showLanding(). -->
+<script>
+  (function () {
+    var params = new URLSearchParams(window.location.search);
+    var tool = params.get("tool");
+    if (tool === "stock") {
+      document.body.classList.add("standalone-tool", "tool-stock");
+      return;
+    }
+    var hasSession = params.get("repair") || params.get("device");
+    var hasHash = window.location.hash && window.location.hash !== "#";
+    if (!hasSession && !tool && !hasHash) {
+      document.body.classList.add("pending-landing");
+    }
+  })();
+</script>
+
 <!-- Wrench Board mascot — single source, cloned into mount points by web/js/mascot.js. -->
 <template id="tpl-mascot"><svg xmlns="http://www.w3.org/2000/svg" viewBox="50 30 360 330" role="img" aria-label="Wrench Board mascot" class="mascot-svg">
   <g id="legs" class="mascot-legs">
@@ -853,8 +880,19 @@
         The agent has access to its tools depending on the data you provide.
       </p>
       <ul class="rd-cap-list" id="rdCapList">
-        <!-- 4 capability rows injected by JS: schematic, boardview, graph, memory_bank -->
+        <!-- 5 capability rows injected by JS: schematic, boardview, graph, memory, stock -->
       </ul>
+      <!-- Tool-list popover anchored under the clicked info button. JS toggles
+           `[data-open]` + positions it; renderCapabilities owns the content. -->
+      <div class="rd-cap-popover" id="rdCapPopover" hidden role="dialog" aria-modal="false">
+        <header class="rd-cap-popover-head">
+          <h3 id="rdCapPopoverTitle">—</h3>
+          <button type="button" class="rd-cap-popover-close" id="rdCapPopoverClose" aria-label="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </header>
+        <ul class="rd-cap-popover-tools" id="rdCapPopoverTools"></ul>
+      </div>
     </section>
 
     <!-- Single 4-card grid: 2 inputs (Schematic, Boardview — uploadable)

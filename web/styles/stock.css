@@ -17,6 +17,10 @@
 }
 #stock.hidden { display: none !important; }
 body.no-metabar #stock { top: 48px; }
+/* When the diagnostic chat docks on the right (420px wide), every main
+   content zone must shrink to leave room for it. Mirrors the same rule
+   for .canvas / .home / .stub in llm.css and .profile in profile.css. */
+body.llm-open #stock { right: 420px; }
 
 /* Standalone mode — accessed from the landing top-right "Stock" link.
  * Hides every shell chrome element (topbar / rail / metabar / statusbar)
@@ -35,7 +39,11 @@ body.standalone-tool #stock {
 }
 body.standalone-tool #stockBackBtn { display: inline-flex; }
 #stockBackBtn { display: none; }
-.stock-back-row {
+/* Hide the whole row (not just the link) when not in standalone mode —
+   otherwise the empty flex container still claims its line-height +
+   margin-bottom and leaves a phantom gap at the top of the section. */
+.stock-back-row { display: none; }
+body.standalone-tool .stock-back-row {
   display: flex;
   align-items: center;
   gap: 12px;

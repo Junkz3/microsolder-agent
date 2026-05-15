@@ -577,12 +577,14 @@ function renderCapabilities(pack) {
     boardview: !!pack?.has_boardview,
     graph:     !!(pack && pack.has_knowledge_graph && pack.has_rules),
     memory:    !!pack?.has_rules,
+    stock:     !!pack?.has_parts_index,
   };
   const onCount = Object.values(flags).filter(Boolean).length;
+  const totalCount = Object.keys(flags).length;
   let level = "minimal";
   let label = t("home.dashboard.cap.minimal_label");
   let blurb = t("home.dashboard.cap.minimal_blurb");
-  if (onCount === 4) {
+  if (onCount === totalCount) {
     level = "full";
     label = t("home.dashboard.cap.full_label");
     blurb = t("home.dashboard.cap.full_blurb");
@@ -609,6 +611,7 @@ function renderCapabilities(pack) {
     { key: "boardview", label: t("home.dashboard.cap.row.boardview_label"), on: t("home.dashboard.cap.row.boardview_on"), off: t("home.dashboard.cap.row.off") },
     { key: "graph",     label: t("home.dashboard.cap.row.graph_label"),     on: t("home.dashboard.cap.row.graph_on"),     off: t("home.dashboard.cap.row.off") },
     { key: "memory",    label: t("home.dashboard.cap.row.memory_label"),    on: t("home.dashboard.cap.row.memory_on"),    off: t("home.dashboard.cap.row.off") },
+    { key: "stock",     label: t("home.dashboard.cap.row.stock_label"),     on: t("home.dashboard.cap.row.stock_on"),     off: t("home.dashboard.cap.row.off") },
   ];
   list.innerHTML = rows.map(r => {
     const on = flags[r.key];
@@ -616,9 +619,103 @@ function renderCapabilities(pack) {
       <span class="rd-cap-pill-dot"></span>
       <span class="rd-cap-pill-label">${escapeHtml(r.label)}</span>
       <span class="rd-cap-pill-tag">${escapeHtml(on ? r.on : r.off)}</span>
+      <button type="button" class="rd-cap-info" data-cap="${r.key}" aria-label="${escapeHtml(t("home.dashboard.cap.info_aria", { name: r.label }))}" title="${escapeHtml(t("home.dashboard.cap.info_title"))}">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M12 12v4"/></svg>
+      </button>
     </li>`;
   }).join("");
+  wireCapInfoButtons(list);
 }
+
+// ── Capability tool-list popover ───────────────────────────────────────
+// Maps each capability to its agent tool surface. The strings live in i18n
+// (home.dashboard.cap.tools.<cap>.<idx>.{name,desc}) so they translate.
+// Source of truth for the tool inventory: api/agent/manifest.py.
+const CAP_TOOLS = {
+  schematic: ["mb_schematic_graph", "mb_hypothesize"],
+  boardview: [
+    "bv_highlight", "bv_focus", "bv_scene", "bv_propose_protocol",
+    "bv_draw_arrow", "bv_annotate", "bv_record_step_result",
+  ],
+  graph:  ["mb_get_rules_for_symptoms", "mb_get_component", "mb_expand_knowledge"],
+  memory: [
+    "mb_record_finding", "mb_record_session_log", "mb_record_measurement",
+    "mb_observations_from_measurements", "mb_validate_finding",
+  ],
+  stock: [
+    "stock_search", "stock_list_donors", "stock_mark_donor",
+    "stock_unmark_donor", "stock_consume",
+  ],
+};
+
+function wireCapInfoButtons(listEl) {
+  listEl.querySelectorAll(".rd-cap-info").forEach(btn => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const cap = btn.dataset.cap;
+      openCapPopover(cap, btn);
+    });
+  });
+}
+
+let _capPopoverAnchor = null;
+function openCapPopover(cap, anchorBtn) {
+  const pop = document.getElementById("rdCapPopover");
+  const titleEl = document.getElementById("rdCapPopoverTitle");
+  const toolsEl = document.getElementById("rdCapPopoverTools");
+  if (!pop || !titleEl || !toolsEl) return;
+  if (_capPopoverAnchor === anchorBtn && !pop.hidden) {
+    closeCapPopover();
+    return;
+  }
+  _capPopoverAnchor = anchorBtn;
+  titleEl.textContent = t(`home.dashboard.cap.row.${cap}_label`);
+  const tools = CAP_TOOLS[cap] || [];
+  toolsEl.innerHTML = tools.map(toolName => `
+    <li class="rd-cap-popover-tool">
+      <code class="rd-cap-popover-tool-name">${escapeHtml(toolName)}</code>
+      <span class="rd-cap-popover-tool-desc">${escapeHtml(t(`home.dashboard.cap.tool_desc.${toolName}`))}</span>
+    </li>
+  `).join("");
+  // Position under the anchor button in viewport coords (fixed). CSS
+  // `right: Xpx` measures from the right edge of the viewport, so we
+  // align the popover's right edge with the button's right edge and
+  // clamp to a minimum gutter. With body.llm-open the chat panel
+  // occupies the rightmost 420px — the gutter jumps to 420+12 so the
+  // popover never slides under the chat.
+  const llmOpen = document.body.classList.contains("llm-open");
+  const minRight = llmOpen ? 432 : 12;
+  const btnRect = anchorBtn.getBoundingClientRect();
+  const top = btnRect.bottom + 6;
+  const right = Math.max(minRight, window.innerWidth - btnRect.right);
+  pop.style.top = `${top}px`;
+  pop.style.right = `${right}px`;
+  pop.hidden = false;
+  pop.dataset.open = "true";
+}
+
+function closeCapPopover() {
+  const pop = document.getElementById("rdCapPopover");
+  if (!pop) return;
+  pop.hidden = true;
+  delete pop.dataset.open;
+  _capPopoverAnchor = null;
+}
+
+// One-shot wiring — close handlers don't depend on which capability is
+// active, so they're attached once. Click outside or Escape dismisses;
+// the [×] inside the popover routes to the same close path.
+document.addEventListener("click", (ev) => {
+  const pop = document.getElementById("rdCapPopover");
+  if (!pop || pop.hidden) return;
+  if (pop.contains(ev.target)) return;
+  if (_capPopoverAnchor && _capPopoverAnchor.contains(ev.target)) return;
+  closeCapPopover();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeCapPopover();
+});
+document.getElementById("rdCapPopoverClose")?.addEventListener("click", () => closeCapPopover());
 
 // Render the list of uploaded versions inside a card (rendered as soon as
 // 1 version exists — even a single version is worth surfacing so the tech

@@ -204,14 +204,19 @@
 }
 .rd-cap-list {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
   margin: 4px 0 0;
   padding: 0;
   list-style: none;
 }
+/* Narrow + llm-open: drop to 2 columns. With 5 pills that leaves the
+   last one alone on row 3 — span it across both columns so the layout
+   stays balanced instead of a half-width orphan. */
 @media (max-width: 960px) { .rd-cap-list { grid-template-columns: repeat(2, 1fr); } }
 body.llm-open .rd-cap-list { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 960px) { .rd-cap-list > .rd-cap-pill:nth-child(5) { grid-column: 1 / -1; } }
+body.llm-open .rd-cap-list > .rd-cap-pill:nth-child(5) { grid-column: 1 / -1; }
 
 .rd-cap-pill {
   display: flex;
@@ -251,6 +256,114 @@ body.llm-open .rd-cap-list { grid-template-columns: repeat(2, 1fr); }
   font-size: 9.5px;
   color: var(--text-3);
   letter-spacing: .4px;
+}
+/* Info button — hidden until pill hover or keyboard focus, so the row
+   stays calm by default and surfaces the affordance on demand. */
+.rd-cap-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity .15s, color .15s, background .15s;
+}
+.rd-cap-pill:hover .rd-cap-info,
+.rd-cap-info:focus-visible { opacity: 1; }
+.rd-cap-info:hover {
+  color: var(--cyan);
+  background: color-mix(in oklch, var(--cyan) 15%, transparent);
+}
+.rd-cap-info:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 1px;
+}
+
+/* Tool-list popover — glass panel anchored under the clicked info button.
+   Uses `position: fixed` so the `.rd-cap`'s `overflow: hidden` (which clips
+   the coloured left rail) doesn't clip the popover. JS supplies absolute
+   top/right relative to the viewport. */
+.rd-cap-popover {
+  position: fixed;
+  z-index: 200;
+  min-width: 280px;
+  max-width: 380px;
+  background: color-mix(in oklch, var(--panel) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+  backdrop-filter: blur(12px);
+  padding: 10px 12px;
+}
+.rd-cap-popover[hidden] { display: none !important; }
+.rd-cap-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.rd-cap-popover-head h3 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.rd-cap-popover-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.rd-cap-popover-close:hover {
+  color: var(--text);
+  background: var(--bg-2);
+}
+.rd-cap-popover-tools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rd-cap-popover-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rd-cap-popover-tool-name {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--cyan);
+  letter-spacing: .2px;
+  background: transparent;
+  padding: 0;
+}
+.rd-cap-popover-tool-desc {
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.4;
 }
 
 /* ─────────────────────────────────────────────────────────────

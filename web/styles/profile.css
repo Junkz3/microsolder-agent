@@ -20,6 +20,11 @@
 .profile::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 .profile::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 .profile.hidden { display: none; }
+/* Profile section never shows the device metabar — when the router sets
+   body.no-metabar (every section except #graphe) the .profile root must
+   pull up to top:48px, otherwise the 44px metabar gap remains as empty
+   space at the top of the page. Mirrors the same fix in stock.css. */
+body.no-metabar .profile { top: 48px; }
 body.llm-open .profile { right: 420px; }
 body.llm-open #profIdentityBackdrop { right: 420px; }
 

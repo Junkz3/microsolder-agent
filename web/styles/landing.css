@@ -4,6 +4,16 @@
 
 .landing[hidden] { display: none !important; }
 
+/* `pending-landing` is set synchronously by an inline script at the top of
+   <body> (see index.html) when the page loads on `/` with no params. It
+   bridges the gap between first paint and showLanding() removing the
+   overlay's `hidden` — without it the chrome (topbar / rail / metabar /
+   statusbar) would flash for one frame before the landing covers it. */
+body.pending-landing .topbar,
+body.pending-landing .rail,
+body.pending-landing .metabar,
+body.pending-landing .statusbar { display: none !important; }
+
 /* Top-right tools nav — stock & other repair-independent utilities.
  * Sits above the hero grid so it doesn't shift the centered content. */
 .landing-tools {
