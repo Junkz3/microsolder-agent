@@ -71,6 +71,9 @@ class PackSummary(BaseModel):
     boardview_format: str | None
     has_schematic_pdf: bool
     has_electrical_graph: bool
+    # Built at the end of schematic ingestion — flags whether `stock_search`
+    # can match this device's components against the donor inventory.
+    has_parts_index: bool
 
 
 # --- Taxonomy ---------------------------------------------------------------

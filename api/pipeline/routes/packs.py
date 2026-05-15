@@ -138,6 +138,7 @@ def _summarize_pack(pack_dir: Path) -> PackSummary:
         boardview_format=bv_ext,
         has_schematic_pdf=_detect_schematic_pdf(slug, pack_dir),
         has_electrical_graph=(pack_dir / "electrical_graph.json").exists(),
+        has_parts_index=(pack_dir / "parts_index.json").exists(),
     )
 
 
